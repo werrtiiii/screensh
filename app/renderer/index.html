@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; connect-src 'self' ws: wss: http: https:;" />
+  <title>ScreenSh - P2P 屏幕共享</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="custom-titlebar">
+      <div class="titlebar-drag-region">
+        <span class="titlebar-title">ScreenSh</span>
+      </div>
+      <div class="titlebar-controls">
+        <button id="btnMinWindow" class="control-btn" title="最小化">🗕</button>
+        <button id="btnMaxWindow" class="control-btn" title="最大化">🗖</button>
+        <button id="btnCloseWindow" class="control-btn close-btn" title="关闭">✕</button>
+      </div>
+    </div>
+
+    <!-- ===== Lobby ===== -->
+    <div id="lobby" class="screen active">
+      <div style="position: absolute; top: 24px; right: 24px; display: flex; gap: 8px; z-index: 10;">
+        <button id="btnSettings" class="btn btn-outline btn-sm">⚙️ 设置</button>
+      </div>
+
+      <div class="lobby-header">
+        <h1>ScreenSh</h1>
+        <p class="subtitle">P2P 屏幕共享</p>
+      </div>
+
+      <div class="lobby-card">
+        <div class="form-group">
+          <label for="userName">你的昵称</label>
+          <input type="text" id="userName" placeholder="输入昵称..." maxlength="20" autocomplete="off" />
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="create">创建房间</button>
+          <button class="tab" data-tab="join">加入房间</button>
+        </div>
+
+        <!-- Create Room -->
+        <div id="panel-create" class="tab-panel active">
+          <div class="form-group">
+            <label for="createRoomId">房间号</label>
+            <div class="input-row">
+              <input type="text" id="createRoomId" placeholder="输入房间号..." maxlength="32" autocomplete="off" />
+              <button id="btnRandom" class="btn btn-outline" title="随机生成">🎲</button>
+            </div>
+          </div>
+          <button id="btnCreate" class="btn btn-primary btn-full">创建房间</button>
+        </div>
+
+        <!-- Join Room -->
+        <div id="panel-join" class="tab-panel">
+          <div class="form-group">
+            <label for="joinRoomId">房间号</label>
+            <input type="text" id="joinRoomId" placeholder="输入房间号..." maxlength="32" autocomplete="off" />
+          </div>
+          <button id="btnJoin" class="btn btn-primary btn-full">加入房间</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== Room ===== -->
+    <div id="room" class="screen">
+      <div class="room-topbar">
+        <button id="btnLeave" class="btn btn-outline btn-sm">← 离开房间</button>
+        <div class="room-info" style="display: flex; align-items: center; gap: 8px;">
+          <span class="room-label">房间号：</span>
+          <span id="roomIdDisplay" style="font-weight: bold; font-family: monospace; font-size: 16px;"></span>
+          <button id="btnCopyRoomId" class="btn btn-outline btn-sm" title="复制房间号" style="padding: 2px 6px; font-size: 12px;">📋复制</button>
+        </div>
+        <div class="room-actions">
+          <button id="btnRoomSettings" class="btn btn-outline btn-sm">⚙️ 设置</button>
+          <button id="btnShare" class="btn btn-primary btn-sm">📺 共享屏幕</button>
+          <button id="btnStopShare" class="btn btn-danger btn-sm hidden">⏹ 停止共享</button>
+        </div>
+      </div>
+
+      <div class="room-main">
+        <div id="mainContent" class="main-content">
+          <!-- 大厅卡片网格 -->
+          <div id="userCardsView" class="cards-grid"></div>
+
+          <!-- 沉浸式观看视图 -->
+          <div id="activeVideoView" class="active-video-view hidden">
+            <div class="video-header">
+              <button id="btnStopWatch" class="btn btn-outline btn-sm">← 返回</button>
+              <span id="watchingUserName" class="watching-title">正在观看...</span>
+            </div>
+            <div id="videoContainer" class="video-container"></div>
+          </div>
+        </div>
+
+        <!-- Sidebar: users + screen sources -->
+        <div class="sidebar">
+          <!-- Screen picker (shown only for sharer) -->
+          <div id="screenPicker" class="side-panel hidden">
+            <h3>选择共享源</h3>
+            <button id="btnCancelPicker" class="btn btn-outline btn-sm" style="margin-bottom:8px;">收起</button>
+            <div id="screenList" class="screen-list"></div>
+            <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
+          </div>
+
+          <!-- Users list -->
+          <div class="side-panel">
+            <h3>房间成员 (<span id="userCount">0</span>)</h3>
+            <ul id="userList" class="user-list"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ===== Settings Modal ===== -->
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>系统设置</h2>
+          <button id="btnCloseSettings" class="btn-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group setting-theme">
+            <label for="themeSelect">主题外观
+              <span class="help-tip" data-tooltip="切换客户端的视觉风格。&#10;支持深色夜间与浅色明亮两种主题。">?</span>
+            </label>
+            <select id="themeSelect" class="form-control">
+              <option value="dark">深色</option>
+              <option value="light">浅色</option>
+            </select>
+          </div>
+          <div class="form-group setting-codec">
+            <label for="videoCodecSelect">视频编码方式
+              <span class="help-tip" data-tooltip="选择视频压缩算法。H264兼容性好，VP8/VP9更省带宽。&#10;“自动”将由浏览器自行决定。">?</span>
+            </label>
+            <select id="videoCodecSelect" class="form-control">
+              <option value="">自动</option>
+            </select>
+          </div>
+          <div class="form-group setting-room">
+            <label for="resolutionSelect">共享分辨率
+              <span class="help-tip" data-tooltip="降低分辨率可显著减少带宽占用和卡顿现象。">?</span>
+            </label>
+            <select id="resolutionSelect" class="form-control">
+              <option value="auto">原画比例</option>
+              <option value="1920x1080">1080p (1920x1080)</option>
+              <option value="1280x720" selected>720p (1280x720)</option>
+              <option value="854x480">480p (854x480)</option>
+            </select>
+          </div>
+          <div class="form-group setting-room">
+            <label for="frameRateSelect">帧率 (FPS)
+              <span class="help-tip" data-tooltip="每秒传输的画面帧数。">?</span>
+            </label>
+            <select id="frameRateSelect" class="form-control">
+              <option value="30">30 FPS</option>
+              <option value="60">60 FPS</option>
+              <option value="15">15 FPS</option>
+            </select>
+          </div>
+          <div class="form-group setting-room">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0;">
+              <input type="checkbox" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
+              <span>同时共享音频</span>
+              <span class="help-tip" data-tooltip="开启后，将会把你电脑播放的声音一同共享给其他人。">?</span>
+            </label>
+          </div>
+          <div class="form-group setting-room">
+            <label for="bitrateInput" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>视频码率 (kbps)
+                <span class="help-tip" data-tooltip="限制视频占用的最大上行带宽。&#10;勾选自动将不限制码率，由浏览器动态调整。">?</span>
+              </span>
+              <label style="font-size: 12px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                <input type="checkbox" id="autoBitrateCheckbox"> 自动
+              </label>
+            </label>
+            <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100" value="1000">
+          </div>
+          <div class="form-group setting-room">
+            <label for="audioBitrateSelect">音频码率
+              <span class="help-tip" data-tooltip="控制声音的音质，数值越高音质越好，但占用带宽略多。">?</span>
+            </label>
+            <select id="audioBitrateSelect" class="form-control">
+              <option value="32">32 kbps</option>
+              <option value="64">64 kbps</option>
+              <option value="128" selected>128 kbps</option>
+              <option value="256">256 kbps</option>
+            </select>
+          </div>
+          <div class="form-group setting-server">
+            <label>信令服务器
+              <span class="help-tip" data-tooltip="用于用户互相发现和传递房间信息，必须可用才能加入房间。">?</span>
+            </label>
+            <div class="server-bar">
+              <input type="text" id="serverUrl" value="http://localhost:3000" />
+              <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
+              <span id="serverStatus" class="status-dot disconnected"></span>
+            </div>
+          </div>
+          <div class="form-group setting-server">
+            <label>STUN 服务器
+              <span class="help-tip" data-tooltip="用于 P2P 模式下获取你的公网 IP 进行直连穿透。&#10;格式: stun:域名:端口">?</span>
+            </label>
+            <div class="server-bar">
+              <input type="text" id="stunInput" value="stun:stun.l.google.com:19302" />
+              <button id="btnTestStun" class="btn btn-outline btn-sm">检测</button>
+              <span id="stunStatus" class="status-dot"></span>
+            </div>
+          </div>
+          <div class="form-group setting-server">
+            <label>TURN 服务器 (选填)
+              <span class="help-tip" data-tooltip="当网络复杂无法 P2P 直连时，作为备用流量中转站。&#10;格式: turn:域名:端口|用户名|密码">?</span>
+            </label>
+            <div class="server-bar">
+              <input type="text" id="turnInput" placeholder="turn:ip:port|user|pass" />
+              <button id="btnTestTurn" class="btn btn-outline btn-sm">检测</button>
+              <span id="turnStatus" class="status-dot"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../node_modules/socket.io-client/dist/socket.io.min.js"></script>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

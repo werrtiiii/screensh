@@ -1,0 +1,48 @@
+{
+  "name": "screensh-app",
+  "version": "1.0.0",
+  "description": "ScreenSh - P2P Screen Sharing App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&&set ELECTRON_CUSTOM_DIR={{ version }}&&electron-builder --win portable",
+    "build:installer": "set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&&set ELECTRON_CUSTOM_DIR={{ version }}&&electron-builder --win"
+  },
+  "build": {
+    "appId": "com.screensh.app",
+    "productName": "ScreenSh",
+    "files": [
+      "**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "app-audio-capturer.exe",
+        "to": "app-audio-capturer.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": null
+    },
+    "portable": {
+      "artifactName": "ScreenSh-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "mediasoup-client": "^3.20.0",
+    "socket.io-client": "^4.7.5"
+  }
+}
