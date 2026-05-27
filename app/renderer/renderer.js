@@ -210,8 +210,6 @@ function initSettings() {
                      : state.maxBitrate;
   state.shareAudio = localStorage.getItem('shareAudio') === 'true';
   state.audioBitrate = parseInt(localStorage.getItem('audioBitrate')) || state.audioBitrate;
-  state.stunServer = localStorage.getItem('stunServer') !== null ? localStorage.getItem('stunServer') : state.stunServer;
-  state.turnServer = localStorage.getItem('turnServer') !== null ? localStorage.getItem('turnServer') : state.turnServer;
 
   // 将状态映射到 UI
   select.value = state.preferredCodec;
@@ -294,8 +292,6 @@ function initSettings() {
   });
 
   $('#audioBitrateSelect').value = state.audioBitrate;
-  $('#stunInput').value = state.stunServer;
-  $('#turnInput').value = state.turnServer;
   $('#shareAudioCheckbox').checked = state.shareAudio;
 
   // 监听所有变化并持久化
@@ -317,89 +313,9 @@ function initSettings() {
     toast('音频码率已更新，将在下次共享时生效');
   });
 
-  $('#stunInput').addEventListener('input', (e) => {
-    state.stunServer = e.target.value.trim();
-    localStorage.setItem('stunServer', state.stunServer);
-    $('#stunStatus').className = 'status-dot'; 
-  });
-
-  $('#turnInput').addEventListener('input', (e) => {
-    state.turnServer = e.target.value.trim();
-    localStorage.setItem('turnServer', state.turnServer);
-    $('#turnStatus').className = 'status-dot'; 
-  });
 }
 
 initSettings();
-
-// --- WebRTC STUN/TURN 连通性检测逻辑 ---
-async function testIceServer(type) {
-  const isStun = type === 'stun';
-  const inputEl = isStun ? $('#stunInput') : $('#turnInput');
-  const btnEl = isStun ? $('#btnTestStun') : $('#btnTestTurn');
-  const statusEl = isStun ? $('#stunStatus') : $('#turnStatus');
-  const val = inputEl.value.trim();
-
-  if (!val) {
-    toast(`请先填写 ${type.toUpperCase()} 服务器地址`, 'error');
-    return;
-  }
-
-  btnEl.disabled = true;
-  btnEl.textContent = '测试中..';
-  statusEl.className = 'status-dot';
-
-  let iceServers = [];
-  if (isStun) {
-    iceServers.push({ urls: val });
-  } else {
-    const parts = val.split('|');
-    iceServers.push({
-      urls: parts[0],
-      username: parts[1] || '',
-      credential: parts[2] || ''
-    });
-  }
-
-  const pc = new RTCPeerConnection({ iceServers });
-  pc.createDataChannel('test'); 
-
-  let isSuccess = false;
-  
-  pc.onicecandidate = (event) => {
-    if (event.candidate) {
-      if (isStun && event.candidate.type === 'srflx') isSuccess = true;
-      if (!isStun && event.candidate.type === 'relay') isSuccess = true;
-    }
-  };
-
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    setTimeout(() => {
-      pc.close();
-      if (isSuccess) {
-        statusEl.className = 'status-dot connected';
-        toast(`${type.toUpperCase()} 服务器可用！`, 'success');
-      } else {
-        statusEl.className = 'status-dot disconnected';
-        toast(`${type.toUpperCase()} 服务器无法连通或无效`, 'error');
-      }
-      btnEl.disabled = false;
-      btnEl.textContent = '检测';
-    }, 3500);
-
-  } catch (err) {
-    pc.close();
-    statusEl.className = 'status-dot disconnected';
-    btnEl.disabled = false;
-    btnEl.textContent = '检测';
-    toast('检测配置错误: ' + err.message, 'error');
-  }
-}
-
-$('#btnTestStun').addEventListener('click', () => testIceServer('stun'));
-$('#btnTestTurn').addEventListener('click', () => testIceServer('turn'));
 
 // ============================================================
 // 窗口控制逻辑 (自定义标题栏)
