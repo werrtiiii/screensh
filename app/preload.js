@@ -1,16 +1,21 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
-  getSourceById: (sourceId) => ipcRenderer.invoke('get-source-by-id', sourceId),
-
-  // 方案 B 管道数据与信令隔离桥接
-  startWindowAudio: (sourceId) => ipcRenderer.send('start-window-audio-capture', sourceId),
-  stopWindowAudio: () => ipcRenderer.send('stop-window-audio-capture'),
-  onWindowAudioData: (callback) => ipcRenderer.on('window-audio-data', (event, data) => callback(data)),
-  removeWindowAudioListener: () => ipcRenderer.removeAllListeners('window-audio-data'),
-
+  // 窗口管理
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
-  closeWindow: () => ipcRenderer.send('window-close')
+  closeWindow: () => ipcRenderer.send('window-close'),
+
+  // EasyTier & MediaMTX & OBS 控制
+  startEasyTier: (roomId) => ipcRenderer.invoke('start-easytier', roomId),
+  stopEasyTier: () => ipcRenderer.send('stop-easytier'),
+  startMediaMTX: () => ipcRenderer.send('start-mediamtx'),
+  stopMediaMTX: () => ipcRenderer.send('stop-mediamtx'),
+
+  // 新增：获取显示器列表
+  getScreens: () => ipcRenderer.invoke('get-screens'),
+
+  // 修改：接收动态配置参数
+  startOBSWhip: (config) => ipcRenderer.send('start-obs-whip', config),
+  stopOBSWhip: () => ipcRenderer.send('stop-obs-whip'),
 });

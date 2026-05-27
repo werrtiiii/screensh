@@ -37,3 +37,6 @@ server/node_modules/
 
 
 *.txt
+app/res/easytier-core.exe
+.gitignore
+app/res/

@@ -46,38 +46,38 @@ $('#btnRandom').addEventListener('click', () => {
 });
 
 // --- 创建房间 ---
-$('#btnCreate').addEventListener('click', () => {
+$('#btnCreate').addEventListener('click', async () => {
   const roomId = $('#createRoomId').value.trim();
-  if (!roomId) return toast('请输入房间号', 'error');
   const userName = $('#userName').value.trim() || '匿名用户';
-  state.userName = userName;
+  if (!roomId) return toast('请输入房间号', 'error');
+
+  toast('正在建立 EasyTier 虚拟局域网...', 'success');
+  const vip = await window.electronAPI.startEasyTier(roomId);
+  state.virtualIp = vip;
 
   connectServer();
-
   if (socket.connected) {
-    socket.emit('create-room', { roomId, userName });
+    socket.emit('create-room', { roomId, userName, virtualIp: vip });
   } else {
-    socket.once('connect', () => {
-      socket.emit('create-room', { roomId, userName });
-    });
+    socket.once('connect', () => socket.emit('create-room', { roomId, userName, virtualIp: vip }));
   }
 });
 
 // --- 加入房间 ---
-$('#btnJoin').addEventListener('click', () => {
+$('#btnJoin').addEventListener('click', async () => {
   const roomId = $('#joinRoomId').value.trim();
-  if (!roomId) return toast('请输入房间号', 'error');
   const userName = $('#userName').value.trim() || '匿名用户';
-  state.userName = userName;
+  if (!roomId) return toast('请输入房间号', 'error');
+
+  toast('正在接入 EasyTier 虚拟局域网...', 'success');
+  const vip = await window.electronAPI.startEasyTier(roomId);
+  state.virtualIp = vip;
 
   connectServer();
-
   if (socket.connected) {
-    socket.emit('join-room', { roomId, userName });
+    socket.emit('join-room', { roomId, userName, virtualIp: vip });
   } else {
-    socket.once('connect', () => {
-      socket.emit('join-room', { roomId, userName });
-    });
+    socket.once('connect', () => socket.emit('join-room', { roomId, userName, virtualIp: vip }));
   }
 });
 
@@ -112,12 +112,6 @@ $('#btnStopWatch').addEventListener('click', () => {
   state.watchingId = null;
   $('#activeVideoView').classList.add('hidden');
   $('#userCardsView').classList.remove('hidden');
-
-  // 清理全局定时器，防止顽固残留
-  if (window.debugInterval) {
-    clearInterval(window.debugInterval);
-    window.debugInterval = null;
-  }
 
   const container = $('#videoContainer');
   const video = container.querySelector('video');
