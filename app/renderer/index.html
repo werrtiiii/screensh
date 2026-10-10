@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -103,6 +103,7 @@
           <!-- Screen picker (shown only for sharer) -->
           <div id="screenPicker" class="side-panel hidden">
             <h3>选择共享源</h3>
+            <p style="font-size:12px;color:var(--text2);margin-bottom:8px">窗口需保持打开且未最小化。</p>
             <button id="btnCancelPicker" class="btn btn-outline btn-sm" style="margin-bottom:8px;">收起</button>
             <div id="screenList" class="screen-list"></div>
             <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
@@ -126,35 +127,60 @@
         <div class="modal-body">
           <div class="form-group setting-theme">
             <label for="themeSelect">主题外观
-              <span class="help-tip" data-tooltip="切换客户端的视觉风格。&#10;支持深色夜间与浅色明亮两种主题。">?</span>
+              <span class="help-tip" data-tooltip="切换深色或浅色外观。">?</span>
             </label>
             <select id="themeSelect" class="form-control">
               <option value="dark">深色</option>
-              <option value="light">浅色</option>
+              <option value="light" selected>浅色</option>
             </select>
           </div>
           <div class="form-group setting-codec">
             <label for="videoCodecSelect">视频编码方式
-              <span class="help-tip" data-tooltip="选择视频压缩算法。H264兼容性好，VP8/VP9更省带宽。&#10;“自动”将由浏览器自行决定。">?</span>
+              <span class="help-tip" data-tooltip="当前使用 H.264 编码共享屏幕。">?</span>
             </label>
             <select id="videoCodecSelect" class="form-control">
               <option value="">自动</option>
             </select>
           </div>
           <div class="form-group setting-room">
+            <label for="videoEncoderSelect">视频编码器
+              <span class="help-tip" data-tooltip="按显卡选择 NVENC 或 AMF，可降低 CPU 占用。需显卡及驱动支持；失败时改用软件编码。">?</span>
+            </label>
+            <select id="videoEncoderSelect" class="form-control">
+              <option value="x264">软件编码 · H.264 (CPU / x264)</option>
+              <option value="nvenc">硬件编码 · H.264 (NVIDIA NVENC)</option>
+              <option value="amf">硬件编码 · H.264 (AMD AMF)</option>
+            </select>
+          </div>
+          <div class="form-group setting-room">
+            <label><input type="checkbox" id="autoPreviewCheckbox" checked> 自动预览
+              <span class="help-tip" data-tooltip="共享后自动预览自己的画面。">?</span>
+            </label>
+          </div>
+          <div class="form-group setting-room">
             <label for="resolutionSelect">共享分辨率
-              <span class="help-tip" data-tooltip="降低分辨率可显著减少带宽占用和卡顿现象。">?</span>
+              <span class="help-tip" data-tooltip="越高越清晰，占用也越高。">?</span>
             </label>
             <select id="resolutionSelect" class="form-control">
-              <option value="auto">原画比例</option>
+              <option value="auto">原始分辨率（自动）</option>
               <option value="1920x1080">1080p (1920x1080)</option>
               <option value="1280x720" selected>720p (1280x720)</option>
               <option value="854x480">480p (854x480)</option>
             </select>
           </div>
           <div class="form-group setting-room">
+            <label for="captureMethodSelect">整屏采集方式
+              <span class="help-tip" data-tooltip="仅用于显示器共享。黑屏可尝试 WGC">?</span>
+            </label>
+            <select id="captureMethodSelect" class="form-control">
+              <option value="auto">自动</option>
+              <option value="wgc">WGC（Windows 图形采集）</option>
+              <option value="dxgi">DXGI（桌面复制）</option>
+            </select>
+          </div>
+          <div class="form-group setting-room">
             <label for="frameRateSelect">帧率 (FPS)
-              <span class="help-tip" data-tooltip="每秒传输的画面帧数。">?</span>
+              <span class="help-tip" data-tooltip="目标每秒帧数。">?</span>
             </label>
             <select id="frameRateSelect" class="form-control">
               <option value="30">30 FPS</option>
@@ -166,23 +192,23 @@
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0;">
               <input type="checkbox" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
               <span>同时共享音频</span>
-              <span class="help-tip" data-tooltip="开启后，将会把你电脑播放的声音一同共享给其他人。">?</span>
+              <span class="help-tip" data-tooltip="窗口共享程序声音，显示器共享系统声音。">?</span>
             </label>
           </div>
           <div class="form-group setting-room">
             <label for="bitrateInput" style="display: flex; justify-content: space-between; align-items: center;">
               <span>视频码率 (kbps)
-                <span class="help-tip" data-tooltip="限制视频占用的最大上行带宽。&#10;勾选自动将不限制码率，由浏览器动态调整。">?</span>
+                <span class="help-tip" data-tooltip="目标视频码率。推荐值在共享开始时按分辨率和帧率计算">?</span>
               </span>
               <label style="font-size: 12px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
-                <input type="checkbox" id="autoBitrateCheckbox"> 自动
+                <input type="checkbox" id="autoBitrateCheckbox"> 推荐
               </label>
             </label>
             <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100" value="1000">
           </div>
           <div class="form-group setting-room">
             <label for="audioBitrateSelect">音频码率
-              <span class="help-tip" data-tooltip="控制声音的音质，数值越高音质越好，但占用带宽略多。">?</span>
+              <span class="help-tip" data-tooltip="越高音质越好">?</span>
             </label>
             <select id="audioBitrateSelect" class="form-control">
               <option value="32">32 kbps</option>
@@ -192,11 +218,28 @@
             </select>
           </div>
           <div class="form-group setting-server">
+            <label for="easytierPeers">EasyTier 组网节点
+              <span class="help-tip" data-tooltip="帮助成员建立虚拟局域网，让共享画面在电脑间传输；无法直连时可通过支持中继的节点转发。每行一个，默认 TCP，也支持 udp://。自动保存，下次创建或加入房间生效。">?</span>
+            </label>
+            <textarea id="easytierPeers" class="form-control" rows="4" spellcheck="false" placeholder="hhh.591.world:11010"></textarea>
+            <p id="easytierPeersError" role="alert" style="font-size:12px;color:var(--danger)"></p>
+          </div>
+          <div class="form-group setting-server">
+            <label for="peerTestInput">测试单个节点
+              <span class="help-tip" data-tooltip="输入一个 TCP 或 UDP 节点，最多等待 15 秒。测试 EasyTier 握手，不修改节点列表。成功不代表带宽、打洞或所有房间均可用；耗时包含进程启动。">?</span>
+            </label>
+            <div class="input-row">
+              <input id="peerTestInput" type="text" placeholder="hhh.591.world:11010" spellcheck="false" autocomplete="off" />
+              <button id="btnTestPeer" type="button" class="btn btn-outline btn-sm">测试</button>
+            </div>
+            <p id="peerTestResult" role="status" aria-live="polite" style="font-size:12px;margin-top:6px;overflow-wrap:anywhere"></p>
+          </div>
+          <div class="form-group setting-server">
             <label>信令服务器
-              <span class="help-tip" data-tooltip="用于用户互相发现和传递房间信息，必须可用才能加入房间。">?</span>
+              <span class="help-tip" data-tooltip="连接房间所用的服务器。房间成员需使用同一地址，可点击“检测”检查连接。">?</span>
             </label>
             <div class="server-bar">
-              <input type="text" id="serverUrl" value="http://47.116.102.117:3000" />
+              <input type="text" id="serverUrl" value="https://sh.rn1.me" />
               <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
               <span id="serverStatus" class="status-dot disconnected"></span>
             </div>
@@ -210,3 +253,4 @@
   <script type="module" src="renderer.js"></script>
 </body>
 </html>
+

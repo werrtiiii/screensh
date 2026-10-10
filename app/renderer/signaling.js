@@ -10,14 +10,14 @@ export let socket = null;
 export let roomUsers = new Map();
 
 export function connectServer() {
-  const url = $('#serverUrl').value.trim() || 'http://localhost:3000';
+  const url = $('#serverUrl').value.trim() || 'https://sh.rn1.me';
 
   if (socket) {
     socket.removeAllListeners();
     socket.disconnect();
   }
 
-  socket = io(url, { transports: ['websocket', 'polling'], timeout: 10_000 });
+  socket = io(url, { transports: ['websocket', 'polling'], timeout: 10_000, reconnection: false });
 
   socket.on('connect', () => {
     $('#serverStatus').className = 'status-dot connected';
@@ -36,9 +36,12 @@ export function connectServer() {
   });
 
   // --- 房间事件 ---
-  socket.on('room-created', ({ roomId }) => {
+  socket.on('room-created', ({ roomId, users }) => {
     state.roomId = roomId;
     enterRoom(roomId);
+    roomUsers.clear();
+    users.forEach(u => roomUsers.set(u.socketId, u));
+    updateUserList(users);
   });
 
   socket.on('room-joined', ({ roomId, users }) => {
@@ -62,6 +65,9 @@ export function connectServer() {
   });
 
   socket.on('error', ({ message }) => toast(message, 'error'));
+  socket.on('user-left', ({ socketId }) => {
+    if (state.watchingId === socketId) $('#btnStopWatch').click();
+  });
 
   // --- 共享状态事件 ---
   socket.on('peer-sharing-started', ({ socketId }) => {
@@ -77,6 +83,7 @@ export function connectServer() {
     }
     if (state.activeSharerId === socketId) state.activeSharerId = null;
   });
+  return socket;
 }
 
 export function disconnectSignaling() {
@@ -86,3 +93,4 @@ export function disconnectSignaling() {
     socket = null;
   }
 }
+

@@ -3,10 +3,13 @@
 // ============================================================
 import { state, $ } from './shared.js';
 import { socket, roomUsers, disconnectSignaling } from './signaling.js';
+import { toast } from './toast.js';
 import {
   escapeHtml,
   displayRemoteVideo,
   updateSharingUI,
+  stopWatch,
+  stopSharing,
 } from './media.js';
 // --- 成员列表 + 卡片网格 ---
 
@@ -64,20 +67,9 @@ export function updateUserList(users) {
       ${btnHtml}
     `;
 
-    // 观看别人的共享
-    if (isMe && isSharing) {
+    // 自己和其他成员都播放实际共享流。
+    if (isSharing) {
       card.querySelector('.btn-watch').addEventListener('click', () => {
-        state.watchingId = u.socketId;
-        $('#userCardsView').classList.add('hidden');
-        $('#activeVideoView').classList.remove('hidden');
-        $('#watchingUserName').textContent = '你正在通过 OBS 共享屏幕';
-        $('#videoContainer').innerHTML = `<div style="color:var(--text2);">[OBS 推流中，观众可通过 EasyTier 访问你的 MediaMTX 节点]</div>`;
-      });
-    } else if (isSharing && !isMe) {
-      card.querySelector('.btn-watch').addEventListener('click', () => {
-        $('#userCardsView').classList.add('hidden');
-        $('#activeVideoView').classList.remove('hidden');
-        $('#watchingUserName').textContent = `正在观看 ${escapeHtml(u.name)} 的共享`;
         displayRemoteVideo(u.socketId);
       });
     }
@@ -98,18 +90,24 @@ export function enterRoom(roomId) {
   state.watchingId = null;
 }
 
-export function leaveRoom() {
-  window.electronAPI.stopEasyTier();
-  window.electronAPI.stopOBSWhip();
-  window.electronAPI.stopMediaMTX();
-
-  import('./media.js').then(m => m.stopWatch());
+export async function leaveRoom() {
+  if (state.leaving) return;
+  state.leaving = true;
+  stopWatch();
+  const stopping = stopSharing();
   disconnectSignaling();
-
+  roomUsers.clear();
   state.roomId = null;
   state.virtualIp = null;
+  state.activeSharerId = null;
+  state.selectedSourceId = null;
+  $('#screenPicker').classList.add('hidden');
+  $('#serverStatus').className = 'status-dot disconnected';
   $('#room').classList.remove('active');
   $('#lobby').classList.add('active');
+  try { await stopping; await window.electronAPI.leaveRuntime(); }
+  catch (error) { toast(error.message, 'error'); }
+  finally { state.leaving = false; }
 }
 
 

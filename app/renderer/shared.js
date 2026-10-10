@@ -6,17 +6,25 @@ export const state = {
   userName: null,
   virtualIp: null, // 当前本机的 EasyTier VIP
   isSharing: false,
+  startingShare: false,
+  joining: false,
+  leaving: false,
   watchingId: null,
   activeSharerId: null,
 
   // 新增：未完成的默认设置参数与选中屏幕状态
   selectedSourceId: null,
+  selectedSourceType: 'screen',
   resolution: '1280x720',
+  captureMethod: 'auto',
+  videoEncoder: 'x264',
+  autoPreview: true,
   frameRate: 30,
   maxBitrate: 1500,
   audioBitrate: 128,
   shareAudio: false,
-  stunServer: 'stun:stun.l.google.com:19302',
+  // EasyTier or the explicitly selected LAN address supplies the reachable route.
+  stunServer: '',
   turnServer: ''
 };
 

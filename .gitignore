@@ -1,42 +1,73 @@
-# Dependencies
+# Node.js dependencies and local caches
 node_modules/
+.npm/
+.npm-cache/
+.cache/
 
-# Electron build outputs
+# Electron builds and portable packages
 dist/
 out/
 release/
 
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
+# Locally supplied native runtimes (see the project setup guide)
+# These prebuilt resources must be supplied separately after cloning.
+/obs-studio-node/
+/app/res/
 
-# IDE
+# Native binaries, drivers and compiler/debug outputs
+*.exe
+*.dll
+*.node
+*.sys
+*.pdb
+*.lib
+*.obj
+*.exp
+*.ilk
+*.dmp
+
+# Smoke-test profiles, coverage and test reports
+/app/.runtime-probe/
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+*.lcov
+
+# Runtime logs, process IDs and temporary files
+logs/
+*.log
+*.pid
+*.pid.lock
+*.tmp
+*.temp
+*.stackdump
+report.*.json
+
+# Local environment values; keep safe templates versioned
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+!.env.*.sample
+!.env.*.template
+
+# Personal editor and assistant settings
 .vscode/
 .idea/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
 
-# Environment
-.env
-.env.local
-.env.*.local
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
 
-# Logs
-*.log
-npm-debug.log*
-
-# Package locks (optional, uncomment if preferred)
-# package-lock.json
-
-# Electron
-app/node_modules/
-server/node_modules/
-
-
-
-*.txt
-app/res/easytier-core.exe
-.gitignore
-app/res/
+# Keep package-lock.json, source/configuration files and documentation tracked.

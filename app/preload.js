@@ -1,21 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
-
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 窗口管理
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),
-
-  // EasyTier & MediaMTX & OBS 控制
-  startEasyTier: (roomId) => ipcRenderer.invoke('start-easytier', roomId),
-  stopEasyTier: () => ipcRenderer.send('stop-easytier'),
-  startMediaMTX: () => ipcRenderer.send('start-mediamtx'),
-  stopMediaMTX: () => ipcRenderer.send('stop-mediamtx'),
-
-  // 新增：获取显示器列表
+  startEasyTier: (roomId, peers) => ipcRenderer.invoke('start-easytier', roomId, peers),
+  testEasyTierPeer: peer => ipcRenderer.invoke('test-easytier-peer', peer),
   getScreens: () => ipcRenderer.invoke('get-screens'),
-
-  // 修改：接收动态配置参数
-  startOBSWhip: (config) => ipcRenderer.send('start-obs-whip', config),
-  stopOBSWhip: () => ipcRenderer.send('stop-obs-whip'),
+  startSharing: config => ipcRenderer.invoke('start-sharing', config),
+  stopSharing: () => ipcRenderer.invoke('stop-sharing'),
+  leaveRuntime: () => ipcRenderer.invoke('leave-runtime'),
+  onRuntimeError: callback => {
+    const listener = (_event, message) => callback(message);
+    ipcRenderer.on('runtime-error', listener);
+    return () => ipcRenderer.removeListener('runtime-error', listener);
+  },
 });
