@@ -48,6 +48,9 @@ jobs:
           $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
           if ($missing) { throw "Missing release files: $($missing -join ', ')" }
 
+      - name: Verify installed runtime
+        run: node app/scripts/check-installer.cjs
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:

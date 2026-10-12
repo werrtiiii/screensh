@@ -13,7 +13,8 @@ class ObsEngine {
     if (this.initialized) return;
     // Load lazily so a missing native dependency does not prevent the UI opening.
     const o = this.osn = require('obs-studio-node');
-    const bin = path.dirname(require.resolve('obs-studio-node/package.json'));
+    const bin = path.dirname(require.resolve('obs-studio-node/package.json'))
+      .replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
     fs.mkdirSync(this.dataPath, { recursive: true });
     try {
       const oldCompatibility = process.env.__COMPAT_LAYER;
