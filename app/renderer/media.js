@@ -5,6 +5,7 @@ import { WhepSession } from './whep.mjs';
 import { attachVideoStats } from './video-stats.mjs';
 
 let session = null, sharingGeneration = 0;
+let stoppingPromise = null;
 let disposeStats = null;
 export function escapeHtml(str) {
   const div = document.createElement('div'); div.textContent = str; return div.innerHTML;
@@ -32,11 +33,11 @@ export async function loadScreenSources() {
   } catch (error) { list.textContent = `读取共享源失败：${error.message}`; }
 }
 export async function startScreenCapture() {
-  if (state.startingShare || state.isSharing || state.leaving) return;
-  if (!socket?.connected || !state.roomId) return toast('请先连接并加入房间', 'error');
+  if (state.startingShare || state.stoppingShare || state.shareCleanupFailed || state.isSharing || state.leaving || state.switchingChannel) return;
+  if (!socket?.connected || !state.roomId) return toast('请先连接服务器', 'error');
   if (state.selectedSourceId == null) return toast('请选择显示器或窗口', 'error');
   const current = ++sharingGeneration;
-  state.startingShare = true; $('#btnConfirmShare').disabled = true;
+  state.startingShare = true; updateSharingUI(false);
   try {
     await window.electronAPI.startSharing({
       sourceId: state.selectedSourceId, sourceType: state.selectedSourceType, resolution: state.resolution, frameRate: state.frameRate,
@@ -51,17 +52,36 @@ export async function startScreenCapture() {
     if (state.autoPreview) void displayRemoteVideo(socket.id);
   } catch (error) {
     if (current === sharingGeneration) { state.isSharing = false; updateSharingUI(false); toast(error.message, 'error'); }
-  } finally { state.startingShare = false; $('#btnConfirmShare').disabled = false; }
+  } finally { state.startingShare = false; updateSharingUI(state.isSharing); }
 }
-export async function stopSharing() {
+export function stopSharing({ reportErrors = true } = {}) {
+  if (stoppingPromise) return stoppingPromise;
   sharingGeneration++; state.isSharing = false; state.selectedSourceId = null;
+  state.stoppingShare = true;
   socket?.emit('stop-sharing'); updateSharingUI(false); stopWatch();
   $('#btnConfirmShare').classList.add('hidden');
-  try { await window.electronAPI.stopSharing(); } catch (error) { toast(error.message, 'error'); }
+  stoppingPromise = Promise.resolve().then(() => window.electronAPI.stopSharing()).then(() => {
+    state.shareCleanupFailed = false;
+    return true;
+  }, error => {
+    state.shareCleanupFailed = true;
+    if (reportErrors) toast(`共享清理未完成，请重试停止：${error.message}`, 'error');
+    return false;
+  }).finally(() => {
+    state.stoppingShare = false; stoppingPromise = null;
+    updateSharingUI(state.isSharing);
+  });
+  return stoppingPromise;
 }
 export function updateSharingUI(sharing) {
-  $('#btnShare').classList.toggle('hidden', sharing);
-  $('#btnStopShare').classList.toggle('hidden', !sharing);
+  const showStop = sharing || state.stoppingShare || state.shareCleanupFailed;
+  const busy = state.startingShare || state.stoppingShare || state.leaving || state.switchingChannel;
+  $('#btnShare').classList.toggle('hidden', showStop);
+  $('#btnShare').disabled = busy;
+  $('#btnConfirmShare').disabled = busy || state.shareCleanupFailed;
+  $('#btnStopShare').classList.toggle('hidden', !showStop);
+  $('#btnStopShare').disabled = state.stoppingShare || state.leaving;
+  $('#btnStopShare').textContent = state.stoppingShare ? '正在停止…' : state.shareCleanupFailed ? '重试停止' : '⏹ 停止共享';
 }
 export async function displayRemoteVideo(targetSocketId) {
   stopWatch();
@@ -72,6 +92,7 @@ export async function displayRemoteVideo(targetSocketId) {
     return toast('共享者地址不可用', 'error');
   }
   state.watchingId = targetSocketId;
+  renderViewerNames();
   $('#userCardsView').classList.add('hidden'); $('#activeVideoView').classList.remove('hidden');
   $('#watchingUserName').textContent = isSelf ? '我的共享预览' : `正在观看 ${targetUser.name} 的共享`;
   const container = $('#videoContainer');
@@ -92,12 +113,27 @@ export async function displayRemoteVideo(targetSocketId) {
     video.play().catch(() => toast('请点击视频播放按钮'));
   }, fail);
   session = current;
+  let reported = false;
+  const reportViewing = () => {
+    if (session !== current || isSelf) return;
+    const connected = current.pc.connectionState === 'connected';
+    if (reported === connected) return;
+    reported = connected;
+    socket?.emit(connected ? 'request-view' : 'stop-viewing', { target: targetSocketId });
+  };
+  current.pc.addEventListener('connectionstatechange', reportViewing);
   disposeStats = attachVideoStats(container, current.pc);
-  try { await current.start(); } catch (error) { fail(error); }
+  try { await current.start(); reportViewing(); } catch (error) { fail(error); }
+}
+export function renderViewerNames() {
+  const viewers = state.serverUsers.filter(u => u.watchingId === state.watchingId && u.socketId !== state.watchingId);
+  $('#viewerNames').textContent = viewers.length ? `观众（${viewers.length}）：${viewers.map(u => u.name).join('、')}` : '观众（0）：暂无观众';
 }
 export function stopWatch() {
+  if (state.watchingId && state.watchingId !== socket?.id) socket?.emit('stop-viewing', { target: state.watchingId });
   disposeStats?.(); disposeStats = null;
   session?.close(); session = null; state.watchingId = null;
+  $('#viewerNames').textContent = '';
   if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
   const video = $('#videoContainer').querySelector('video');
   if (video?.srcObject) { video.srcObject.getTracks().forEach(track => track.stop()); video.srcObject = null; }

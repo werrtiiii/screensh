@@ -35,6 +35,7 @@ playwright-report/
 *.lcov
 
 # Runtime logs, process IDs and temporary files
+/server/data/
 logs/
 *.log
 *.pid

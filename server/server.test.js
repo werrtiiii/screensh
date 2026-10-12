@@ -1,56 +1,217 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { randomBytes } = require('node:crypto');
+const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('./server');
-
-function event(socket, name) {
+const identity = () => randomBytes(32).toString('hex');
+const request = async (s, event, payload = {}) => {
+  if (event === 'join-server' && !Object.hasOwn(payload, 'easytierPeers')) {
+    const access = await request(s, 'check-access', payload);
+    payload = { ...payload, easytierPeers: access.easytierPeers };
+  }
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => { socket.off(name, done); reject(new Error(`timeout: ${name}`)); }, 2000);
-    function done(value) { clearTimeout(timeout); resolve(value); }
-    socket.once(name, done);
+  s.timeout(2000).emit(event, payload, (error, response) => error ? reject(error) : resolve(response));
   });
-}
-test('room lifecycle, input validation and isolation', async t => {
-  const { server, io } = createSignalingServer();
+};
+async function fixture(t, options) {
+  const { server, io } = createSignalingServer(options);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${server.address().port}`;
-  const clients = [];
-  t.after(async () => { clients.forEach(s => s.disconnect()); await new Promise(resolve => io.close(resolve)); });
-  async function client() {
-    const s = connect(url, { transports: ['websocket'], reconnection: false });
-    clients.push(s); await event(s, 'connect'); return s;
+  const clients = [], url = 'http://127.0.0.1:' + server.address().port;
+  const close = async () => { clients.forEach(s => s.disconnect()); await new Promise(resolve => io.close(resolve)); };
+  t.after(close);
+  return { url, close, async client() {
+    const socket = connect(url, { transports: ['websocket'], reconnection: false });
+    clients.push(socket);
+    await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+    return socket;
+  } };
+}
+test('single server: required names, role enforcement, channels and isolation', async t => {
+  const f = await fixture(t), a = await f.client(), b = await f.client(), c = await f.client(), outsider = await f.client();
+  const info = await request(a, 'server-info');
+  assert.equal(info.protocol, 2);
+  for (const userName of ['', '  ', {}, 'a'.repeat(21)]) {
+    assert.equal((await request(a, 'join-server', { userName, virtualIp: '10.144.1.1', identity: identity() })).ok, false);
   }
-  async function request(s, name, payload, response) {
-    const pending = event(s, response); s.emit(name, payload); return pending;
+  const owner = identity(), admin = identity();
+  const joined = await request(a, 'join-server', { userName: 'A', virtualIp: '10.144.1.1', identity: owner });
+  assert.equal(joined.users[0].role, 'host');
+  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道' }]);
+  assert.equal((await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.1', identity: admin })).ok, false);
+  await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.2', identity: admin });
+  assert.equal((await request(c, 'join-server', { userName: ' a ', virtualIp: '10.144.1.3', identity: identity() })).ok, false);
+  await request(c, 'join-server', { userName: 'C', virtualIp: '10.144.1.3', identity: identity() });
+  assert.equal((await request(outsider, 'create-channel', { name: 'bad' })).ok, false);
+  assert.equal((await request(b, 'create-channel', { name: 'bad' })).ok, false);
+  assert.equal((await request(b, 'set-admin', { socketId: c.id, enabled: true })).ok, false);
+  assert.equal((await request(a, 'set-admin', { socketId: a.id, enabled: false })).ok, false);
+  assert.equal((await request(a, 'set-admin', { socketId: b.id, enabled: true })).ok, true);
+  const created = await request(b, 'create-channel', { name: '游戏频道' });
+  assert.equal(created.ok, true);
+  assert.equal((await request(a, 'create-channel', { name: '游戏频道' })).ok, false);
+  await request(b, 'start-sharing');
+  const switched = await request(b, 'switch-channel', { channelId: created.channel.id });
+  assert.equal(switched.users.find(u => u.socketId === b.id).isSharing, false);
+  assert.equal((await request(a, 'signal', { to: b.id, data: {} })).ok, false);
+  assert.equal((await request(a, 'signal', { to: c.id, data: {} })).ok, true);
+  assert.equal((await request(c, 'switch-channel', { channelId: 'missing' })).ok, false);
+  assert.equal((await request(a, 'set-admin', { socketId: b.id, enabled: false })).ok, true);
+  assert.equal((await request(b, 'create-channel', { name: 'denied' })).ok, false);
+  await request(a, 'leave-server');
+  assert.equal((await request(c, 'create-channel', { name: 'not-owner' })).ok, false);
+  const restored = await request(a, 'join-server', { userName: 'Renamed', virtualIp: '10.144.1.1', identity: owner });
+  assert.equal(restored.users.find(u => u.socketId === a.id).role, 'host');
+  assert.equal(restored.channels.length, 2);
+  const health = await (await fetch(f.url + '/health')).json();
+  assert.equal(health.rooms, 1); assert.equal(health.channels, 2);
+  assert.equal(JSON.stringify(restored).includes(owner), false, 'Never broadcast credentials');
+});
+test('password is owner-only, persisted as a hash, enforced on joins and removable', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-password-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const f = await fixture(t, { stateFile }), a = await f.client(), b = await f.client(), c = await f.client();
+  const owner = identity();
+  await request(a, 'join-server', { userName: 'Owner', virtualIp: '10.144.1.1', identity: owner });
+  await request(b, 'join-server', { userName: 'Admin', virtualIp: '10.144.1.2', identity: identity() });
+  await request(a, 'set-admin', { socketId: b.id, enabled: true });
+  const setting = { enabled: true, password: 'secret-test-123' };
+  assert.equal((await request(b, 'set-server-password', setting)).ok, false);
+  assert.equal((await request(c, 'set-server-password', setting)).ok, false);
+  assert.equal((await request(a, 'set-server-password', setting)).ok, true);
+  assert.equal((await request(c, 'server-info')).passwordRequired, true);
+  assert.equal((await request(b, 'create-channel', { name: 'Still online' })).ok, true);
+  const payload = { userName: 'Guest', virtualIp: '10.144.1.3', identity: identity() };
+  for (const password of [undefined, 'wrong']) {
+    assert.equal((await request(c, 'check-access', { ...payload, password })).ok, false);
+    assert.equal((await request(c, 'join-server', { ...payload, password })).ok, false);
   }
-  const a = await client(), b = await client(), outsider = await client();
-  for (const payload of [null, [], 42, {}, { roomId: 'x', userName: {}, virtualIp: '10.144.1.1' }, { roomId: 'x', virtualIp: '<script>' }]) {
-    assert.ok((await request(a, 'join-room', payload, 'error')).message);
+  assert.equal((await request(c, 'check-access', { ...payload, password: setting.password })).ok, true);
+  const joined = await request(c, 'join-server', { ...payload, password: setting.password });
+  assert.equal(joined.ok, true);
+  assert.equal(JSON.stringify(joined).includes('hash'), false);
+  const disk = fs.readFileSync(stateFile, 'utf8');
+  assert.equal(disk.includes(setting.password), false);
+  assert.equal(JSON.parse(disk).password.hash.length, 64);
+  await f.close();
+  const g = await fixture(t, { stateFile }), returning = await g.client();
+  assert.equal((await request(returning, 'server-info')).passwordRequired, true);
+  assert.equal((await request(returning, 'join-server', { userName: 'Owner', virtualIp: '10.144.1.1', identity: owner, password: setting.password })).ok, true);
+  assert.equal((await request(returning, 'set-server-password', { enabled: true, password: 'replacement' })).ok, true);
+  const guest = await g.client();
+  assert.equal((await request(guest, 'join-server', { ...payload, password: setting.password })).ok, false);
+  assert.equal((await request(returning, 'set-server-password', { enabled: false })).ok, true);
+  assert.equal((await request(guest, 'join-server', payload)).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).password, null);
+});
+
+test('names are unique across channels and concurrent joins; released on leaving', async t => {
+  const f = await fixture(t), a = await f.client(), b = await f.client();
+  const pa = { userName: 'Alice', virtualIp: '10.144.1.1', identity: identity() };
+  const pb = { userName: 'ＡLICE', virtualIp: '10.144.1.2', identity: identity() };
+  const results = await Promise.all([request(a, 'join-server', pa), request(b, 'join-server', pb)]);
+  assert.equal(results.filter(r => r.ok).length, 1);
+  const winner = results[0].ok ? a : b, loser = winner === a ? b : a;
+  const channel = await request(winner, 'create-channel', { name: 'Other' });
+  await request(winner, 'switch-channel', { channelId: channel.channel.id });
+  assert.equal((await request(loser, 'check-access', { userName: ' alice ' })).ok, false);
+  await request(winner, 'leave-server');
+  assert.equal((await request(loser, 'join-server', loser === a ? pa : pb)).ok, true);
+});
+
+test('channel deletion moves members home and kick enforces strict role hierarchy', async t => {
+  const f = await fixture(t), host = await f.client(), admin = await f.client(), member = await f.client(), otherAdmin = await f.client();
+  for (const [i, client] of [host, admin, member, otherAdmin].entries()) {
+    await request(client, 'join-server', { userName: 'User' + i, virtualIp: '10.144.1.' + (i + 1), identity: identity() });
   }
-  const room = { roomId: 'test', userName: 'A', virtualIp: '10.144.1.1' };
-  const created = await request(a, 'create-room', room, 'room-created');
-  assert.equal(created.users[0].virtualIp, room.virtualIp);
-  assert.ok((await request(b, 'join-room', room, 'error')).message.includes('冲突'));
-  const joined = await request(b, 'join-room', { ...room, userName: 'B', virtualIp: '10.144.1.2' }, 'room-joined');
-  assert.equal(joined.users.length, 2);
-  assert.equal(joined.users[0].virtualIp, room.virtualIp);
-  assert.ok((await request(a, 'create-room', { ...room, roomId: 'ghost' }, 'error')).message);
-  let notification = event(b, 'peer-sharing-started'); a.emit('start-sharing');
-  assert.equal((await notification).socketId, a.id);
-  notification = event(b, 'signal'); a.emit('signal', { to: b.id, data: { offer: true } });
-  assert.equal((await notification).from, a.id);
-  await request(outsider, 'create-room', { ...room, roomId: b.id, virtualIp: '10.144.1.3' }, 'room-created');
-  // Application room names cannot impersonate Socket.IO's private socket rooms.
-  for (const [name, field] of [['signal', 'to'], ['request-view', 'target'], ['stop-viewing', 'target']]) {
-    assert.ok((await request(outsider, name, { [field]: b.id }, 'error')).message);
-    assert.ok((await request(outsider, name, null, 'error')).message);
+  for (const client of [admin, otherAdmin]) await request(host, 'set-admin', { socketId: client.id, enabled: true });
+  const created = await request(admin, 'create-channel', { name: 'Temporary' });
+  const channelId = created.channel.id;
+  await request(member, 'switch-channel', { channelId }); await request(member, 'start-sharing');
+  assert.equal((await request(member, 'delete-channel', { channelId })).ok, false);
+  assert.equal((await request(host, 'delete-channel', { channelId: 'main' })).ok, false);
+  const moved = new Promise(resolve => member.once('channel-deleted', resolve));
+  assert.equal((await request(admin, 'delete-channel', { channelId })).ok, true); await moved;
+  const state = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(state.users.find(u => u.socketId === member.id).channelId, 'main');
+  assert.equal(state.users.find(u => u.socketId === member.id).isSharing, false);
+  for (const [actor, target] of [[member, host], [admin, host], [admin, otherAdmin], [host, host]]) {
+    assert.equal((await request(actor, 'kick-member', { socketId: target.id })).ok, false);
   }
-  const updated = event(b, 'room-update'); a.disconnect();
-  const remaining = (await updated).users;
-  assert.equal(remaining.length, 1); assert.equal(remaining[0].role, 'host');
-  b.emit('leave-room');
-  const list = await request(b, 'list-rooms', undefined, 'rooms-list');
-  assert.equal(list.length, 1); assert.equal(list[0].roomId, b.id);
-  const health = await (await fetch(`${url}/health`)).json();
-  assert.deepEqual(health, { status: 'ok', rooms: 1 });
+  const kicked = new Promise(resolve => member.once('kicked', resolve));
+  assert.equal((await request(admin, 'kick-member', { socketId: member.id })).ok, true); await kicked;
+  const adminKicked = new Promise(resolve => admin.once('kicked', resolve));
+  assert.equal((await request(host, 'kick-member', { socketId: admin.id })).ok, true); await adminKicked;
+  const remaining = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(remaining.users.length, 2);
+});
+
+test('server peers are owner-controlled, validated, persisted and checked at join', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-peers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const f = await fixture(t, { stateFile }), host = await f.client(), member = await f.client(), outsider = await f.client();
+  await request(host, 'join-server', { userName: 'Host', virtualIp: '10.144.1.1', identity: identity() });
+  await request(member, 'join-server', { userName: 'Member', virtualIp: '10.144.1.2', identity: identity() });
+  const previous = (await request(outsider, 'check-access', { userName: 'New' })).easytierPeers;
+  const peers = ['tcp://example.com:11010', 'udp://[::1]:11011'];
+  assert.equal((await request(outsider, 'set-server-peers', { peers })).ok, false);
+  assert.equal((await request(member, 'set-server-peers', { peers })).ok, false);
+  await request(host, 'set-admin', { socketId: member.id, enabled: true });
+  assert.equal((await request(member, 'set-server-peers', { peers })).ok, false);
+  for (const peers of [[], ['https://example.com:443'], ['host:0'], 'host:123\n'.repeat(33)]) {
+    assert.equal((await request(host, 'set-server-peers', { peers })).ok, false);
+  }
+  assert.deepEqual((await request(host, 'set-server-peers', { peers: ['example.com:11010', ...peers] })).easytierPeers, peers);
+  assert.equal(member.connected, true);
+  const payload = { userName: 'New', virtualIp: '10.144.1.3', identity: identity(), easytierPeers: previous };
+  assert.equal((await request(outsider, 'join-server', payload)).ok, false);
+  assert.equal((await request(outsider, 'join-server', { ...payload, easytierPeers: peers })).ok, true);
+  await f.close();
+  const g = await fixture(t, { stateFile }), next = await g.client();
+  assert.deepEqual((await request(next, 'check-access', { userName: 'New' })).easytierPeers, peers);
+});
+
+test('viewer presence is scoped to active sharing and cleaned on channel changes and disconnect', async t => {
+  const f = await fixture(t), a = await f.client(), b = await f.client(), c = await f.client();
+  for (const [i, client] of [a, b, c].entries()) await request(client, 'join-server', { userName: 'Viewer' + i, virtualIp: '10.144.1.' + (i + 1), identity: identity() });
+  const view = () => request(a, 'switch-channel', { channelId: 'main' });
+  assert.equal((await request(b, 'request-view', { target: a.id })).ok, false);
+  await request(a, 'start-sharing');
+  assert.equal((await request(a, 'request-view', { target: a.id })).ok, false);
+  await request(b, 'request-view', { target: a.id }); await request(c, 'request-view', { target: a.id });
+  assert.equal((await view()).users.filter(u => u.watchingId === a.id).length, 2);
+  await request(b, 'stop-viewing', { target: a.id });
+  assert.equal((await view()).users.filter(u => u.watchingId === a.id).length, 1);
+  const channelId = (await request(a, 'create-channel', { name: 'Elsewhere' })).channel.id;
+  await request(c, 'switch-channel', { channelId });
+  assert.equal((await view()).users.filter(u => u.watchingId === a.id).length, 0);
+  assert.equal((await request(c, 'request-view', { target: a.id })).ok, false);
+  await request(b, 'request-view', { target: a.id }); await request(a, 'stop-sharing');
+  assert.equal((await view()).users.filter(u => u.watchingId).length, 0);
+  await request(a, 'start-sharing'); await request(b, 'request-view', { target: a.id });
+  await request(a, 'kick-member', { socketId: b.id });
+  assert.equal((await view()).users.filter(u => u.watchingId).length, 0);
+});
+
+test('owner, administrators, server network ID and channels survive restart', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-channels-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'server-state.json');
+  const f = await fixture(t, { stateFile }), a = await f.client(), b = await f.client();
+  const owner = identity(), admin = identity();
+  const first = await request(a, 'join-server', { userName: 'Owner', virtualIp: '10.144.1.1', identity: owner });
+  await request(b, 'join-server', { userName: 'Admin', virtualIp: '10.144.1.2', identity: admin });
+  await request(a, 'set-admin', { socketId: b.id, enabled: true });
+  await request(a, 'create-channel', { name: '持久频道' });
+  await f.close();
+  const g = await fixture(t, { stateFile }), newcomer = await g.client();
+  const after = await request(newcomer, 'join-server', { userName: 'Owner', virtualIp: '10.144.1.3', identity: identity() });
+  assert.equal(after.serverId, first.serverId); assert.equal(after.channels.length, 2);
+  assert.equal(after.users[0].role, 'member', 'Same name must not grant ownership');
+  const returning = await g.client();
+  const restored = await request(returning, 'join-server', { userName: 'Admin', virtualIp: '10.144.1.2', identity: admin });
+  assert.equal(restored.users.find(u => u.socketId === returning.id).role, 'admin');
+  assert.equal(fs.readFileSync(stateFile, 'utf8').includes(admin), false);
 });

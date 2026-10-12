@@ -1,10 +1,12 @@
 {
   "name": "screensh",
-  "version": "1.0.13",
+  "version": "1.4.0",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
-    "pack:win": "node scripts/package-win.cjs",
+    "pack:win": "electron-builder --win nsis",
+    "publish:win": "electron-builder --win nsis --publish always",
+    "pack:portable": "node scripts/package-win.cjs",
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test",
@@ -18,10 +20,46 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^29.4.6",
-    "rcedit": "4.0.1"
+    "electron-builder": "^26.15.3",
+    "rcedit": "4.0.1",
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "obs-studio-node": "file:../obs-studio-node",
-    "socket.io-client": "^4.8.4"
+    "socket.io-client": "^4.8.4",
+    "electron-updater": "^6.6.2"
+  },
+  "build": {
+    "appId": "com.screensh.app",
+    "productName": "ScreenSh",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "managed-process.js",
+      "peer-test.js",
+      "obs-engine.js",
+      "obs-constants.js",
+      "capture-sources.js",
+      "mediamtx.yml",
+      "renderer/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [{ "from": "res", "to": "." }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "artifactName": "ScreenSh-${version}-Setup.${ext}",
+    "publish": [{ "provider": "github", "owner": "werrtiiii", "repo": "screensh" }]
   }
 }

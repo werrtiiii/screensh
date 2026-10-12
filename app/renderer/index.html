@@ -33,36 +33,24 @@
       </div>
 
       <div class="lobby-card">
+        <p id="runtimeCleanupStatus" class="hidden" role="alert" style="color:var(--danger);overflow-wrap:anywhere"></p>
+        <button id="btnRetryCleanup" class="btn btn-outline btn-sm hidden" type="button">重试清理</button>
         <div class="form-group">
-          <label for="userName">你的昵称</label>
-          <input type="text" id="userName" placeholder="输入昵称..." maxlength="20" autocomplete="off" />
+          <label for="userName">名称（必填）</label>
+          <input type="text" id="userName" placeholder="请输入名称" maxlength="20" autocomplete="off" />
         </div>
 
-        <div class="tabs">
-          <button class="tab active" data-tab="create">创建房间</button>
-          <button class="tab" data-tab="join">加入房间</button>
-        </div>
-
-        <!-- Create Room -->
-        <div id="panel-create" class="tab-panel active">
           <div class="form-group">
-            <label for="createRoomId">房间号</label>
-            <div class="input-row">
-              <input type="text" id="createRoomId" placeholder="输入房间号..." maxlength="32" autocomplete="off" />
-              <button id="btnRandom" class="btn btn-outline" title="随机生成">🎲</button>
+            <label for="serverUrl">服务器地址
+              <span class="help-tip" data-tooltip="填写同一服务器地址即可相遇，无需房间码。名称和地址自动保存在本机。">?</span>
+            </label>
+            <div class="server-bar">
+              <input type="text" id="serverUrl" value="https://sh.rn1.me" />
+              <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
+              <span id="serverStatus" class="status-dot disconnected"></span>
             </div>
           </div>
-          <button id="btnCreate" class="btn btn-primary btn-full">创建房间</button>
-        </div>
-
-        <!-- Join Room -->
-        <div id="panel-join" class="tab-panel">
-          <div class="form-group">
-            <label for="joinRoomId">房间号</label>
-            <input type="text" id="joinRoomId" placeholder="输入房间号..." maxlength="32" autocomplete="off" />
-          </div>
-          <button id="btnJoin" class="btn btn-primary btn-full">加入房间</button>
-        </div>
+        <button id="btnConnect" class="btn btn-primary btn-full">连接服务器</button>
       </div>
 
     </div>
@@ -70,14 +58,13 @@
     <!-- ===== Room ===== -->
     <div id="room" class="screen">
       <div class="room-topbar">
-        <button id="btnLeave" class="btn btn-outline btn-sm">← 离开房间</button>
+        <button id="btnLeave" class="btn btn-outline btn-sm">← 断开连接</button>
         <div class="room-info" style="display: flex; align-items: center; gap: 8px;">
-          <span class="room-label">房间号：</span>
-          <span id="roomIdDisplay" style="font-weight: bold; font-family: monospace; font-size: 16px;"></span>
-          <button id="btnCopyRoomId" class="btn btn-outline btn-sm" title="复制房间号" style="padding: 2px 6px; font-size: 12px;">📋复制</button>
+          <span class="room-label">当前频道：</span><span id="channelNameDisplay"></span>
         </div>
         <div class="room-actions">
-          <button id="btnRoomSettings" class="btn btn-outline btn-sm">⚙️ 设置</button>
+          <button id="btnServerSettings" class="btn btn-outline btn-sm hidden">服务器设置</button>
+          <button id="btnRoomSettings" class="btn btn-outline btn-sm">⚙️ 共享设置</button>
           <button id="btnShare" class="btn btn-primary btn-sm">📺 共享屏幕</button>
           <button id="btnStopShare" class="btn btn-danger btn-sm hidden">⏹ 停止共享</button>
         </div>
@@ -92,6 +79,7 @@
           <div id="activeVideoView" class="active-video-view hidden">
             <div class="video-header">
               <button id="btnStopWatch" class="btn btn-outline btn-sm">← 返回</button>
+              <span id="viewerNames" class="viewer-names" aria-live="polite">观众（0）：暂无观众</span>
               <span id="watchingUserName" class="watching-title">正在观看...</span>
             </div>
             <div id="videoContainer" class="video-container"></div>
@@ -100,22 +88,48 @@
 
         <!-- Sidebar: users + screen sources -->
         <div class="sidebar">
-          <!-- Screen picker (shown only for sharer) -->
-          <div id="screenPicker" class="side-panel hidden">
-            <h3>选择共享源</h3>
-            <p style="font-size:12px;color:var(--text2);margin-bottom:8px">窗口需保持打开且未最小化。</p>
-            <button id="btnCancelPicker" class="btn btn-outline btn-sm" style="margin-bottom:8px;">收起</button>
-            <div id="screenList" class="screen-list"></div>
-            <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
+          <div class="side-panel">
+            <div class="channel-heading"><h3>频道</h3><button id="btnAddChannel" class="btn btn-outline btn-sm hidden" aria-label="创建频道" title="创建频道">＋</button></div>
+            <div id="channelList" class="channel-list"></div>
           </div>
-
           <!-- Users list -->
           <div class="side-panel">
-            <h3>房间成员 (<span id="userCount">0</span>)</h3>
+            <h3>服务器成员 (<span id="userCount">0</span>)</h3>
             <ul id="userList" class="user-list"></ul>
           </div>
         </div>
       </div>
+    </div>
+    <div id="channelDialog" class="modal hidden">
+      <form id="createChannelForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="channelDialogTitle">
+        <div class="modal-header"><h2 id="channelDialogTitle">创建频道</h2><button id="btnCancelChannel" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="form-group"><label for="channelNameInput">频道名称</label><input type="text" id="channelNameInput" placeholder="新频道名称" maxlength="30" required /></div>
+        <div class="dialog-actions"><button id="btnCreateChannel" class="btn btn-primary" type="submit">创建频道</button></div>
+      </form>
+    </div>
+    <div id="screenPicker" class="modal hidden">
+      <div class="modal-content source-dialog" role="dialog" aria-modal="true" aria-labelledby="sourceDialogTitle">
+        <div class="modal-header"><h2 id="sourceDialogTitle">选择共享源</h2><button id="btnCancelPicker" class="btn-close" aria-label="关闭">×</button></div>
+        <div id="screenList" class="screen-list"></div>
+        <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
+      </div>
+    </div>
+    <div id="serverSettingsDialog" class="modal hidden">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverSettingsTitle">
+        <div class="modal-header"><h2 id="serverSettingsTitle">服务器设置</h2><button id="btnCloseServerSettings" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="server-setting-row"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
+        <div class="server-setting-row"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
+      </div>
+    </div>
+    <div id="serverPeersDialog" class="modal hidden">
+      <form id="serverPeersForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverPeersTitle">
+        <div class="modal-header"><h2 id="serverPeersTitle">服务器组网节点</h2><button id="btnCancelServerPeers" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="form-group"><label for="serverPeersInput">EasyTier 节点 <span class="help-tip" data-tooltip="帮助成员建立虚拟局域网传输共享画面。每行一个，支持 TCP / UDP，未写协议时使用 TCP。保存到服务器，下次连接生效。">?</span></label>
+          <textarea id="serverPeersInput" class="form-control" rows="5" spellcheck="false" placeholder="主机:端口"></textarea>
+        </div>
+        <p id="serverPeersError" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions"><button id="btnSaveServerPeers" type="submit" class="btn btn-primary">保存节点</button></div>
+      </form>
     </div>
     <!-- ===== Settings Modal ===== -->
     <div id="settingsModal" class="modal hidden">
@@ -133,6 +147,16 @@
               <option value="dark">深色</option>
               <option value="light" selected>浅色</option>
             </select>
+          </div>
+          <div class="form-group setting-update">
+            <label>软件更新</label>
+            <div class="update-row">
+              <span id="updateStatus" class="update-status" role="status">当前版本</span>
+              <button id="btnCheckUpdate" type="button" class="btn btn-outline btn-sm">检查更新</button>
+            </div>
+            <div id="updateActions" class="update-actions hidden">
+              <button id="btnDownloadUpdate" type="button" class="btn btn-primary btn-sm">下载更新</button>
+            </div>
           </div>
           <div class="form-group setting-codec">
             <label for="videoCodecSelect">视频编码方式
@@ -217,33 +241,7 @@
               <option value="256">256 kbps</option>
             </select>
           </div>
-          <div class="form-group setting-server">
-            <label for="easytierPeers">EasyTier 组网节点
-              <span class="help-tip" data-tooltip="帮助成员建立虚拟局域网，让共享画面在电脑间传输；无法直连时可通过支持中继的节点转发。每行一个，默认 TCP，也支持 udp://。自动保存，下次创建或加入房间生效。">?</span>
-            </label>
-            <textarea id="easytierPeers" class="form-control" rows="4" spellcheck="false" placeholder="hhh.591.world:11010"></textarea>
-            <p id="easytierPeersError" role="alert" style="font-size:12px;color:var(--danger)"></p>
-          </div>
-          <div class="form-group setting-server">
-            <label for="peerTestInput">测试单个节点
-              <span class="help-tip" data-tooltip="输入一个 TCP 或 UDP 节点，最多等待 15 秒。测试 EasyTier 握手，不修改节点列表。成功不代表带宽、打洞或所有房间均可用；耗时包含进程启动。">?</span>
-            </label>
-            <div class="input-row">
-              <input id="peerTestInput" type="text" placeholder="hhh.591.world:11010" spellcheck="false" autocomplete="off" />
-              <button id="btnTestPeer" type="button" class="btn btn-outline btn-sm">测试</button>
-            </div>
-            <p id="peerTestResult" role="status" aria-live="polite" style="font-size:12px;margin-top:6px;overflow-wrap:anywhere"></p>
-          </div>
-          <div class="form-group setting-server">
-            <label>信令服务器
-              <span class="help-tip" data-tooltip="连接房间所用的服务器。房间成员需使用同一地址，可点击“检测”检查连接。">?</span>
-            </label>
-            <div class="server-bar">
-              <input type="text" id="serverUrl" value="https://sh.rn1.me" />
-              <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
-              <span id="serverStatus" class="status-dot disconnected"></span>
-            </div>
-          </div>
+
         </div>
       </div>
     </div>
@@ -253,4 +251,3 @@
   <script type="module" src="renderer.js"></script>
 </body>
 </html>
-

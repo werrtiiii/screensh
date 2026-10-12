@@ -3,47 +3,11 @@
 // ============================================================
 import { state, $, $$ } from './shared.js';
 import { toast } from './toast.js';
-import { socket, connectServer } from './signaling.js';
+import { socket, connectServer, requestServer, applyServerState } from './signaling.js';
 import { loadScreenSources, startScreenCapture, stopSharing, stopWatch } from './media.js';
-import { leaveRoom } from './room.js';
-import { DEFAULT_PEER, normalizePeers } from './easytier-peers.mjs';
-
-const peerInput = $('#easytierPeers');
-peerInput.value = localStorage.getItem('easytierPeers') ?? DEFAULT_PEER;
-function savePeers() {
-  try {
-    const peers = normalizePeers(peerInput.value);
-    localStorage.setItem('easytierPeers', peerInput.value.trim());
-    $('#easytierPeersError').textContent = '';
-    return peers;
-  } catch (error) {
-    $('#easytierPeersError').textContent = error.message;
-    throw error;
-  }
-}
-peerInput.addEventListener('input', () => { try { savePeers(); } catch {} });
-
-$('#btnTestPeer').addEventListener('click', async () => {
-  const button = $('#btnTestPeer'), input = $('#peerTestInput'), result = $('#peerTestResult');
-  try {
-    const peers = normalizePeers(input.value);
-    if (peers.length !== 1) throw new Error('每次只能测试一个节点');
-    button.disabled = true; input.disabled = true; button.textContent = '测试中…';
-    result.style.color = 'var(--text2)'; result.textContent = '正在连接节点…';
-    const tested = await window.electronAPI.testEasyTierPeer(peers[0]);
-    result.style.color = 'var(--green, #16a34a)';
-    result.textContent = `握手成功 · ${(tested.elapsedMs / 1000).toFixed(1)} 秒`;
-  } catch (error) {
-    result.style.color = 'var(--danger)';
-    result.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
-  } finally {
-    button.disabled = false; input.disabled = false; button.textContent = '测试';
-  }
-});
-$('#peerTestInput').addEventListener('input', () => { $('#peerTestResult').textContent = ''; });
-$('#peerTestInput').addEventListener('keydown', event => {
-  if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); $('#btnTestPeer').click(); }
-});
+import { leaveRoom, enterRoom } from './room.js';
+import { normalizePeers } from './easytier-peers.mjs';
+import { requestPassword } from './password-dialog.js';
 
 // --- 初始化主题---
 function initTheme() {
@@ -66,62 +30,66 @@ $('#themeSelect').addEventListener('change', (e) => {
 // 执行初始化
 initTheme();
 
-// --- 创建/加入 标签页切换 ---
-$$('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => {
-    $$('.tab').forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    const target = tab.dataset.tab;
-    $$('.tab-panel').forEach((p) => p.classList.remove('active'));
-    $(`#panel-${target}`).classList.add('active');
-  });
-});
-
-// --- 随机生成房间号 ---
-$('#btnRandom').addEventListener('click', () => {
-  const id = Math.random().toString(36).substring(2, 8).toUpperCase();
-  $('#createRoomId').value = id;
-});
-
-// Serialize joining and wait for both the network and the server acknowledgement.
-async function joinRoom(creating) {
-  if (state.joining || state.leaving || state.roomId) return;
-  const roomId = $(creating ? '#createRoomId' : '#joinRoomId').value.trim();
-  const userName = $('#userName').value.trim() || '匿名用户';
-  if (!roomId) return toast('请输入房间号', 'error');
-  state.joining = true; $('#btnCreate').disabled = $('#btnJoin').disabled = true;
+// A server has one permanent room; its stable ID also names the EasyTier network.
+async function joinServer() {
+  if (state.joining || state.leaving || state.runtimeCleanupFailed || state.roomId) return;
+  const userName = $('#userName').value.trim();
+  if (!userName) { $('#userName').focus(); return toast('请输入名称', 'error'); }
+  if (userName.length > 20) return toast('名称最多20个字符', 'error');
+  let serverUrl;
   try {
-    toast('正在准备网络连接...');
-    state.virtualIp = await window.electronAPI.startEasyTier(roomId, savePeers());
+    const parsed = new URL($('#serverUrl').value.trim());
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
+    serverUrl = parsed.origin;
+  } catch { return toast('请输入有效的 HTTP 或 HTTPS 服务器地址，不要附加路径', 'error'); }
+  $('#serverUrl').value = serverUrl;
+  localStorage.setItem('userName', userName); localStorage.setItem('serverUrl', serverUrl);
+  state.joining = true; $('#btnConnect').disabled = true; $('#btnConnect').textContent = '连接中…';
+  try {
     const connection = connectServer();
     await new Promise((resolve, reject) => {
-      const successEvent = creating ? 'room-created' : 'room-joined';
-      const timer = setTimeout(() => finish(new Error('加入房间超时')), 12000);
-      const finish = error => {
-        clearTimeout(timer); connection.off(successEvent, success); connection.off('error', failed);
-        connection.off('connect_error', failed); connection.off('connect', connected); connection.off('disconnect', disconnected);
-        error ? reject(error) : resolve();
-      };
-      const success = () => finish();
-      const failed = error => finish(new Error(error.message || '连接失败'));
-      const disconnected = () => finish(new Error('连接已断开'));
-      const connected = () => connection.emit(creating ? 'create-room' : 'join-room', { roomId, userName, virtualIp: state.virtualIp });
-      connection.once(successEvent, success); connection.once('error', failed);
-      connection.once('connect_error', failed); connection.once('disconnect', disconnected);
-      if (connection.connected) connected(); else connection.once('connect', connected);
+      const finish = error => { clearTimeout(timer); connection.off('connect', ready); connection.off('connect_error', failed); error ? reject(error) : resolve(); };
+      const ready = () => finish(), failed = error => finish(new Error(error.message || '连接失败'));
+      const timer = setTimeout(() => finish(new Error('连接服务器超时')), 12000);
+      connection.once('connect', ready); connection.once('connect_error', failed);
+      if (connection.connected) ready();
     });
+    const info = await requestServer('server-info', {}, connection);
+    if (info.protocol !== 2 || !/^[a-f0-9-]{36}$/.test(info.serverId)) throw new Error('请升级为支持频道的服务器');
+    let password = '';
+    if (info.passwordRequired) {
+      const answer = await requestPassword({ connection });
+      if (!answer) { await leaveRoom(); return; }
+      password = answer.password;
+    }
+    const access = await requestServer('check-access', { userName, password }, connection);
+    if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
+    const easytierPeers = normalizePeers(access.easytierPeers);
+    const identityKey = 'serverIdentity:' + serverUrl + ':' + info.serverId;
+    let identity = localStorage.getItem(identityKey);
+    if (!/^[a-f0-9]{64}$/.test(identity || '')) {
+      identity = Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem(identityKey, identity);
+    }
+    toast('正在准备网络连接…');
+    state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
+    const joined = await requestServer('join-server', { userName, identity, password, easytierPeers, virtualIp: state.virtualIp }, connection);
+    if (!connection.connected) throw new Error('连接已断开，请重试');
+    state.roomId = info.serverId; state.userName = userName;
+    enterRoom(info.serverId); applyServerState(joined);
   } catch (error) { toast(error.message, 'error'); await leaveRoom(); }
-  finally { state.joining = false; $('#btnCreate').disabled = $('#btnJoin').disabled = false; }
+  finally { state.joining = false; $('#btnConnect').disabled = state.leaving || state.runtimeCleanupFailed; $('#btnConnect').textContent = '连接服务器'; }
 }
-$('#btnCreate').addEventListener('click', () => joinRoom(true));
-$('#btnJoin').addEventListener('click', () => joinRoom(false));
+$('#btnConnect').addEventListener('click', joinServer);
 
 // --- 离开房间 ---
 $('#btnLeave').addEventListener('click', leaveRoom);
+$('#btnRetryCleanup').addEventListener('click', leaveRoom);
 
 // --- 共享屏幕：展开屏幕源选择面板 ---
 $('#btnShare').addEventListener('click', () => {
   $('#screenPicker').classList.remove('hidden');
+  $('#btnCancelPicker').focus();
   loadScreenSources();
 });
 
@@ -132,6 +100,20 @@ $('#btnCancelPicker').addEventListener('click', () => {
   $$('.screen-item').forEach((el) => el.classList.remove('selected'));
   $('#btnConfirmShare').classList.add('hidden');
 });
+
+for (const [id, close] of [['screenPicker', 'btnCancelPicker'], ['channelDialog', 'btnCancelChannel'], ['serverPeersDialog', 'btnCancelServerPeers'], ['serverSettingsDialog', 'btnCloseServerSettings']]) {
+  const modal = $('#' + id);
+  modal.addEventListener('click', event => { if (event.target === modal) $('#' + close).click(); });
+  modal.addEventListener('keydown', event => {
+    event.stopPropagation();
+    if (event.key === 'Escape') { event.preventDefault(); $('#' + close).click(); }
+    if (event.key === 'Tab') {
+      const nodes = [...modal.querySelectorAll('button,input')].filter(n => !n.disabled && !n.classList.contains('hidden'));
+      if (event.shiftKey && document.activeElement === nodes[0]) { event.preventDefault(); nodes.at(-1)?.focus(); }
+      else if (!event.shiftKey && document.activeElement === nodes.at(-1)) { event.preventDefault(); nodes[0]?.focus(); }
+    }
+  });
+}
 
 // --- 确认开始共享 ---
 $('#btnConfirmShare').addEventListener('click', startScreenCapture);
@@ -175,7 +157,9 @@ function testServerConnection() {
 $('#btnTestServer').addEventListener('click', testServerConnection);
 
 $('#serverUrl').value = localStorage.getItem('serverUrl') || 'https://sh.rn1.me';
-$('#serverUrl').addEventListener('change', () => localStorage.setItem('serverUrl', $('#serverUrl').value.trim()));
+$('#serverUrl').addEventListener('input', () => localStorage.setItem('serverUrl', $('#serverUrl').value.trim()));
+$('#userName').value = localStorage.getItem('userName') || '';
+$('#userName').addEventListener('input', () => localStorage.setItem('userName', $('#userName').value.trim()));
 window.electronAPI.onRuntimeError(async message => { toast(message, 'error'); await leaveRoom(); });
 // 启动时自动检测一次
 testServerConnection();
@@ -184,12 +168,7 @@ testServerConnection();
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && settingsModal.classList.contains('hidden')) {
     if ($('#lobby').classList.contains('active')) {
-      const activePanel = document.querySelector('.tab-panel.active');
-      if (activePanel?.id === 'panel-create') {
-        $('#btnCreate').click();
-      } else {
-        $('#btnJoin').click();
-      }
+      if (e.target.tagName !== 'BUTTON') { e.preventDefault(); $('#btnConnect').click(); }
     }
   }
 });
@@ -329,6 +308,48 @@ function initSettings() {
 
 initSettings();
 
+// GitHub Releases update check is explicit so it does not create background traffic.
+const updateStatus = $('#updateStatus');
+const btnCheckUpdate = $('#btnCheckUpdate');
+const btnDownloadUpdate = $('#btnDownloadUpdate');
+const updateActions = $('#updateActions');
+function setUpdateStatus(message, kind = '') {
+  updateStatus.textContent = message;
+  updateStatus.dataset.kind = kind;
+}
+btnCheckUpdate?.addEventListener('click', async () => {
+  btnCheckUpdate.disabled = true;
+  updateActions.classList.add('hidden');
+  setUpdateStatus('正在检查…');
+  try {
+    const result = await window.electronAPI.checkForUpdate();
+    if (result.available) {
+      setUpdateStatus(`发现新版本 ${result.version}`, 'update');
+      updateActions.classList.remove('hidden');
+    } else {
+      setUpdateStatus(result.development ? '开发模式不检查更新' : `已是最新版本（${result.currentVersion}）`, 'ok');
+    }
+  } catch (error) {
+    setUpdateStatus(error?.message || '检查更新失败', 'error');
+  } finally {
+    btnCheckUpdate.disabled = false;
+  }
+});
+btnDownloadUpdate?.addEventListener('click', async () => {
+  btnDownloadUpdate.disabled = true;
+  btnCheckUpdate.disabled = true;
+  setUpdateStatus('正在下载更新…');
+  try {
+    await window.electronAPI.downloadAndInstallUpdate();
+  } catch (error) {
+    setUpdateStatus(error?.message || '无法打开下载页面', 'error');
+    btnCheckUpdate.disabled = false;
+  } finally {
+    btnDownloadUpdate.disabled = false;
+  }
+});
+window.electronAPI.onUpdateProgress?.(percent => setUpdateStatus(`正在下载更新… ${Math.round(percent)}%`));
+
 // ============================================================
 // 窗口控制逻辑 (自定义标题栏)
 // ============================================================
@@ -371,18 +392,22 @@ $$('.help-tip').forEach(tip => {
 if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
+      $('#settingsModal h2').textContent = '系统设置';
       $$('.setting-codec').forEach(el => el.style.display = '');
       $$('.setting-server').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
+      $$('.setting-update').forEach(el => el.style.display = '');
       $$('.setting-room').forEach(el => el.style.display = 'none');
       settingsModal.classList.remove('hidden');
     });
   }
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
+      $('#settingsModal h2').textContent = '共享设置';
       $$('.setting-codec').forEach(el => el.style.display = 'none');
       $$('.setting-server').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
+      $$('.setting-update').forEach(el => el.style.display = 'none');
       $$('.setting-room').forEach(el => el.style.display = '');
       settingsModal.classList.remove('hidden');
     });
@@ -396,5 +421,3 @@ if (settingsModal && btnCloseSettings) {
     }
   });
 }
-
-

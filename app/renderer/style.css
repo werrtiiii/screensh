@@ -141,7 +141,7 @@ body {
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 6px; font-weight: 500; }
 
-input[type="text"], .form-control {
+input[type="text"], input[type="password"], .form-control {
   width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border);
@@ -152,10 +152,10 @@ input[type="text"], .form-control {
   outline: none;
   transition: var(--transition);
 }
-input[type="text"]:focus, .form-control:focus { border-color: var(--primary); background: var(--surface); box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.15); }
+input[type="text"]:focus, input[type="password"]:focus, .form-control:focus { border-color: var(--primary); background: var(--surface); box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.15); }
 input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 
-#easytierPeers {
+#serverPeersInput {
   resize: vertical;
   min-width: 0;
   max-width: 100%;
@@ -382,6 +382,15 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
 
 /* ===== Settings Modal ===== */
+.channel-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.channel-button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.channel-button.active { background: var(--primary); color: white; }
+#channelNameInput { min-width: 0; }
+#userList li { flex-wrap: wrap; }
+#userList .member-actions { width: 100%; display: flex; justify-content: flex-end; }
+#channelNameDisplay { font-weight: 600; overflow-wrap: anywhere; }
+.lobby-card { max-width: calc(100vw - 32px); }
+
 .modal {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0, 0, 0, 0.4); z-index: 1000;
@@ -455,3 +464,35 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 }
 .debug-header .btn-close-sm:hover { color: #fff; }
 .debug-content div { margin-bottom: 5px; line-height: 1.4; }
+/* Password prompts appear above the room settings dialog. */
+.password-modal { z-index: 1200; }
+.password-modal input[type="password"] { width: 100%; box-sizing: border-box; }
+.password-error { margin-bottom: 12px; }
+.channel-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.channel-heading h3 { margin: 0; }
+.context-menu { position: fixed; z-index: 1500; min-width: 160px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 30px #0004; }
+.context-menu button { display: block; width: 100%; padding: 10px 14px; border: 0; border-radius: 6px; text-align: left; color: var(--text); background: transparent; cursor: pointer; }
+.context-menu button:hover, .context-menu button:focus-visible { background: var(--surface2); }
+.context-menu button:disabled { opacity: .5; cursor: default; }
+.source-dialog { width: min(760px, 92vw); }
+.source-dialog .screen-list { max-height: 55vh; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin-bottom: 16px; }
+.source-dialog .screen-item { min-width: 0; overflow-wrap: anywhere; }
+.room-actions { flex-wrap: wrap; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.dialog-actions .btn { min-width: 88px; }
+.dialog-error { font-size: 13px; color: var(--danger); overflow-wrap: anywhere; }
+.password-modal .form-group { margin-bottom: 20px; }
+.password-modal input[type="password"], #channelNameInput { min-height: 44px; }
+.password-modal input:disabled { opacity: .45; cursor: not-allowed; }
+.password-toggle { display: flex !important; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface2); }
+.password-toggle input { width: 18px; height: 18px; accent-color: var(--primary); }
+.server-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-top: 1px solid var(--border); }
+.server-setting-row span { color: var(--text2); font-size: 14px; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.update-status { color: var(--text2); font-size: 13px; overflow-wrap: anywhere; }
+.update-status[data-kind="ok"] { color: var(--green); }
+.update-status[data-kind="update"] { color: var(--primary); font-weight: 600; }
+.update-status[data-kind="error"] { color: var(--danger); }
+.update-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.video-header { flex-wrap: wrap; }
+.viewer-names { font-size: 13px; color: var(--text2); overflow-wrap: anywhere; max-width: 100%; }

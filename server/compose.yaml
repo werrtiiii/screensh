@@ -1,0 +1,14 @@
+services:
+  screensh-server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      SCREENSH_STATE_FILE: /app/data/server-state.json
+    volumes:
+      - screensh-data:/app/data
+
+volumes:
+  screensh-data:

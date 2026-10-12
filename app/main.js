@@ -7,8 +7,19 @@ const { isIPv4 } = require('net');
 const { randomInt } = require('crypto');
 const { ManagedProcess } = require('./managed-process');
 const { ObsEngine } = require('./obs-engine');
+let updater = null;
+function getUpdater() {
+  if (!updater) {
+    ({ autoUpdater: updater } = require('electron-updater'));
+    updater.autoDownload = false;
+    updater.autoInstallOnAppQuit = false;
+    updater.on('download-progress', progress => mainWindow?.webContents.send('update-progress', progress.percent));
+  }
+  return updater;
+}
 
-let mainWindow, obs, virtualIp, startingShare = false, generation = 0, quitting = false;
+let mainWindow, obs, virtualIp, generation = 0, quitting = false;
+let shareStart = null, shareStop = null, shareCleanup = null, runtimeLeave = null;
 const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'res'), name);
 function failure(message) {
   console.error(message);
@@ -18,6 +29,19 @@ const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./peer-test').createPeerTester(resource('easytier-core.exe'));
 ipcMain.handle('test-easytier-peer', (_event, peer) => peerTester.test(peer));
+ipcMain.handle('check-for-update', async () => {
+  if (!app.isPackaged) return { available: false, currentVersion: app.getVersion(), development: true };
+  const result = await getUpdater().checkForUpdates();
+  const info = result?.updateInfo;
+  return { available: !!info && info.version !== app.getVersion(), currentVersion: app.getVersion(), version: info?.version || null };
+});
+ipcMain.handle('download-and-install-update', async () => {
+  if (!app.isPackaged) throw new Error('开发模式不能安装更新');
+  const updater = getUpdater();
+  updater.once('update-downloaded', () => updater.quitAndInstall(false, true));
+  await updater.downloadUpdate();
+  return true;
+});
 const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i.address);
 
 function createWindow() {
@@ -35,6 +59,7 @@ function createWindow() {
 }
 
 ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
+  if (runtimeLeave) await runtimeLeave;
   if (typeof roomId !== 'string' || !/^[\p{L}\p{N}_-]{1,64}$/u.test(roomId)) throw new Error('房间号仅支持1至64位字母、数字、下划线和连字符');
   const { normalizePeers, DEFAULT_PEER } = await import('./renderer/easytier-peers.mjs');
   const peers = normalizePeers(configuredPeers ?? process.env.SCREENSH_EASYTIER_PEER ?? DEFAULT_PEER);
@@ -88,38 +113,77 @@ function validateConfig(config) {
     || !Number.isInteger(config.maxBitrate) || (config.maxBitrate !== 0 && (config.maxBitrate < 100 || config.maxBitrate > 10000))
     || ![32, 64, 128, 256].includes(config.audioBitrate) || typeof config.shareAudio !== 'boolean') throw new Error('共享设置无效');
 }
-async function stopShare() {
+function checkCleanup(results, labels) {
+  const errors = results.flatMap((result, index) => result.status === 'rejected'
+    ? [`${labels[index]}：${result.reason?.message || String(result.reason)}`] : []);
+  if (errors.length) throw new Error(errors.join('；'));
+}
+function stopShareResources() {
+  if (shareCleanup) return shareCleanup;
+  // One failure must not prevent the other resource from being released.
+  shareCleanup = Promise.allSettled([
+    Promise.resolve().then(() => obs?.stop()),
+    Promise.resolve().then(() => mediamtx.stop()),
+  ]).then(results => checkCleanup(results, ['OBS', 'MediaMTX']))
+    .finally(() => { shareCleanup = null; });
+  return shareCleanup;
+}
+function stopShare() {
+  if (shareStop) return shareStop;
   generation++;
-  obs?.stop();
-  await mediamtx.stop();
+  // Cancel immediately, then drain the old start before allowing a new one.
+  // The cancelled start must not call stopShare() and await itself.
+  shareStop = Promise.allSettled([stopShareResources(), shareStart])
+    .then(([cleanup]) => checkCleanup([cleanup], ['共享清理']))
+    .finally(() => { shareStop = null; });
+  return shareStop;
 }
 ipcMain.handle('start-sharing', async (_event, config) => {
   validateConfig(config);
+  if (shareStop) await shareStop;
+  if (runtimeLeave || quitting) throw new Error('正在退出，请稍候');
   if (!virtualIp) throw new Error('请先加入房间');
-  if (startingShare || obs.streaming) throw new Error('共享正在启动或已启动');
-  startingShare = true;
+  if (shareStart || obs.streaming) throw new Error('共享正在启动或已启动');
   const current = ++generation;
-  try {
-    const exe = resource('mediamtx.exe');
-    await mediamtx.start(exe, [path.join(__dirname, 'mediamtx.yml')], {
-      cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
-      env: { ...process.env, MTX_WEBRTCADDITIONALHOSTS: virtualIp,
-        MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${virtualIp}:8189`,
-        MTX_WEBRTCLOCALTCPADDRESS: `${virtualIp}:8189` },
-    });
-    if (current !== generation) throw new Error('共享启动已取消');
-    const result = await obs.start(config);
-    await mediamtx.waitForOutput(/\[path live\] stream is available/);
-    if (current !== generation) throw new Error('共享启动已取消');
-    return result;
-  } catch (error) {
-    await stopShare(); throw error;
-  } finally { startingShare = false; }
+  shareStart = (async () => {
+    try {
+      const exe = resource('mediamtx.exe');
+      await mediamtx.start(exe, [path.join(__dirname, 'mediamtx.yml')], {
+        cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
+        env: { ...process.env, MTX_WEBRTCADDITIONALHOSTS: virtualIp,
+          MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${virtualIp}:8189`,
+          MTX_WEBRTCLOCALTCPADDRESS: `${virtualIp}:8189` },
+      });
+      if (current !== generation) throw new Error('共享启动已取消');
+      const result = await obs.start(config);
+      if (current !== generation) throw new Error('共享启动已取消');
+      await mediamtx.waitForOutput(/\[path live\] stream is available/);
+      if (current !== generation) throw new Error('共享启动已取消');
+      return result;
+    } catch (error) {
+      // An explicit stop owns cleanup when it has cancelled this generation.
+      if (current === generation) {
+        try { await stopShareResources(); }
+        catch (cleanupError) { throw new Error(`${error.message}；${cleanupError.message}`); }
+      }
+      throw error;
+    }
+  })().finally(() => { shareStart = null; });
+  return shareStart;
 });
 ipcMain.handle('stop-sharing', stopShare);
-ipcMain.handle('leave-runtime', async () => {
-  await stopShare(); await easytier.stop(); virtualIp = null;
-});
+function leaveRuntime() {
+  if (runtimeLeave) return runtimeLeave;
+  // Invalidate room access before any asynchronous cleanup can fail.
+  virtualIp = null;
+  runtimeLeave = Promise.allSettled([
+    stopShare(),
+    Promise.resolve().then(() => easytier.stop()),
+  ]).then(results => checkCleanup(results, ['媒体', '虚拟网络']))
+    .finally(() => { virtualIp = null; runtimeLeave = null; });
+  return runtimeLeave;
+}
+ipcMain.handle('leave-runtime', leaveRuntime);
 
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
@@ -133,7 +197,7 @@ else {
   app.on('before-quit', event => {
     if (quitting) return;
     event.preventDefault(); quitting = true;
-    Promise.allSettled([stopShare(), easytier.stop(), peerTester.stop()]).finally(() => { obs?.shutdown(); app.quit(); });
+    Promise.allSettled([leaveRuntime(), peerTester.stop()]).finally(() => { obs?.shutdown(); app.quit(); });
   });
 }
 

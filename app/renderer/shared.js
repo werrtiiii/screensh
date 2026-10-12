@@ -3,12 +3,21 @@
 // ============================================================
 export const state = {
   roomId: null,
+  channelId: null,
+  channels: [],
+  serverUsers: [],
+  passwordRequired: false,
+  easytierPeers: [],
+  switchingChannel: false,
   userName: null,
   virtualIp: null, // 当前本机的 EasyTier VIP
   isSharing: false,
   startingShare: false,
+  stoppingShare: false,
+  shareCleanupFailed: false,
   joining: false,
   leaving: false,
+  runtimeCleanupFailed: false,
   watchingId: null,
   activeSharerId: null,
 

@@ -2,8 +2,11 @@
 // ScreenSh — 房间进出 + 成员列表 + 大厅卡片网格
 // ============================================================
 import { state, $ } from './shared.js';
-import { socket, roomUsers, disconnectSignaling } from './signaling.js';
+import { socket, roomUsers, disconnectSignaling, requestServer, applyServerState } from './signaling.js';
 import { toast } from './toast.js';
+import { requestPassword } from './password-dialog.js';
+import { showContextMenu, closeContextMenu } from './context-menu.js';
+import { normalizePeers } from './easytier-peers.mjs';
 import {
   escapeHtml,
   displayRemoteVideo,
@@ -20,18 +23,35 @@ export function updateUserList(users) {
   list.innerHTML = users
     .map((u) => {
       const isMe = u.socketId === socket?.id;
-      const roleText = u.role === 'host' ? '房主' : '成员';
+      const roleText = { host: '房主', admin: '管理员', member: '成员' }[u.role];
       const shareText = u.isSharing ? ' (共享中)' : '';
       return `
         <li class="${isMe ? 'me' : ''}">
           <span class="user-dot ${u.isSharing ? 'sharer' : 'viewer'}"></span>
           <span>${escapeHtml(u.name)}${isMe ? ' (我)' : ''}</span>
-          <span class="user-role">${roleText}${shareText}</span>
+                    <span class="user-role">${roleText}${shareText}</span>
+          <small>${escapeHtml(state.channels.find(c => c.id === u.channelId)?.name || '')}</small>
         </li>
       `;
     })
     .join('');
 
+  const myRole = users.find(u => u.socketId === socket?.id)?.role;
+  const rank = { host: 2, admin: 1, member: 0 };
+  [...list.children].forEach((row, index) => {
+    const user = users[index];
+    row.oncontextmenu = event => {
+      const actions = [];
+      if (myRole === 'host' && user.role !== 'host') actions.push({
+        label: user.role === 'admin' ? '移除管理员' : '设为管理员',
+        run: () => perform('set-admin', { socketId: user.socketId, enabled: user.role !== 'admin' })
+      });
+      if (rank[myRole] > rank[user.role]) actions.push({ label: '踢出服务器', run: () => perform('kick-member', { socketId: user.socketId }) });
+      showContextMenu(event, actions);
+    };
+  });
+  renderChannels(users);
+  users = users.filter(u => u.channelId === state.channelId);
   // 同步共享者状态
   const sharer = users.find((u) => u.isSharing);
   state.activeSharerId = sharer ? sharer.socketId : null;
@@ -79,11 +99,94 @@ export function updateUserList(users) {
 }
 
 // --- 房间进出 ---
+function renderChannels(users) {
+  const me = users.find(u => u.socketId === socket?.id);
+  $('#btnServerSettings').classList.toggle('hidden', me?.role !== 'host');
+  if (me?.role !== 'host') $('#serverSettingsDialog').classList.add('hidden');
+  $('#btnServerPassword').classList.toggle('hidden', me?.role !== 'host');
+  $('#btnServerPeers').classList.toggle('hidden', me?.role !== 'host');
+  $('#btnServerPassword').textContent = state.passwordRequired ? '服务器密码 · 已设置' : '服务器密码';
+  const canManage = ['host', 'admin'].includes(me?.role);
+  $('#btnAddChannel').classList.toggle('hidden', !canManage);
+  if (!canManage) $('#channelDialog').classList.add('hidden');
+  const list = $('#channelList'); list.innerHTML = '';
+  for (const channel of state.channels) {
+    const button = document.createElement('button');
+    button.className = 'btn btn-outline btn-sm channel-button' + (channel.id === state.channelId ? ' active' : '');
+    button.textContent = `${channel.name} (${users.filter(u => u.channelId === channel.id).length})`;
+    button.disabled = state.switchingChannel || state.leaving;
+    button.onclick = () => switchChannel(channel.id);
+    button.oncontextmenu = event => showContextMenu(event, canManage ? [{ label: channel.id === 'main' ? '主频道不能删除' : '删除频道', disabled: channel.id === 'main', run: () => perform('delete-channel', { channelId: channel.id }) }] : []);
+    list.append(button);
+  }
+}
+
+export async function switchChannel(channelId) {
+  if (state.switchingChannel || state.leaving || channelId === state.channelId || !state.roomId) return;
+  state.switchingChannel = true; renderChannels(state.serverUsers); updateSharingUI(state.isSharing);
+  try {
+    if (!await stopSharing()) throw new Error('当前共享未能停止，请重试后再切换频道');
+    $('#screenPicker').classList.add('hidden');
+    applyServerState(await requestServer('switch-channel', { channelId }));
+  } catch (error) { toast(error.message, 'error'); }
+  finally { state.switchingChannel = false; renderChannels(state.serverUsers); updateSharingUI(state.isSharing); }
+}
+
+async function perform(event, payload) {
+  try { await requestServer(event, payload); } catch (error) { toast(error.message, 'error'); }
+}
+$('#btnServerSettings').addEventListener('click', () => {
+  if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
+  $('#serverSettingsDialog').classList.remove('hidden'); $('#btnCloseServerSettings').focus();
+});
+$('#btnCloseServerSettings').addEventListener('click', () => { $('#serverSettingsDialog').classList.add('hidden'); $('#btnServerSettings').focus(); });
+$('#btnServerPeers').addEventListener('click', () => {
+  if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
+  $('#serverPeersInput').value = state.easytierPeers.join('\n');
+  $('#serverPeersError').textContent = '';
+  $('#serverPeersDialog').classList.remove('hidden'); $('#serverPeersInput').focus();
+});
+$('#btnCancelServerPeers').addEventListener('click', () => { $('#serverPeersDialog').classList.add('hidden'); $('#btnServerPeers').focus(); });
+$('#serverPeersForm').addEventListener('submit', async event => {
+  event.preventDefault(); $('#btnSaveServerPeers').disabled = true;
+  try {
+    await requestServer('set-server-peers', { peers: normalizePeers($('#serverPeersInput').value) });
+    $('#serverPeersDialog').classList.add('hidden'); $('#btnServerPeers').focus();
+    toast('节点已保存到服务器，下次连接生效');
+  } catch (error) { $('#serverPeersError').textContent = error.message; }
+  finally { $('#btnSaveServerPeers').disabled = false; }
+});
+$('#btnAddChannel').addEventListener('click', () => {
+  $('#channelDialog').classList.remove('hidden'); $('#channelNameInput').focus();
+});
+$('#btnCancelChannel').addEventListener('click', () => { $('#channelDialog').classList.add('hidden'); $('#btnAddChannel').focus(); });
+
+$('#btnServerPassword').addEventListener('click', async () => {
+  if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
+  const button = $('#btnServerPassword'); button.disabled = true;
+  try {
+    const answer = await requestPassword({ settings: true, connection: socket });
+    if (!answer) return;
+    await requestServer('set-server-password', answer);
+    toast(answer.enabled ? '服务器密码已更新' : '服务器密码已取消', 'success');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { button.disabled = false; }
+});
+
+$('#createChannelForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const name = $('#channelNameInput').value.trim();
+  if (!name) return toast('请输入频道名称', 'error');
+  $('#btnCreateChannel').disabled = true;
+  try { await requestServer('create-channel', { name }); $('#channelNameInput').value = ''; $('#channelDialog').classList.add('hidden'); $('#btnAddChannel').focus(); }
+  catch (error) { toast(error.message, 'error'); }
+  finally { $('#btnCreateChannel').disabled = false; }
+});
 
 export function enterRoom(roomId) {
   $('#lobby').classList.remove('active');
   $('#room').classList.add('active');
-  $('#roomIdDisplay').textContent = roomId;
+  $('#channelNameDisplay').textContent = '主频道';
   updateSharingUI(false);
   $('#userCardsView').classList.remove('hidden');
   $('#activeVideoView').classList.add('hidden');
@@ -93,43 +196,50 @@ export function enterRoom(roomId) {
 export async function leaveRoom() {
   if (state.leaving) return;
   state.leaving = true;
+  closeContextMenu(); $('#channelDialog').classList.add('hidden');
+  $('#serverSettingsDialog').classList.add('hidden');
+  $('#serverPeersDialog').classList.add('hidden');
+  $('#btnLeave').disabled = true;
+  $('#btnLeave').textContent = '正在清理…';
+  $('#btnRetryCleanup').disabled = true;
+  $('#btnConnect').disabled = true;
   stopWatch();
-  const stopping = stopSharing();
+  const stopping = stopSharing({ reportErrors: false });
   disconnectSignaling();
   roomUsers.clear();
-  state.roomId = null;
+  state.roomId = null; state.channelId = null; state.channels = []; state.serverUsers = [];
   state.virtualIp = null;
   state.activeSharerId = null;
   state.selectedSourceId = null;
   $('#screenPicker').classList.add('hidden');
   $('#serverStatus').className = 'status-dot disconnected';
-  $('#room').classList.remove('active');
-  $('#lobby').classList.add('active');
-  try { await stopping; await window.electronAPI.leaveRuntime(); }
-  catch (error) { toast(error.message, 'error'); }
-  finally { state.leaving = false; }
-}
-
-
-// --- 房间号复制按钮监听 ---
-const btnCopyRoomId = $('#btnCopyRoomId');
-if (btnCopyRoomId) {
-  btnCopyRoomId.addEventListener('click', () => {
-    if (!state.roomId) return;
-    navigator.clipboard.writeText(state.roomId).then(() => {
-      const originText = btnCopyRoomId.textContent;
-      btnCopyRoomId.textContent = '✅ 已复制';
-      btnCopyRoomId.classList.add('btn-primary');
-      btnCopyRoomId.classList.remove('btn-outline');
-
-      setTimeout(() => {
-        btnCopyRoomId.textContent = originText;
-        btnCopyRoomId.classList.remove('btn-primary');
-        btnCopyRoomId.classList.add('btn-outline');
-      }, 2000);
-    }).catch(err => {
-      console.error('复制失败:', err);
-      toast('复制失败，请手动选中复制', 'error');
-    });
-  });
+  try {
+    // Start network cleanup even if a previous media stop fails or is pending.
+    const results = await Promise.allSettled([
+      stopping, Promise.resolve().then(() => window.electronAPI.leaveRuntime()),
+    ]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    state.shareCleanupFailed = false;
+    state.runtimeCleanupFailed = false;
+    $('#runtimeCleanupStatus').textContent = '';
+    $('#runtimeCleanupStatus').classList.add('hidden');
+    $('#btnRetryCleanup').classList.add('hidden');
+  } catch (error) {
+    state.runtimeCleanupFailed = true;
+    const message = `服务器连接已断开，但本机资源清理未完成：${error.message}`;
+    $('#runtimeCleanupStatus').textContent = message;
+    $('#runtimeCleanupStatus').classList.remove('hidden');
+    $('#btnRetryCleanup').classList.remove('hidden');
+    toast(message, 'error');
+  } finally {
+    state.leaving = false;
+    $('#btnLeave').disabled = false;
+    $('#btnLeave').textContent = '← 断开连接';
+    $('#btnRetryCleanup').disabled = false;
+    $('#btnConnect').disabled = state.joining || state.runtimeCleanupFailed;
+    $('#room').classList.remove('active');
+    $('#lobby').classList.add('active');
+    updateSharingUI(false);
+  }
 }
