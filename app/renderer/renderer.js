@@ -126,7 +126,12 @@ $('#btnStopWatch').addEventListener('click', stopWatch);
 
 // --- 信令服务器连通性检测 ---
 function testServerConnection() {
-  const url = $('#serverUrl').value.trim() || 'https://sh.rn1.me';
+  const url = $('#serverUrl').value.trim();
+  if (!url) { $('#serverUrl').focus(); return toast('请先填写服务器地址', 'error'); }
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
+  } catch { return toast('请输入有效的 HTTP 或 HTTPS 服务器地址，不要附加路径', 'error'); }
   const testSocket = io(url, { transports: ['websocket', 'polling'], timeout: 5_000 });
 
   $('#btnTestServer').textContent = '检测中...';
@@ -156,13 +161,13 @@ function testServerConnection() {
 
 $('#btnTestServer').addEventListener('click', testServerConnection);
 
-$('#serverUrl').value = localStorage.getItem('serverUrl') || 'https://sh.rn1.me';
+$('#serverUrl').value = localStorage.getItem('serverUrl') || '';
 $('#serverUrl').addEventListener('input', () => localStorage.setItem('serverUrl', $('#serverUrl').value.trim()));
 $('#userName').value = localStorage.getItem('userName') || '';
 $('#userName').addEventListener('input', () => localStorage.setItem('userName', $('#userName').value.trim()));
 window.electronAPI.onRuntimeError(async message => { toast(message, 'error'); await leaveRoom(); });
-// 启动时自动检测一次
-testServerConnection();
+// Only test a server address previously saved by the user.
+if ($('#serverUrl').value) testServerConnection();
 
 // --- 回车键快捷提交 ---
 document.addEventListener('keydown', (e) => {
