@@ -21,7 +21,7 @@ ipcMain.handle('test-easytier-peer', (_event, peer) => {
   return { peer, elapsedMs: 1200 };
 });
 app.whenReady().then(async () => {
-  const { server, io } = createSignalingServer();
+  const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
   let window;
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -61,11 +61,11 @@ app.whenReady().then(async () => {
       $('#btnServerSettings').click();
       if ($('#serverSettingsDialog').classList.contains('hidden')) throw new Error('Missing server settings');
       $('#btnServerPeers').click();
-      if (!$('#serverPeersInput').value.includes('hhh.591.world:11010')) throw new Error('Missing server defaults');
+      if (!$('#serverPeersInput').value.includes('test.example:11010')) throw new Error('Missing deployment peers');
       if ($('#serverPeersInput').value.includes('stale.invalid')) throw new Error('Client peers leaked');
       $('#serverPeersInput').value = ''; $('#serverPeersForm').requestSubmit();
       await until(() => $('#serverPeersError').textContent);
-      $('#serverPeersInput').value = 'hhh.591.world:11010\\nudp://127.0.0.1:11011';
+      $('#serverPeersInput').value = 'test.example:11010\\nudp://127.0.0.1:11011';
       $('#serverPeersForm').requestSubmit(); await until(() => $('#serverPeersDialog').classList.contains('hidden'));
       $('#btnCloseServerSettings').click();
 
@@ -191,7 +191,7 @@ app.whenReady().then(async () => {
     assert.equal(result.failedCleanly, true); assert.equal(result.ioLoaded, true); assert.equal(result.channelName, '主频道');
     assert.ok(stops > 0);
     assert.equal(result.peersRestored, true);
-    assert.deepEqual(networkPeers, ['tcp://hhh.591.world:11010', 'udp://127.0.0.1:11011']);
+    assert.deepEqual(networkPeers, ['tcp://test.example:11010', 'udp://127.0.0.1:11011']);
     assert.equal(result.autoPreview, true);
     assert.equal(result.keepsSharing, true);
     assert.equal(captureConfig.sourceType, 'window');

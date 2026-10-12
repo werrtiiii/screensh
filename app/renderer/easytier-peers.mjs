@@ -1,5 +1,3 @@
-export const DEFAULT_PEER = 'hhh.591.world:11010\n6.rn1.me:11010\nfrp-run.com:11012';
-
 export function normalizePeers(value) {
   const entries = typeof value === 'string' ? value.split(/\r?\n/) : value;
   if (!Array.isArray(entries) || entries.length > 32) throw new Error('EasyTier 节点最多填写 32 个');

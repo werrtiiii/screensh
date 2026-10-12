@@ -6,9 +6,9 @@ const { randomUUID, createHash, randomBytes, scrypt, timingSafeEqual } = require
 const derivePassword = require('util').promisify(scrypt);
 const { isIPv4 } = require('net');
 const { Server } = require('socket.io');
-const { DEFAULT_PEER, normalizePeers } = require('./easytier-peers.cjs');
+const { normalizePeers } = require('./easytier-peers.cjs');
 
-function createSignalingServer({ stateFile = null } = {}) {
+function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS } = {}) {
   let saved = { version: 2, serverId: randomUUID(), owner: null, admins: [], channels: [{ id: 'main', name: '主频道' }] };
   if (stateFile && fs.existsSync(stateFile)) {
     saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
@@ -24,7 +24,11 @@ function createSignalingServer({ stateFile = null } = {}) {
     }
     saved = next;
   }
-  saved.easytierPeers = normalizePeers(saved.easytierPeers ?? DEFAULT_PEER);
+  // Deployment peers initialize new state; persisted room settings take precedence afterward.
+  if (saved.easytierPeers == null && (initialPeers == null || typeof initialPeers === 'string' && !initialPeers.trim())) {
+    throw new Error('请在部署配置中设置 SCREENSH_EASYTIER_PEERS 组网节点');
+  }
+  saved.easytierPeers = normalizePeers(saved.easytierPeers ?? initialPeers);
   persist(saved);
   const app = express(), server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 64 * 1024 });

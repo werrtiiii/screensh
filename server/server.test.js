@@ -15,7 +15,7 @@ const request = async (s, event, payload = {}) => {
   });
 };
 async function fixture(t, options) {
-  const { server, io } = createSignalingServer(options);
+  const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010', ...options });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const clients = [], url = 'http://127.0.0.1:' + server.address().port;
   const close = async () => { clients.forEach(s => s.disconnect()); await new Promise(resolve => io.close(resolve)); };
@@ -27,6 +27,25 @@ async function fixture(t, options) {
     return socket;
   } };
 }
+test('new server requires deployment peers', () => {
+  assert.throws(() => createSignalingServer({ initialPeers: '' }), /SCREENSH_EASYTIER_PEERS/);
+});
+test('deployment peers initialize state and saved room settings take precedence', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-peers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const first = await fixture(t, { stateFile, initialPeers: 'peer.example:11010\nudp://other.example:11011' });
+  const owner = await first.client();
+  assert.deepEqual((await request(owner, 'check-access', { userName: 'Owner' })).easytierPeers,
+    ['tcp://peer.example:11010', 'udp://other.example:11011']);
+  assert.equal((await request(owner, 'join-server', { userName: 'Owner', virtualIp: '10.144.1.1', identity: identity() })).ok, true);
+  assert.equal((await request(owner, 'set-server-peers', { peers: ['changed.example:11012'] })).ok, true);
+  await first.close();
+  const second = await fixture(t, { stateFile, initialPeers: '' });
+  const visitor = await second.client();
+  assert.deepEqual((await request(visitor, 'check-access', { userName: 'Visitor' })).easytierPeers,
+    ['tcp://changed.example:11012']);
+});
 test('single server: required names, role enforcement, channels and isolation', async t => {
   const f = await fixture(t), a = await f.client(), b = await f.client(), c = await f.client(), outsider = await f.client();
   const info = await request(a, 'server-info');

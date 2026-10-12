@@ -69,8 +69,8 @@ function createWindow() {
 ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   if (runtimeLeave) await runtimeLeave;
   if (typeof roomId !== 'string' || !/^[\p{L}\p{N}_-]{1,64}$/u.test(roomId)) throw new Error('房间号仅支持1至64位字母、数字、下划线和连字符');
-  const { normalizePeers, DEFAULT_PEER } = await import('./renderer/easytier-peers.mjs');
-  const peers = normalizePeers(configuredPeers ?? process.env.SCREENSH_EASYTIER_PEER ?? DEFAULT_PEER);
+  const { normalizePeers } = await import('./renderer/easytier-peers.mjs');
+  const peers = normalizePeers(configuredPeers);
   await easytier.stop();
   virtualIp = null;
   // Optional LAN-only validation, without changing virtual adapters or contacting a relay.
