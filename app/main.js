@@ -31,9 +31,17 @@ const peerTester = require('./peer-test').createPeerTester(resource('easytier-co
 ipcMain.handle('test-easytier-peer', (_event, peer) => peerTester.test(peer));
 ipcMain.handle('check-for-update', async () => {
   if (!app.isPackaged) return { available: false, currentVersion: app.getVersion(), development: true };
-  const result = await getUpdater().checkForUpdates();
-  const info = result?.updateInfo;
-  return { available: !!info && info.version !== app.getVersion(), currentVersion: app.getVersion(), version: info?.version || null };
+  try {
+    const result = await getUpdater().checkForUpdates();
+    const info = result?.updateInfo;
+    return { available: !!info && info.version !== app.getVersion(), currentVersion: app.getVersion(), version: info?.version || null };
+  } catch (error) {
+    console.error('[Update check]', error);
+    if (/404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')) {
+      throw new Error('GitHub 尚未发布可用安装包，请稍后重试');
+    }
+    throw new Error('检查更新失败，请确认网络连接后重试');
+  }
 });
 ipcMain.handle('download-and-install-update', async () => {
   if (!app.isPackaged) throw new Error('开发模式不能安装更新');

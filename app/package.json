@@ -1,10 +1,10 @@
 {
   "name": "screensh",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
-    "pack:win": "electron-builder --win nsis",
+    "pack:win": "electron-builder --win nsis --publish never",
     "publish:win": "electron-builder --win nsis --publish always",
     "pack:portable": "node scripts/package-win.cjs",
     "start": "electron .",
