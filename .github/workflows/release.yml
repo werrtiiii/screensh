@@ -17,14 +17,23 @@ jobs:
       GH_REPO: ${{ github.event.repository.name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
+
+      - name: Check native runtime files
+        shell: pwsh
+        run: |
+          $required = @('obs-studio-node/package.json', 'obs-studio-node/obs_studio_client.node', 'app/res/easytier-core.exe', 'app/res/mediamtx.exe', 'app/res/wintun.dll', 'app/res/Packet.dll')
+          $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if ($missing) { throw "Missing native runtime files: $($missing -join ', '). Restore the native runtime bundle before packaging." }
 
       - name: Install dependencies
         run: npm ci --prefix app

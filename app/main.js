@@ -148,7 +148,7 @@ ipcMain.handle('start-sharing', async (_event, config) => {
   shareStart = (async () => {
     try {
       const exe = resource('mediamtx.exe');
-      await mediamtx.start(exe, [path.join(__dirname, 'mediamtx.yml')], {
+      await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml')], {
         cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
         env: { ...process.env, MTX_WEBRTCADDITIONALHOSTS: virtualIp,
           MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${virtualIp}:8189`,

@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -21,19 +21,20 @@
   "devDependencies": {
     "electron": "^29.4.6",
     "electron-builder": "^26.15.3",
-    "rcedit": "4.0.1",
-    "electron-builder": "^26.0.12"
+    "rcedit": "4.0.1"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
     "obs-studio-node": "file:../obs-studio-node",
-    "socket.io-client": "^4.8.4",
-    "electron-updater": "^6.6.2"
+    "socket.io-client": "^4.8.4"
   },
   "build": {
     "appId": "com.screensh.app",
     "productName": "ScreenSh",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/obs-studio-node/**/*"
+    ],
     "files": [
       "main.js",
       "preload.js",
@@ -47,9 +48,25 @@
       "node_modules/**/*",
       "package.json"
     ],
-    "extraResources": [{ "from": "res", "to": "." }],
+    "extraResources": [
+      {
+        "from": "res",
+        "to": "."
+      },
+      {
+        "from": "mediamtx.yml",
+        "to": "mediamtx.yml"
+      }
+    ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "requestedExecutionLevel": "requireAdministrator"
     },
     "nsis": {
@@ -60,6 +77,12 @@
       "deleteAppDataOnUninstall": false
     },
     "artifactName": "ScreenSh-${version}-Setup.${ext}",
-    "publish": [{ "provider": "github", "owner": "werrtiiii", "repo": "screensh" }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "werrtiiii",
+        "repo": "screensh"
+      }
+    ]
   }
 }

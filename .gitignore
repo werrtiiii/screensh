@@ -9,10 +9,7 @@ dist/
 out/
 release/
 
-# Locally supplied native runtimes (see the project setup guide)
-# These prebuilt resources must be supplied separately after cloning.
-/obs-studio-node/
-/app/res/
+# Native runtime files are versioned through Git LFS for reproducible releases.
 
 # Native binaries, drivers and compiler/debug outputs
 *.exe
