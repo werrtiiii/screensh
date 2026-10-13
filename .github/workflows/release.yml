@@ -28,6 +28,16 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
+      - name: Check release version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $package = Get-Content app/package.json -Raw | ConvertFrom-Json
+          $lock = Get-Content app/package-lock.json -Raw | ConvertFrom-Json
+          if ($package.version -ne $version -or $lock.version -ne $version -or $lock.packages.''.version -ne $version) {
+            throw "Release tag $version does not match package.json and package-lock.json. Update and commit the versions before tagging."
+          }
+
       - name: Check native runtime files
         shell: pwsh
         run: |
