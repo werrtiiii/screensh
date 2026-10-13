@@ -27,11 +27,8 @@ if ($remoteTag) { throw "Tag $tag already exists on GitHub. Choose an unused ver
 Invoke-Checked 'npm.cmd' @('test', '--prefix', 'app')
 Invoke-Checked 'npm.cmd' @('test', '--prefix', 'server')
 Invoke-Checked 'npm.cmd' @('version', $Version, '--no-git-tag-version', '--prefix', 'app')
-$manifest = Get-Content app/package.json -Raw | ConvertFrom-Json
-$lock = Get-Content app/package-lock.json -Raw | ConvertFrom-Json
-if ($manifest.version -ne $Version -or $lock.version -ne $Version -or $lock.packages.''.version -ne $Version) {
-  throw 'Version files do not agree. Nothing was pushed.'
-}
+# Windows PowerShell 5 cannot parse the empty package-lock packages[""] key.
+Invoke-Checked 'node' @('-e', "const p=require('./app/package.json'),l=require('./app/package-lock.json'),v=process.argv[1];if(p.version!==v||l.version!==v||l.packages[''].version!==v)throw Error('Version files do not agree. Nothing was pushed.');", $Version)
 Invoke-Checked 'git' @('add', '--', 'app/package.json', 'app/package-lock.json')
 Invoke-Checked 'git' @('commit', '-m', "Release $Version")
 Invoke-Checked 'git' @('tag', '-a', $tag, '-m', "Release $Version")
