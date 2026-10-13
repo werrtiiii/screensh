@@ -1,6 +1,12 @@
 name: Release Windows installer
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build (for example v1.4.4)'
+        required: true
+        type: string
   push:
     tags:
       - 'v*.*.*'
@@ -15,11 +21,13 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_OWNER: ${{ github.repository_owner }}
       GH_REPO: ${{ github.event.repository.name }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           lfs: true
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -31,12 +39,7 @@ jobs:
       - name: Check release version
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $package = Get-Content app/package.json -Raw | ConvertFrom-Json
-          $lock = Get-Content app/package-lock.json -Raw | ConvertFrom-Json
-          if ($package.version -ne $version -or $lock.version -ne $version -or $lock.packages.''.version -ne $version) {
-            throw "Release tag $version does not match package.json and package-lock.json. Update and commit the versions before tagging."
-          }
+          node -e "const p=require('./app/package.json'),l=require('./app/package-lock.json'),tag=process.env.RELEASE_TAG,v=tag.replace(/^v/,'');if(!/^v\d+\.\d+\.\d+$/.test(tag)||p.version!==v||l.version!==v||l.packages[''].version!==v)throw Error('Release tag does not match package versions. Update and commit versions before tagging.');"
 
       - name: Check native runtime files
         shell: pwsh
@@ -54,7 +57,7 @@ jobs:
       - name: Verify update files
         shell: pwsh
         run: |
-          $required = @('app/dist/latest.yml', "app/dist/ScreenSh-$($env:GITHUB_REF_NAME.TrimStart('v'))-Setup.exe")
+          $required = @('app/dist/latest.yml', "app/dist/ScreenSh-$($env:RELEASE_TAG.TrimStart('v'))-Setup.exe")
           $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
           if ($missing) { throw "Missing release files: $($missing -join ', ')" }
 
@@ -64,6 +67,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             app/dist/latest.yml
             app/dist/ScreenSh-*-Setup.exe
