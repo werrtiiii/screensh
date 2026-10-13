@@ -9,6 +9,8 @@ services:
       SCREENSH_STATE_FILE: /app/data/server-state.json
       # Required for a new server. Replace the empty value with a YAML block, one node per line.
       SCREENSH_EASYTIER_PEERS: ""
+      # Only trust actual reverse proxies. For Docker, add the proxy's real IP/CIDR.
+      SCREENSH_TRUST_PROXY: "loopback"
     volumes:
       - screensh-data:/app/data
 

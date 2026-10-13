@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testEasyTierPeer: peer => ipcRenderer.invoke('test-easytier-peer', peer),
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('download-and-install-update'),
+  getHardwareAcceleration: () => ipcRenderer.invoke('get-hardware-acceleration'),
+  setHardwareAcceleration: enabled => ipcRenderer.invoke('set-hardware-acceleration', enabled),
   onUpdateProgress: callback => {
     const listener = (_event, percent) => callback(percent);
     ipcRenderer.on('update-progress', listener);

@@ -7,6 +7,8 @@ export const state = {
   channels: [],
   serverUsers: [],
   passwordRequired: false,
+  serverIcon: null,
+  userAvatar: typeof localStorage !== 'undefined' ? (localStorage.getItem('userAvatar') || null) : null,
   easytierPeers: [],
   switchingChannel: false,
   userName: null,

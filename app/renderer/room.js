@@ -27,7 +27,7 @@ export function updateUserList(users) {
       const shareText = u.isSharing ? ' (共享中)' : '';
       return `
         <li class="${isMe ? 'me' : ''}">
-          <span class="user-dot ${u.isSharing ? 'sharer' : 'viewer'}"></span>
+          <span class="member-avatar default-avatar" aria-hidden="true">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</span>
           <span>${escapeHtml(u.name)}${isMe ? ' (我)' : ''}</span>
                     <span class="user-role">${roleText}${shareText}</span>
           <small>${escapeHtml(state.channels.find(c => c.id === u.channelId)?.name || '')}</small>
@@ -82,7 +82,7 @@ export function updateUserList(users) {
     const displayName = isMe ? `${escapeHtml(u.name)}（我）` : escapeHtml(u.name);
 
     card.innerHTML = `
-      <div class="avatar">👤</div>
+      <div class="avatar">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</div>
       <div class="name">${displayName}</div>
       ${btnHtml}
     `;
@@ -187,6 +187,15 @@ export function enterRoom(roomId) {
   $('#lobby').classList.remove('active');
   $('#room').classList.add('active');
   $('#channelNameDisplay').textContent = '主频道';
+  const serverUrl = $('#serverUrl').value.trim();
+  $('#roomServerName').textContent = (() => { try { return new URL(serverUrl).hostname; } catch { return '服务器'; } })();
+  $('#roomServerAddress').textContent = serverUrl;
+  const icon = state.serverIcon;
+  const iconNode = $('#roomServerIcon');
+  iconNode.style.backgroundImage = icon ? `url("${icon}")` : '';
+  iconNode.classList.toggle('has-image', !!icon);
+  iconNode.textContent = icon ? '' : 'S';
+  $('#roomUserName').value = localStorage.getItem('userName') || '';
   updateSharingUI(false);
   $('#userCardsView').classList.remove('hidden');
   $('#activeVideoView').classList.add('hidden');
@@ -200,6 +209,7 @@ export async function leaveRoom() {
   $('#serverSettingsDialog').classList.add('hidden');
   $('#serverPeersDialog').classList.add('hidden');
   $('#btnLeave').disabled = true;
+  $('#btnLeave').title = '正在清理…';
   $('#btnLeave').textContent = '正在清理…';
   $('#btnRetryCleanup').disabled = true;
   $('#btnConnect').disabled = true;
@@ -235,7 +245,8 @@ export async function leaveRoom() {
   } finally {
     state.leaving = false;
     $('#btnLeave').disabled = false;
-    $('#btnLeave').textContent = '← 断开连接';
+    $('#btnLeave').title = '断开连接';
+    $('#btnLeave').textContent = '×';
     $('#btnRetryCleanup').disabled = false;
     $('#btnConnect').disabled = state.joining || state.runtimeCleanupFailed;
     $('#room').classList.remove('active');

@@ -5,68 +5,82 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' 'unsafe-inline' ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; connect-src 'self' ws: wss: http: https:;" />
-  <title>ScreenSh - P2P 屏幕共享</title>
+  <title>ScreenSh 屏幕共享</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
     <div class="custom-titlebar">
       <div class="titlebar-drag-region">
-        <span class="titlebar-title">ScreenSh</span>
+        <span class="titlebar-title" aria-hidden="true"></span>
       </div>
       <div class="titlebar-controls">
-        <button id="btnMinWindow" class="control-btn" title="最小化">🗕</button>
-        <button id="btnMaxWindow" class="control-btn" title="最大化">🗖</button>
-        <button id="btnCloseWindow" class="control-btn close-btn" title="关闭">✕</button>
+        <button id="btnMinWindow" class="control-btn minimize-btn" title="最小化" aria-label="最小化">−</button>
+        <button id="btnMaxWindow" class="control-btn maximize-btn" title="最大化" aria-label="最大化">□</button>
+        <button id="btnCloseWindow" class="control-btn close-btn" title="关闭" aria-label="关闭">×</button>
       </div>
     </div>
 
     <!-- ===== Lobby ===== -->
-    <div id="lobby" class="screen active">
-      <div style="position: absolute; top: 24px; right: 24px; display: flex; gap: 8px; z-index: 10;">
-        <button id="btnSettings" class="btn btn-outline btn-sm">⚙️ 设置</button>
-      </div>
-
-      <div class="lobby-header">
-        <h1>ScreenSh</h1>
-        <p class="subtitle">P2P 屏幕共享</p>
-      </div>
-
-      <div class="lobby-card">
+    <div id="lobby" class="screen active workspace-screen">
+      <aside class="workspace-sidebar lobby-sidebar">
+        <div class="sidebar-search"><span>⌕</span><input id="serverSearch" type="text" placeholder="搜索服务器" /></div>
+        <div class="nav-section-title"><span>服务器</span><div class="section-actions"><button id="btnAddBookmark" class="icon-btn" title="添加服务器">＋</button><button id="btnCollapseBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
+        <form id="bookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="bookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
+        <div id="bookmarkList" class="bookmark-list"></div>
+        <div class="sidebar-spacer"></div>
+        <div class="profile-bar">
+          <label class="profile-avatar profile-avatar-button" id="btnAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label><input id="avatarInput" class="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+          <input id="userName" class="profile-name" type="text" placeholder="设置名称" maxlength="20" autocomplete="off" /><button id="btnEditName" class="icon-btn" title="编辑名称">✎</button>
+          <button id="btnSettings" class="icon-btn settings-trigger" title="系统设置">⚙</button>
+        </div>
+      </aside>
+      <main class="empty-workspace">
+        <div class="lobby-connect-panel">
+          <h1>选择一个服务器开始</h1>
+          <p>从左侧书签选择服务器，或输入地址连接。</p>
+          <div class="connect-inline">
+            <input type="text" id="serverUrl" placeholder="https://你的服务器域名" />
+            <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
+            <span id="serverStatus" class="status-dot disconnected"></span>
+          </div>
+          <button id="btnConnect" class="btn btn-primary">连接服务器</button>
+        </div>
+      </main>
+      <aside class="right-blank-panel hidden"></aside>
+      <div class="legacy-lobby-fields hidden">
         <p id="runtimeCleanupStatus" class="hidden" role="alert" style="color:var(--danger);overflow-wrap:anywhere"></p>
         <button id="btnRetryCleanup" class="btn btn-outline btn-sm hidden" type="button">重试清理</button>
-        <div class="form-group">
-          <label for="userName">名称（必填）</label>
-          <input type="text" id="userName" placeholder="请输入名称" maxlength="20" autocomplete="off" />
-        </div>
-
-          <div class="form-group">
-            <label for="serverUrl">服务器地址
-              <span class="help-tip" data-tooltip="填写同一服务器地址即可相遇，无需房间码。名称和地址自动保存在本机。">?</span>
-            </label>
-            <div class="server-bar">
-              <input type="text" id="serverUrl" placeholder="https://你的服务器域名" />
-              <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
-              <span id="serverStatus" class="status-dot disconnected"></span>
-            </div>
-          </div>
-        <button id="btnConnect" class="btn btn-primary btn-full">连接服务器</button>
       </div>
-
     </div>
 
     <!-- ===== Room ===== -->
-    <div id="room" class="screen">
+    <div id="room" class="screen workspace-screen">
+      <aside class="workspace-sidebar room-sidebar">
+        <div class="server-current"><span id="roomServerIcon" class="server-icon" aria-hidden="true">S</span><span class="server-dot"></span><div><strong id="roomServerName">服务器</strong><small id="roomServerAddress"></small></div><button id="btnLeave" class="icon-btn" title="断开连接">×</button></div>
+        <div class="room-bookmarks">
+          <div class="nav-section-title"><span>书签</span><div class="section-actions"><button id="btnRoomBookmark" class="icon-btn" title="保存当前服务器">☆</button><button id="btnCollapseRoomBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
+          <form id="roomBookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="roomBookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
+          <div id="roomBookmarkList" class="bookmark-list compact"></div>
+        </div>
+        <div class="nav-section-title channel-nav-title"><span>频道</span><button id="btnAddChannel" class="icon-btn hidden" title="创建频道">＋</button></div>
+        <div id="channelList" class="channel-list"></div>
+        <div class="sidebar-spacer"></div>
+        <div class="profile-bar">
+          <label class="profile-avatar profile-avatar-button" id="btnRoomAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label>
+          <input id="roomUserName" class="profile-name" type="text" placeholder="设置名称" maxlength="20" autocomplete="off" /><button id="btnEditRoomName" class="icon-btn" title="编辑名称">✎</button>
+          <button id="btnRoomSettings" class="icon-btn settings-trigger" title="系统设置">⚙</button>
+        </div>
+      </aside>
       <div class="room-topbar">
-        <button id="btnLeave" class="btn btn-outline btn-sm">← 断开连接</button>
         <div class="room-info" style="display: flex; align-items: center; gap: 8px;">
           <span class="room-label">当前频道：</span><span id="channelNameDisplay"></span>
         </div>
         <div class="room-actions">
           <button id="btnServerSettings" class="btn btn-outline btn-sm hidden">服务器设置</button>
-          <button id="btnRoomSettings" class="btn btn-outline btn-sm">⚙️ 共享设置</button>
-          <button id="btnShare" class="btn btn-primary btn-sm">📺 共享屏幕</button>
-          <button id="btnStopShare" class="btn btn-danger btn-sm hidden">⏹ 停止共享</button>
+          <button id="btnRoomSettingsToolbar" class="btn btn-outline btn-sm">屏幕共享设置</button>
+          <button id="btnShare" class="btn btn-primary btn-sm">共享屏幕</button>
+          <button id="btnStopShare" class="btn btn-danger btn-sm hidden">停止共享</button>
         </div>
       </div>
 
@@ -89,8 +103,7 @@
         <!-- Sidebar: users + screen sources -->
         <div class="sidebar">
           <div class="side-panel">
-            <div class="channel-heading"><h3>频道</h3><button id="btnAddChannel" class="btn btn-outline btn-sm hidden" aria-label="创建频道" title="创建频道">＋</button></div>
-            <div id="channelList" class="channel-list"></div>
+            <div class="channel-heading"><h3>频道</h3></div>
           </div>
           <!-- Users list -->
           <div class="side-panel">
@@ -118,6 +131,7 @@
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverSettingsTitle">
         <div class="modal-header"><h2 id="serverSettingsTitle">服务器设置</h2><button id="btnCloseServerSettings" class="btn-close" aria-label="关闭">×</button></div>
         <div class="server-setting-row"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
+        <div class="server-setting-row"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大128KB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="server-setting-row"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
       </div>
     </div>
@@ -129,6 +143,15 @@
         </div>
         <p id="serverPeersError" class="dialog-error" role="alert"></p>
         <div class="dialog-actions"><button id="btnSaveServerPeers" type="submit" class="btn btn-primary">保存节点</button></div>
+      </form>
+    </div>
+    <div id="bookmarkEditDialog" class="modal hidden">
+      <form id="bookmarkEditForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="bookmarkEditTitle">
+        <div class="modal-header"><h2 id="bookmarkEditTitle">编辑书签</h2><button id="btnCancelBookmarkEdit" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="form-group"><label for="bookmarkEditName">名称</label><input id="bookmarkEditName" class="form-control" type="text" maxlength="40" required /></div>
+        <div class="form-group"><label for="bookmarkEditUrl">服务器地址</label><input id="bookmarkEditUrl" class="form-control" type="text" required /></div>
+        <p id="bookmarkEditError" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions"><button id="btnSaveBookmarkEdit" class="btn btn-primary" type="submit">保存</button></div>
       </form>
     </div>
     <!-- ===== Settings Modal ===== -->
@@ -158,13 +181,12 @@
               <button id="btnDownloadUpdate" type="button" class="btn btn-primary btn-sm">下载更新</button>
             </div>
           </div>
-          <div class="form-group setting-codec">
-            <label for="videoCodecSelect">视频编码方式
-              <span class="help-tip" data-tooltip="当前使用 H.264 编码共享屏幕。">?</span>
+          <div class="form-group setting-hardware">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+              <input type="checkbox" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
+              <span>启用硬件加速</span>
+              <span class="help-tip" data-tooltip="使用显卡渲染软件界面。修改后需要重启客户端；关闭后使用软件渲染。">?</span>
             </label>
-            <select id="videoCodecSelect" class="form-control">
-              <option value="">自动</option>
-            </select>
           </div>
           <div class="form-group setting-room">
             <label for="videoEncoderSelect">视频编码器

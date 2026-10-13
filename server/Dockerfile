@@ -5,7 +5,9 @@ ENV PORT=3000
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server.js easytier-peers.cjs ./
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data \
+  && chown -R node:node /app \
+  && chmod -R u+rwX,go+rX /app
 VOLUME ["/app/data"]
 USER node
 EXPOSE 3000

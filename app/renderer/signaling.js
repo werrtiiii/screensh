@@ -5,6 +5,25 @@ import { stopWatch, stopSharing, renderViewerNames } from './media.js';
 
 export let socket = null;
 export const roomUsers = new Map();
+const imageCache = new Map();
+let imageRevision = 0;
+const isImageRef = value => /^image:[a-f0-9]{64}\.(png|jpg|webp|gif)$/.test(value || '');
+function cachedImage(value) {
+  if (!isImageRef(value)) return typeof value === 'string' && value.startsWith('data:image/') ? value : null;
+  const cached = imageCache.get(value);
+  return typeof cached === 'string' ? cached : null;
+}
+function fetchImage(ref, connection) {
+  if (!imageCache.has(ref)) {
+    const pending = requestServer('get-image', { ref }, connection).then(result => {
+      if (socket !== connection) return;
+      const data = result.ref === ref && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(result.data || '') && result.data.length <= 128 * 1024 ? result.data : null;
+      imageCache.set(ref, data);
+    }).catch(() => { if (socket === connection) imageCache.set(ref, null); });
+    imageCache.set(ref, pending);
+  }
+  return imageCache.get(ref);
+}
 
 export function requestServer(event, payload = {}, connection = socket) {
   return new Promise((resolve, reject) => {
@@ -20,10 +39,28 @@ export function applyServerState(data) {
   if (!state.roomId || data.serverId !== state.roomId) return;
   const me = data.users.find(u => u.socketId === socket?.id);
   if (!me) return;
+  const revision = ++imageRevision, connection = socket;
+  const raw = data;
+  const refs = new Set([data.serverIcon, ...data.users.map(u => u.avatar)].filter(isImageRef));
+  for (const ref of imageCache.keys()) if (!refs.has(ref)) imageCache.delete(ref);
+  const loading = [...refs].filter(ref => !imageCache.has(ref) || imageCache.get(ref) instanceof Promise);
+  data = { ...data, serverIcon: cachedImage(data.serverIcon), users: data.users.map(u => ({ ...u, avatar: cachedImage(u.avatar) })) };
+  if (loading.length) Promise.all(loading.map(ref => fetchImage(ref, connection))).then(() => {
+    if (revision === imageRevision && socket === connection) applyServerState(raw);
+  });
   if (state.channelId && me.channelId !== state.channelId) stopWatch();
   state.channelId = me.channelId;
   state.channels = data.channels;
   state.passwordRequired = !!data.passwordRequired;
+  state.serverIcon = data.serverIcon || null;
+  const roomIcon = $('#roomServerIcon'); if (roomIcon) { roomIcon.style.backgroundImage = state.serverIcon ? `url("${state.serverIcon}")` : ''; roomIcon.classList.toggle('has-image', !!state.serverIcon); roomIcon.textContent = state.serverIcon ? '' : 'S'; }
+  document.dispatchEvent(new CustomEvent('server-icon-updated', { detail: state.serverIcon }));
+  const meAvatar = data.users.find(u => u.socketId === socket?.id)?.avatar || null;
+  if ((!isImageRef(me.avatar) || cachedImage(me.avatar)) && meAvatar !== state.userAvatar) {
+    state.userAvatar = meAvatar;
+    if (typeof localStorage !== 'undefined') { if (meAvatar) localStorage.setItem('userAvatar', meAvatar); else localStorage.removeItem('userAvatar'); }
+    document.dispatchEvent(new CustomEvent('user-avatar-updated', { detail: meAvatar }));
+  }
   state.easytierPeers = data.easytierPeers || [];
   state.serverUsers = data.users;
   roomUsers.clear();
@@ -34,6 +71,7 @@ export function applyServerState(data) {
   if (state.watchingId) renderViewerNames();
 }
 export function connectServer() {
+  imageRevision++; imageCache.clear();
   if (socket) { socket.removeAllListeners(); socket.disconnect(); }
   socket = io($('#serverUrl').value.trim(), { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
   socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
@@ -52,6 +90,7 @@ export function connectServer() {
   return socket;
 }
 export function disconnectSignaling() {
+  imageRevision++; imageCache.clear();
   if (socket) { socket.removeAllListeners(); socket.disconnect(); socket = null; }
 }
 

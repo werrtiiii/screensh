@@ -1,5 +1,8 @@
 // Exercises the real renderer against a real signaling server. Native capture is mocked.
 const { app, BrowserWindow, ipcMain } = require('electron');
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
 const path = require('path');
 const assert = require('assert/strict');
 const { createSignalingServer } = require('../../server/server');
@@ -7,6 +10,9 @@ const root = path.resolve(__dirname, '..');
 app.setPath('userData', path.join(root, '.runtime-probe', `ui-${process.pid}`));
 app.on('window-all-closed', () => {});
 let stops = 0, captureConfig, attempts = 0, networkPeers;
+let hardwareAcceleration = false;
+ipcMain.handle('get-hardware-acceleration', () => hardwareAcceleration);
+ipcMain.handle('set-hardware-acceleration', (_event, enabled) => { hardwareAcceleration = enabled; return enabled; });
 ipcMain.handle('start-easytier', (_event, _roomId, peers) => { networkPeers = peers; return '10.144.1.1'; });
 ipcMain.handle('get-screens', () => [{ id: 'window-test', type: 'window', name: 'Test window' }]);
 ipcMain.handle('start-sharing', (_event, config) => {
@@ -22,16 +28,30 @@ ipcMain.handle('test-easytier-peer', (_event, peer) => {
 });
 app.whenReady().then(async () => {
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
+  let imageFetches = 0;
+  io.on('connection', client => client.onAny(event => { if (event === 'get-image') imageFetches++; }));
   let window;
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     window = new BrowserWindow({ show: false, webPreferences: { preload: path.join(root, 'preload.js'), contextIsolation: true, nodeIntegration: false } });
+    window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => console.error('DID_FAIL_LOAD', { code, description, url, isMainFrame }));
+    window.webContents.on('render-process-gone', (_event, details) => console.error('RENDER_PROCESS_GONE', details));
     window.webContents.on('console-message', (_event, level, message) => { if (level >= 2) console.log('RENDERER', message); });
     await window.loadFile(path.join(root, 'renderer/index.html'));
     const saved = await window.webContents.executeJavaScript(`(async () => {
       await import('./renderer.js');
       document.querySelector('#btnSettings').click();
+      if ([...document.querySelectorAll('.profile-avatar')].some(n => n.textContent !== '👤' || n.classList.contains('has-image'))) throw new Error('Default profile avatar missing');
+      if (document.querySelector('.setting-avatar') || document.querySelector('.panel-kicker')) throw new Error('Removed settings/header remain visible');
+      const hardware = document.querySelector('#hardwareAccelerationCheckbox');
+      for (let i = 0; i < 100 && hardware.disabled; i++) await new Promise(r => setTimeout(r, 20));
+      if (hardware.disabled || hardware.checked) throw new Error('Hardware setting failed to load');
+      hardware.click();
+      for (let i = 0; i < 100 && hardware.disabled; i++) await new Promise(r => setTimeout(r, 20));
+      if (hardware.disabled || !hardware.checked) throw new Error('Hardware setting failed to save');
+      if (localStorage.getItem('hardwareAcceleration') !== null) throw new Error('Stale hardware cache persisted');
       localStorage.setItem('easytierPeers', 'stale.invalid:1234');
+      localStorage.setItem('userAvatar', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQXcAAAAASUVORK5CYII=');
       const captureMethod = document.querySelector('#captureMethodSelect');
       captureMethod.value = 'wgc';
       captureMethod.dispatchEvent(new Event('change', { bubbles: true }));
@@ -57,6 +77,8 @@ app.whenReady().then(async () => {
       $('#userName').value = 'Smoke'; $('#btnConnect').click();
       await until(() => $('#room').classList.contains('active'));
       await until(() => $('#userCount').textContent === '1');
+      await until(() => $('.member-avatar img')?.src.startsWith('data:image/'));
+      if (!localStorage.getItem('userAvatar')?.startsWith('data:image/')) throw new Error('Avatar cache reference overwrote local image');
       if ($('#channelNameDisplay').textContent !== '主频道') throw new Error('Missing main channel');
       $('#btnServerSettings').click();
       if ($('#serverSettingsDialog').classList.contains('hidden')) throw new Error('Missing server settings');
@@ -186,9 +208,28 @@ app.whenReady().then(async () => {
       $('#btnServerPassword').click(); await until(() => $('#passwordEnabled'));
       $('#passwordEnabled').click(); $('.password-modal form').requestSubmit();
       await until(() => $('#btnServerPassword').textContent === '服务器密码');
+      const { requestServer } = await import('./signaling.js');
+      const avatar = localStorage.getItem('userAvatar');
+      localStorage.setItem('serverBookmarks', JSON.stringify([{ name: 'Smoke server', url: $('#serverUrl').value }]));
+      await requestServer('set-server-icon', { icon: avatar });
+      await until(() => $('#roomServerIcon').classList.contains('has-image') && !$('#btnResetServerIcon').disabled);
+      $('#btnResetServerIcon').click();
+      await until(() => $('#roomServerIcon').textContent === 'S' && !$('#roomServerIcon').classList.contains('has-image'));
+      if (JSON.parse(localStorage.getItem('serverBookmarks'))[0].icon) throw new Error('Bookmark retained removed server icon');
+      $('#btnRoomAvatar').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 100 }));
+      [...document.querySelectorAll('.context-menu button')].find(b => b.textContent === '恢复默认头像').click();
+      await until(() => !$('.member-avatar img') && localStorage.getItem('userAvatar') === null);
+      for (const node of document.querySelectorAll('.profile-avatar')) if (node.textContent !== '👤' || node.classList.contains('has-image') || node.style.backgroundImage) throw new Error('Default profile avatar not restored');
+      if (!$('.member-avatar').textContent.includes('👤') || !$('.user-card .avatar').textContent.includes('👤')) throw new Error('Default member/card avatar missing');
+      if (document.querySelector('img[src=""]')) throw new Error('Empty image source in default UI');
+      if (!$('#btnResetServerIcon').disabled) throw new Error('Reset control remains enabled with default icon');
+      $('#btnLeave').click(); await until(() => $('#lobby').classList.contains('active') && !$('#btnConnect').disabled);
+      $('#btnConnect').click(); await until(() => $('#room').classList.contains('active') && $('#userCount').textContent === '1');
+      if ($('.member-avatar img') || $('#roomServerIcon').classList.contains('has-image')) throw new Error('Removed images returned after reconnect');
       return { failedCleanly, autoPreview, keepsSharing, peersRestored, channelName: $('#channelNameDisplay').textContent, ioLoaded: typeof io === 'function' };
     })()`);
     assert.equal(result.failedCleanly, true); assert.equal(result.ioLoaded, true); assert.equal(result.channelName, '主频道');
+    assert.equal(imageFetches, 3, 'Avatar must load once per successful connection, not on each state broadcast');
     assert.ok(stops > 0);
     assert.equal(result.peersRestored, true);
     assert.deepEqual(networkPeers, ['tcp://test.example:11010', 'udp://127.0.0.1:11011']);
@@ -199,6 +240,7 @@ app.whenReady().then(async () => {
     assert.equal(captureConfig.videoEncoder, 'amf');
     assert.equal(captureConfig.sourceId, 'window-test');
     await window.webContents.executeJavaScript(`document.querySelectorAll('.toast').forEach(n => n.remove())`);
+    window.setSize(1000, 640);
     window.showInactive();
     await new Promise(resolve => setTimeout(resolve, 200));
     require('fs').writeFileSync(path.join(root, '.runtime-probe', 'room-menus.png'), (await window.webContents.capturePage()).toPNG());

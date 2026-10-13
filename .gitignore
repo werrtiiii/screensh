@@ -69,3 +69,5 @@ desktop.ini
 $RECYCLE.BIN/
 
 # Keep package-lock.json, source/configuration files and documentation tracked.
+
+*.dev*

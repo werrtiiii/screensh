@@ -6,23 +6,71 @@ const { randomUUID, createHash, randomBytes, scrypt, timingSafeEqual } = require
 const derivePassword = require('util').promisify(scrypt);
 const { isIPv4 } = require('net');
 const { Server } = require('socket.io');
+const proxyaddr = require('proxy-addr');
 const { normalizePeers } = require('./easytier-peers.cjs');
 
-function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS } = {}) {
-  let saved = { version: 2, serverId: randomUUID(), owner: null, admins: [], channels: [{ id: 'main', name: '主频道' }] };
+function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback' } = {}) {
+  const dataDir = stateFile ? path.dirname(stateFile) : null;
+  const mediaDir = dataDir ? path.join(dataDir, 'media') : null;
+  const imageIds = new Map(), images = new Map();
+  function imageRef(data) {
+    if (!data) return null;
+    let ref = imageIds.get(data);
+    if (!ref) { ref = 'image:' + createHash('sha256').update(data).digest('hex') + '.' + imageExtension(data); imageIds.set(data, ref); images.set(ref, data); }
+    return ref;
+  }
+  let saved = { version: 2, serverId: randomUUID(), owner: null, admins: [], userProfiles: {}, serverIcon: null, channels: [{ id: 'main', name: '主频道' }] };
   if (stateFile && fs.existsSync(stateFile)) {
     saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     if (saved.version !== 2 || !/^[a-f0-9-]{36}$/.test(saved.serverId) || !Array.isArray(saved.admins)
       || !Array.isArray(saved.channels) || !saved.channels.some(c => c.id === 'main')
       || (saved.password && (!/^[a-f0-9]{32}$/.test(saved.password.salt) || !/^[a-f0-9]{64}$/.test(saved.password.hash)))) throw new Error('服务器状态文件无效，请从备份恢复');
   }
+  if (!saved.userProfiles || typeof saved.userProfiles !== 'object' || Array.isArray(saved.userProfiles)) saved.userProfiles = {};
+  if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
+  for (const [key, profile] of Object.entries(saved.userProfiles)) {
+    if (profile?.avatar && !isImageData(profile.avatar)) profile.avatar = readImageReference(profile.avatar);
+    if (!profile?.avatar) delete saved.userProfiles[key];
+  }
+  function imageExtension(data) {
+    return ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' })[data.match(/^data:(image\/[^;]+);/)?.[1]] || 'bin';
+  }
+  function readImageReference(reference) {
+    if (!mediaDir || typeof reference !== 'string') return null;
+    const file = path.resolve(dataDir, reference);
+    if (!file.startsWith(path.resolve(mediaDir) + path.sep) || !fs.existsSync(file)) return null;
+    const ext = path.extname(file).toLowerCase();
+    const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' })[ext];
+    if (!mime) return null;
+    const data = `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+    return isImageData(data) ? data : null;
+  }
+  function writeImage(reference, data) {
+    if (!mediaDir || !data) return;
+    const file = path.resolve(dataDir, reference);
+    if (fs.existsSync(file)) return;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file + '.tmp', Buffer.from(data.split(',', 2)[1], 'base64'), { mode: 0o600 });
+    fs.renameSync(file + '.tmp', file);
+  }
   function persist(next) {
     if (stateFile) {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-      fs.writeFileSync(stateFile + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 });
+      const stateForDisk = { ...next, serverIcon: null, userProfiles: {} };
+      if (next.serverIcon) {
+        const reference = 'media/' + imageRef(next.serverIcon).slice(6);
+        writeImage(reference, next.serverIcon); stateForDisk.serverIcon = reference;
+      }
+      for (const [key, profile] of Object.entries(next.userProfiles || {})) if (profile?.avatar) {
+        const reference = 'media/' + imageRef(profile.avatar).slice(6);
+        writeImage(reference, profile.avatar); stateForDisk.userProfiles[key] = { avatar: reference };
+      }
+      fs.writeFileSync(stateFile + '.tmp', JSON.stringify(stateForDisk, null, 2), { mode: 0o600 });
       fs.renameSync(stateFile + '.tmp', stateFile);
     }
     saved = next;
+    const retained = new Set([next.serverIcon, ...Object.values(next.userProfiles || {}).map(p => p.avatar)].filter(Boolean));
+    for (const [data, ref] of imageIds) if (!retained.has(data)) { imageIds.delete(data); images.delete(ref); }
   }
   // Deployment peers initialize new state; persisted room settings take precedence afterward.
   if (saved.easytierPeers == null && (initialPeers == null || typeof initialPeers === 'string' && !initialPeers.trim())) {
@@ -31,16 +79,25 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   saved.easytierPeers = normalizePeers(saved.easytierPeers ?? initialPeers);
   persist(saved);
   const app = express(), server = http.createServer(app);
-  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 64 * 1024 });
+  app.set('trust proxy', trustedProxies);
+  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 256 * 1024 });
   const members = new Map();
   const attempts = new Map();
   const nameKey = name => name.normalize('NFKC').toLowerCase();
+  function isImageData(value) {
+    return typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(value) && Buffer.byteLength(value, 'utf8') <= 128 * 1024;
+  }
+  function validateImage(value, label) {
+    if (value === null || value === '') return null;
+    if (!isImageData(value)) throw new Error(`${label}必须是 PNG、JPEG、WebP 或 GIF，且不能大于128KB`);
+    return value;
+  }
   async function checkAccess(socket, payload) {
     const name = payload?.userName;
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 20 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('请填写有效名称（1至20个字符）');
     const passwordRecord = saved.password;
     if (passwordRecord) {
-      const now = Date.now(), ip = socket.handshake.address;
+      const now = Date.now(), ip = proxyaddr(socket.request, app.get('trust proxy fn'));
       for (const [key, value] of attempts) if (value.until <= now) attempts.delete(key);
       const entry = attempts.get(ip) || { count: 0, until: now + 60000 };
       if (entry.count >= 20 || attempts.size >= 10000 && !attempts.has(ip)) throw new Error('密码尝试过于频繁，请一分钟后重试');
@@ -54,9 +111,9 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     if ([...members.values()].some(u => nameKey(u.name) === nameKey(name.trim()))) throw new Error('名称已被使用，请换一个');
   }
   const role = key => key === saved.owner ? 'host' : saved.admins.includes(key) ? 'admin' : 'member';
-  const snapshot = () => ({ serverId: saved.serverId, channels: saved.channels, easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password,
+  const snapshot = () => ({ serverId: saved.serverId, channels: saved.channels, easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
     users: [...members].map(([socketId, u]) => ({ socketId, name: u.name, virtualIp: u.virtualIp,
-      channelId: u.channelId, isSharing: u.isSharing, watchingId: u.watchingId || null, role: role(u.key) })) });
+      channelId: u.channelId, isSharing: u.isSharing, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
@@ -92,10 +149,35 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if ([...members.values()].some(u => u.key === key)) throw new Error('本机身份已在线，请先退出原连接');
       if ([...members.values()].some(u => u.virtualIp === payload.virtualIp)) throw new Error('虚拟 IP 冲突，请重新连接');
       if ([...members.values()].some(u => nameKey(u.name) === nameKey(payload.userName.trim()))) throw new Error('名称已被使用，请换一个');
-      if (!saved.owner) persist({ ...saved, owner: key });
+      const avatar = validateImage(Object.hasOwn(payload, 'avatar') ? payload.avatar : saved.userProfiles[key]?.avatar ?? null, '用户头像');
+      if (!saved.owner || avatar !== (saved.userProfiles[key]?.avatar || null)) {
+        const userProfiles = { ...saved.userProfiles };
+        if (avatar) userProfiles[key] = { avatar }; else delete userProfiles[key];
+        persist({ ...saved, owner: saved.owner || key, userProfiles });
+      }
       members.set(socket.id, { key, name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId: 'main', isSharing: false });
       socket.join('members'); socket.join(group('main')); publish();
       return snapshot();
+    });
+    handle('get-image', payload => {
+      requireMember();
+      const ref = payload?.ref;
+      const visible = ref && (ref === imageRef(saved.serverIcon) || [...members.values()].some(u => ref === imageRef(saved.userProfiles[u.key]?.avatar)));
+      if (!visible || !images.has(ref)) throw new Error('图片不可用');
+      return { ref, data: images.get(ref) };
+    });
+    handle('set-avatar', payload => {
+      const u = requireMember();
+      const avatar = validateImage(payload?.avatar, '用户头像');
+      const userProfiles = { ...saved.userProfiles };
+      if (avatar) userProfiles[u.key] = { avatar }; else delete userProfiles[u.key];
+      persist({ ...saved, userProfiles });
+      publish(); return { avatar: imageRef(avatar) };
+    });
+    handle('set-server-icon', payload => {
+      if (role(requireMember().key) !== 'host') throw new Error('只有房主可以设置服务器图标');
+      const serverIcon = validateImage(payload?.icon, '服务器图标');
+      persist({ ...saved, serverIcon }); publish(); return { serverIcon: imageRef(serverIcon) };
     });
     handle('set-server-peers', payload => {
       if (role(requireMember().key) !== 'host') throw new Error('只有房主可以修改组网节点');

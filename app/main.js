@@ -7,6 +7,22 @@ const { isIPv4 } = require('net');
 const { randomInt } = require('crypto');
 const { ManagedProcess } = require('./managed-process');
 const { ObsEngine } = require('./obs-engine');
+const renderingConfigPath = path.join(app.getPath('userData'), 'rendering.json');
+let hardwareAccelerationEnabled = false;
+try {
+  const config = JSON.parse(fs.readFileSync(renderingConfigPath, 'utf8'));
+  hardwareAccelerationEnabled = config.hardwareAcceleration === true;
+} catch {}
+
+// Some Windows installations fail to load Electron's GPU runtime DLLs. In
+// that case Chromium reports the renderer page as ERR_FAILED before the UI
+// can start. The app's capture pipeline does not depend on Electron UI GPU
+// compositing, so keep the window renderer on the software path.
+if (!hardwareAccelerationEnabled && typeof app.disableHardwareAcceleration === 'function') app.disableHardwareAcceleration();
+if (!hardwareAccelerationEnabled && app.commandLine?.appendSwitch) {
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
 let updater = null;
 function getUpdater() {
   if (!updater) {
@@ -28,13 +44,22 @@ function failure(message) {
 const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./peer-test').createPeerTester(resource('easytier-core.exe'));
+ipcMain.handle('get-hardware-acceleration', () => hardwareAccelerationEnabled);
+ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
+  if (typeof enabled !== 'boolean') throw new Error('无效的硬件加速设置');
+  fs.mkdirSync(path.dirname(renderingConfigPath), { recursive: true });
+  fs.writeFileSync(renderingConfigPath + '.tmp', JSON.stringify({ hardwareAcceleration: enabled }, null, 2), { mode: 0o600 });
+  fs.renameSync(renderingConfigPath + '.tmp', renderingConfigPath);
+  hardwareAccelerationEnabled = enabled;
+  return enabled;
+});
 ipcMain.handle('test-easytier-peer', (_event, peer) => peerTester.test(peer));
 ipcMain.handle('check-for-update', async () => {
   if (!app.isPackaged) return { available: false, currentVersion: app.getVersion(), development: true };
   try {
     const result = await getUpdater().checkForUpdates();
     const info = result?.updateInfo;
-    return { available: !!info && info.version !== app.getVersion(), currentVersion: app.getVersion(), version: info?.version || null };
+    return { available: result?.isUpdateAvailable === true, currentVersion: app.getVersion(), version: info?.version || null };
   } catch (error) {
     console.error('[Update check]', error);
     if (/404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')) {
@@ -54,7 +79,7 @@ const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Bool
 
 function createWindow() {
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
-  mainWindow = new BrowserWindow({ width: 1200, height: 800, frame: false,
+  mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 1000, minHeight: 640, frame: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   mainWindow.webContents.on('before-input-event', (event, input) => {

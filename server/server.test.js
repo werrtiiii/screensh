@@ -20,13 +20,83 @@ async function fixture(t, options) {
   const clients = [], url = 'http://127.0.0.1:' + server.address().port;
   const close = async () => { clients.forEach(s => s.disconnect()); await new Promise(resolve => io.close(resolve)); };
   t.after(close);
-  return { url, close, async client() {
-    const socket = connect(url, { transports: ['websocket'], reconnection: false });
+  return { url, close, async client(extraHeaders) {
+    const socket = connect(url, { transports: ['websocket'], reconnection: false, extraHeaders });
     clients.push(socket);
     await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
     return socket;
   } };
 }
+test('invalid first join cannot reserve owner; avatars use cached identifiers and immutable files', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-images-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const f = await fixture(t, { stateFile }), bad = await f.client(), good = await f.client(), outsider = await f.client();
+  assert.equal((await request(bad, 'join-server', { userName: 'Bad', virtualIp: '10.144.1.1', identity: identity(), avatar: 'invalid' })).ok, false);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile)).owner, null);
+  const avatar = 'data:image/png;base64,' + Buffer.alloc(90000, 1).toString('base64');
+  const joined = await request(good, 'join-server', { userName: 'Good', virtualIp: '10.144.1.2', identity: identity(), avatar });
+  assert.equal(joined.users[0].role, 'host');
+  const ref = joined.users[0].avatar;
+  assert.match(ref, /^image:[a-f0-9]{64}\.png$/);
+  assert.ok(Buffer.byteLength(JSON.stringify(joined)) < 2000);
+  assert.equal((await request(outsider, 'get-image', { ref })).ok, false);
+  assert.equal((await request(good, 'get-image', { ref })).data, avatar);
+  const file = path.join(dir, 'media', ref.slice(6));
+  fs.utimesSync(file, 1000, 1000);
+  await request(good, 'create-channel', { name: 'No image rewrite' });
+  assert.equal(fs.statSync(file).mtimeMs, 1000000);
+  assert.equal((await request(good, 'set-avatar', { avatar })).avatar, ref);
+  assert.equal(fs.statSync(file).mtimeMs, 1000000);
+  const stored = JSON.parse(fs.readFileSync(stateFile));
+  assert.equal(Object.values(stored.userProfiles)[0].avatar, 'media/' + ref.slice(6));
+  await f.close();
+  const g = await fixture(t, { stateFile }), next = await g.client();
+  await request(next, 'join-server', { userName: 'Next', virtualIp: '10.144.1.3', identity: identity() });
+  assert.equal(fs.statSync(file).mtimeMs, 1000000);
+});
+
+test('password limits separate trusted forwarded clients and reject untrusted spoofing', async t => {
+  for (const trustedProxies of ['loopback', false]) {
+    const f = await fixture(t, { trustedProxies }), host = await f.client();
+    await request(host, 'join-server', { userName: 'Host', virtualIp: '10.144.1.1', identity: identity() });
+    await request(host, 'set-server-password', { enabled: true, password: 'correct' });
+    const bad = await f.client({ 'X-Forwarded-For': '203.0.113.1' });
+    for (let i = 0; i < 20; i++) await request(bad, 'check-access', { userName: 'Bad', password: 'wrong' });
+    const good = await f.client({ 'X-Forwarded-For': '203.0.113.2' });
+    const result = await request(good, 'check-access', { userName: 'Good', password: 'correct' });
+    assert.equal(result.ok, trustedProxies !== false);
+    if (!result.ok) assert.match(result.message, /频繁/);
+    await f.close();
+  }
+});
+
+test('avatar and icon reset persist; explicit null on rejoin removes previous avatar', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-reset-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const f = await fixture(t, { stateFile }), host = await f.client(), member = await f.client();
+  const owner = identity(), avatar = 'data:image/png;base64,AQID';
+  const join = { userName: 'Host', virtualIp: '10.144.1.1', identity: owner, avatar };
+  await request(host, 'join-server', join);
+  await request(member, 'join-server', { userName: 'Member', virtualIp: '10.144.1.2', identity: identity() });
+  await request(host, 'set-server-icon', { icon: avatar });
+  assert.equal((await request(member, 'set-server-icon', { icon: null })).ok, false);
+  assert.equal((await request(host, 'set-server-icon', { icon: null })).serverIcon, null);
+  assert.equal((await request(host, 'set-avatar', { avatar: null })).avatar, null);
+  let snapshot = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(snapshot.serverIcon, null); assert.equal(snapshot.users.find(u => u.socketId === host.id).avatar, null);
+  await request(host, 'set-avatar', { avatar });
+  await request(host, 'leave-server');
+  snapshot = await request(host, 'join-server', { ...join, avatar: null });
+  assert.equal(snapshot.users.find(u => u.socketId === host.id).avatar, null);
+  assert.deepEqual(JSON.parse(fs.readFileSync(stateFile)).userProfiles, {});
+  await f.close();
+  const g = await fixture(t, { stateFile }), returning = await g.client();
+  const restored = await request(returning, 'join-server', { ...join, avatar: null });
+  assert.equal(restored.serverIcon, null); assert.equal(restored.users[0].avatar, null);
+});
+
 test('new server requires deployment peers', () => {
   assert.throws(() => createSignalingServer({ initialPeers: '' }), /SCREENSH_EASYTIER_PEERS/);
 });
