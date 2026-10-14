@@ -10,6 +10,11 @@ for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytie
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
 }
 
+const mediaConfig = fs.readFileSync(path.join(resources, 'mediamtx.yml'), 'utf8');
+for (const protocol of ['rtsp', 'rtmp', 'hls', 'srt']) {
+  if (!new RegExp('^' + protocol + ': false$', 'm').test(mediaConfig.replace(/\r/g, ''))) throw new Error('Packaged MediaMTX must disable ' + protocol);
+}
+
 const manifest = path.join(resources, 'app.asar', 'package.json');
 const probe = `
   const { createRequire } = require('node:module');

@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -62,7 +62,11 @@
     "extraResources": [
       {
         "from": "res",
-        "to": "."
+        "to": ".",
+        "filter": [
+          "**/*",
+          "!mediamtx.yml"
+        ]
       },
       {
         "from": "mediamtx.yml",

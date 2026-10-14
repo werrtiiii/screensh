@@ -1,11 +1,11 @@
-const ids = { x264: ['obs_x264'], nvenc: ['obs_nvenc_h264_tex'], amf: ['h264_texture_amf', 'h264_fallback_amf'], qsv: ['obs_qsv11_v2', 'obs_qsv11_soft_v2', 'obs_qsv11', 'obs_qsv11_soft'] };
+const ids = { x264: ['obs_x264'], nvenc: ['obs_nvenc_h264_tex', 'jim_nvenc', 'ffmpeg_nvenc'], amf: ['h264_texture_amf', 'h264_fallback_amf'], qsv: ['obs_qsv11_v2', 'obs_qsv11_soft_v2', 'obs_qsv11', 'obs_qsv11_soft'] };
 function createVideoEncoder(factory, encoder, settings, name) {
   const candidates = ids[encoder];
   if (!candidates) throw new Error('视频编码器选项无效');
   const available = factory.types();
-  if (!candidates.some(id => available.includes(id))) throw new Error('当前电脑未提供所选编码器，请更新显卡驱动或切换到软件编码');
+  if (!candidates.some(id => available.includes(id))) throw new Error('当前电脑未提供所选编码器。' + (encoder === 'nvenc' ? 'NVENC 需要 NVIDIA 显卡；仅有 AMD 核显请选择 AMD AMF。' : '请检查对应显卡驱动。') + '已注册视频编码器：' + available.join(', '));
   const errors = [];
-  const requests = encoder === 'amf' ? ['amd', ...candidates] : encoder === 'qsv' ? ['qsv', ...candidates] : candidates;
+  const requests = encoder === 'amf' ? ['amd', ...candidates] : encoder === 'qsv' ? ['qsv', ...candidates] : encoder === 'nvenc' ? ['nvenc', ...candidates] : candidates;
   for (const id of requests) {
     if (encoder === 'qsv' && id !== 'qsv' && !available.includes(id) && !id.includes('_soft')) continue;
     let value;

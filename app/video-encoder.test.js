@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createVideoEncoder } = require('./video-encoder');
 test('bundled native factory receives AMD/QSV aliases and verifies returned OBS IDs', () => {
-  for (const [choice, alias, actual] of [['amf', 'amd', 'h264_texture_amf'], ['qsv', 'qsv', 'obs_qsv11_v2']]) {
+  for (const [choice, alias, actual] of [['amf', 'amd', 'h264_texture_amf'], ['qsv', 'qsv', 'obs_qsv11_v2'], ['nvenc', 'nvenc', 'obs_nvenc_h264_tex']]) {
     const calls = [];
     const result = createVideoEncoder({ types: () => [actual], create: id => {
       calls.push(id); return { id: id === alias ? actual : 'obs_x264', release() {} };
@@ -38,4 +38,10 @@ test('failed AMD paths never silently return software or another vendor', () => 
   let released = 0;
   assert.throws(() => createVideoEncoder({ types: () => ['h264_texture_amf'], create: () => ({ id: 'obs_x264', release() { released++; } }) }, 'amf', {}, 'test'), /实际加载 obs_x264/);
   assert.equal(released, 3);
+});
+
+test('NVENC recognizes legacy hardware encoders without accepting x264', () => {
+  const factory = { types: () => ['ffmpeg_nvenc'], create: () => ({ id: 'ffmpeg_nvenc', release() {} }) };
+  assert.equal(createVideoEncoder(factory, 'nvenc', {}, 'test').id, 'ffmpeg_nvenc');
+  assert.throws(() => createVideoEncoder({ types: () => ['obs_x264'], create() { throw Error('Must not call'); } }, 'nvenc', {}, 'test'), /NVENC 需要 NVIDIA/);
 });

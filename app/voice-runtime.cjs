@@ -38,7 +38,7 @@ class VoiceRuntime {
     return this.serial(async () => {
       if (this.active) throw new Error('麦克风已在使用');
       try {
-        await this.media.start(this.exe, [this.config], { ready: log => /\[WebRTC\] listener opened/.test(log), env: { ...process.env, MTX_WEBRTCADDRESS: `127.0.0.1:${this.options.httpPort}`, MTX_WEBRTCLOCALUDPADDRESS: `127.0.0.1:${this.options.icePort}`, MTX_WEBRTCLOCALTCPADDRESS: `127.0.0.1:${this.options.icePort}`, MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCADDITIONALHOSTS: '127.0.0.1' } });
+        await this.media.start(this.exe, [this.config], { ready: log => /\[WebRTC\] listener opened/.test(log), env: { ...process.env, MTX_RTSP: 'false', MTX_RTMP: 'false', MTX_HLS: 'false', MTX_SRT: 'false', MTX_API: 'false', MTX_METRICS: 'false', MTX_PPROF: 'false', MTX_PLAYBACK: 'false', MTX_WEBRTCADDRESS: `127.0.0.1:${this.options.httpPort}`, MTX_WEBRTCLOCALUDPADDRESS: `127.0.0.1:${this.options.icePort}`, MTX_WEBRTCLOCALTCPADDRESS: `127.0.0.1:${this.options.icePort}`, MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCADDITIONALHOSTS: '127.0.0.1' } });
         await this.request('start', deviceId);
         await this.media.waitForOutput(/\[path live\] stream is available/);
         this.active = true;
