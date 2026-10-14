@@ -3,9 +3,9 @@ const fs = require('fs');
 const C = require('./obs-constants');
 
 class ObsEngine {
-  constructor(dataPath, onFailure = () => {}, publishUrl = 'http://127.0.0.1:8889/live/whip') {
+  constructor(dataPath, onFailure = () => {}, publishUrl = 'http://127.0.0.1:8889/live/whip', isolatedHost = false) {
     this.dataPath = dataPath; this.onFailure = onFailure;
-    this.publishUrl = publishUrl;
+    this.publishUrl = publishUrl; this.isolatedHost = isolatedHost;
     this.resources = []; this.initialized = false; this.hosted = false;
   }
   init() {
@@ -17,6 +17,12 @@ class ObsEngine {
       .replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
     fs.mkdirSync(this.dataPath, { recursive: true });
     try {
+      if (this.isolatedHost) {
+        // OBS IPC.host replaces hosts with the same executable name. Give the
+        // microphone its own host identity so it cannot kill screen capture.
+        const { prepareVoiceHost } = require('./obs-host-path');
+        o.NodeObs.IPC.setServerPath(prepareVoiceHost(bin, this.dataPath), bin);
+      }
       const oldCompatibility = process.env.__COMPAT_LAYER;
       let code;
       try {
@@ -36,6 +42,8 @@ class ObsEngine {
       this.initialized = true;
       o.Global.multipleRendering = false;
       o.AudioFactory.legacySettings = { sampleRate: 48000, speakers: C.Stereo };
+      // legacySettings does not reset the live audio context in this binding.
+      if (this.isolatedHost) o.AudioFactory.audioContext = { sampleRate: 48000, speakers: C.Stereo };
     } catch (error) { this.shutdown(); throw error; }
   }
   own(value, dispose) { this.resources.push(() => dispose(value)); return value; }
@@ -47,6 +55,7 @@ class ObsEngine {
     this.idleTimer.unref?.();
   }
   createSource(config) {
+    if (['voice', 'accompaniment'].includes(config.sourceType)) return this.osn.InputFactory.create('color_source_v3', `voice-canvas-${Date.now()}`, { width: 16, height: 16, color: 0xff000000 });
     if (config.sourceType === 'window') {
       return this.osn.InputFactory.create('window_capture', `window-${Date.now()}`, {
         window: config.sourceId, method: 2, priority: 0, cursor: true, capture_audio: false,
@@ -76,7 +85,7 @@ class ObsEngine {
       video.video = videoSettings;
       const source = this.own(this.createSource(config), s => s.release());
       if (config.sourceType === 'window' && config.shareAudio && !o.InputFactory.types().includes('wasapi_process_output_capture')) {
-        throw new Error('当前系统或 OBS 不支持程序音频采集，请关闭共享音频后重试；不会自动改为采集系统声音');
+        throw new Error('当前系统或 OBS 不支持程序音频采集，请关闭共享音频后重试');
       }
       const scene = this.own(o.SceneFactory.create(`share-${Date.now()}`), s => s.release());
       // Remove the scene item before releasing sources so capture is deactivated.
@@ -126,7 +135,27 @@ class ObsEngine {
         }, 250);
         timer.unref?.(); this.own(timer, clearInterval);
       }
-      if (config.shareAudio) {
+      if (config.sourceType === 'voice') {
+        const mic = this.own(o.InputFactory.create('wasapi_input_capture', `microphone-${Date.now()}`, {
+          device_id: config.microphoneId || 'default',
+          // Use OBS timestamps instead of the capture device's timestamps.
+          use_device_timing: false,
+        }), s => s.release());
+        // This bundled binding reads back zero after assigning mic.volume = 1.
+        // Use the native fader's linear multiplier and verify unity gain.
+        const fader = this.own(o.FaderFactory.create(0), f => { f.detach(); f.destroy(); });
+        fader.attach(mic); fader.mul = 1;
+        if (Math.abs(mic.volume - 1) > 0.001) throw new Error('OBS 麦克风音量初始化失败');
+        mic.muted = false; mic.audioMixers = 1;
+        o.Global.setOutputSource(1, mic);
+        if (process.env.SCREENSH_VOICE_DEBUG === '1') console.log('MIC_CONFIG', JSON.stringify({ settings: mic.settings, muted: mic.muted, enabled: mic.enabled, volume: mic.volume, mixers: mic.audioMixers, audio: o.AudioFactory.audioContext, legacy: o.AudioFactory.legacySettings }));
+      } else if (config.sourceType === 'accompaniment') {
+        const processAudio = config.sourceId !== '__system__';
+        if (processAudio && !o.InputFactory.types().includes('wasapi_process_output_capture')) throw new Error('当前系统不支持程序音频采集，请选择全部音源或更新 Windows');
+        const audio = this.own(o.InputFactory.create(processAudio ? 'wasapi_process_output_capture' : 'wasapi_output_capture', `accompaniment-${Date.now()}`, processAudio ? { window: config.sourceId, priority: 0 } : { device_id: 'default', use_device_timing: false }), s => s.release());
+        const fader = this.own(o.FaderFactory.create(0), f => { f.detach(); f.destroy(); }); fader.attach(audio); fader.mul = 1;
+        audio.muted = false; audio.audioMixers = 1; o.Global.setOutputSource(1, audio);
+      } else if (config.shareAudio) {
         // Keep window audio isolated from desktop loopback. Never fall back to system audio.
         const isWindow = config.sourceType === 'window';
         const audio = this.own(o.InputFactory.create(isWindow ? 'wasapi_process_output_capture' : 'wasapi_output_capture', `audio-${Date.now()}`, isWindow ? { window: config.sourceId, priority: 0 } : { device_id: 'default' }), s => s.release());
@@ -134,17 +163,14 @@ class ObsEngine {
       }
       const bitrate = config.maxBitrate || Math.min(10000, Math.max(800, Math.round(width * height / (1280 * 720) * 1500 * config.frameRate / 30)));
       const encoder = config.videoEncoder || 'x264';
-      const encoderId = { x264: 'obs_x264', nvenc: 'obs_nvenc_h264_tex', amf: 'h264_texture_amf' }[encoder];
-      if (!encoderId) throw new Error('视频编码器选项无效');
-      if (!o.VideoEncoderFactory.types().includes(encoderId)) throw new Error('当前电脑未提供所选编码器，请更新显卡驱动或切换到软件编码');
-      const ve = this.own(o.VideoEncoderFactory.create(encoderId, `h264-${Date.now()}`, {
+      const { createVideoEncoder } = require('./video-encoder');
+      const ve = this.own(createVideoEncoder(o.VideoEncoderFactory, encoder, {
         bitrate, rate_control: 'CBR', keyint_sec: 2, bf: 0,
-        ...(encoder === 'amf' ? { preset: 'balanced', profile: 'high' }
+        ...(encoder === 'qsv' ? { target_usage: 'TU4', latency: 'ultra-low', profile: 'high', bframes: 0, repeat_headers: true }
+          : encoder === 'amf' ? { preset: 'balanced', profile: 'high' }
           : encoder === 'nvenc' ? { preset: 'p4', tune: 'll', multipass: 'disabled', profile: 'high', lookahead: false, adaptive_quantization: false }
           : { preset: 'veryfast', tune: 'zerolatency', profile: 'baseline' }),
-      }), e => e.release());
-      // The bundled factory can silently substitute x264 for unavailable hardware.
-      if (ve.id !== encoderId) throw new Error('所选编码器未能加载，已阻止自动回退到其他编码器');
+      }, `h264-${Date.now()}`), e => e.release());
       // The streaming API requires an audio encoder even when the source is silent.
       const ae = this.own(o.AudioEncoderFactory.create('ffmpeg_opus', `opus-${Date.now()}`), e => e.release());
       ae.bitrate = config.audioBitrate;
@@ -170,7 +196,7 @@ class ObsEngine {
       return { width, height, bitrate };
     } catch (error) {
       this.stop();
-      if (['nvenc', 'amf'].includes(config.videoEncoder)) throw new Error(`${config.videoEncoder === 'amf' ? 'AMD AMF' : 'NVIDIA NVENC'} 硬件编码启动失败：${error.message}。请检查显卡驱动，或在房间设置中切回软件编码`);
+      if (['nvenc', 'amf', 'qsv'].includes(config.videoEncoder)) throw new Error(`${({ amf: 'AMD AMF', nvenc: 'NVIDIA NVENC', qsv: 'Intel QSV' })[config.videoEncoder]} 硬件编码启动失败：${error.message}。请检查显卡驱动，或在房间设置中切回软件编码`);
       throw error;
     }
   }

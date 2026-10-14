@@ -202,6 +202,7 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.connected { background: var(--green); }
 .status-dot.disconnected { background: var(--danger); }
+.status-dot.reconnecting { background: #f0b232; }
 
 /* ===== Room ===== */
 .room-topbar {
@@ -254,7 +255,7 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .user-list li .user-dot.sharer { background: var(--green); }
 .user-list li .user-dot.viewer { background: var(--text2); }
 .user-list li.me { font-weight: 600; background: rgba(88,101,242,0.08); }
-.user-list li .user-role { font-size: 11px; color: var(--text2); margin-left: auto; }
+.user-list li .user-channel { font-size: 11px; color: var(--text2); margin-left: auto; white-space: nowrap; }
 
 .screen-list { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; }
 .screen-item {
@@ -340,7 +341,54 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
   padding: 24px 16px; display: flex; flex-direction: column; align-items: center; gap: 14px;
   text-align: center; transition: var(--transition); box-shadow: var(--shadow);
 }
-.user-card:hover { transform: translateY(-3px); border-color: var(--primary); box-shadow: 0 12px 32px rgba(0,0,0,0.15); }
+.user-card.is-speaking { transform: translateY(-3px); border-color: var(--green); box-shadow: 0 8px 24px rgba(35,165,89,0.22); }
+.card-name-row { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; min-width: 0; }
+.user-card .card-name-row .name { width: auto; flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
+.voice-control { border: 1px solid var(--border); background: var(--surface2); color: var(--text); border-radius: 7px; min-width: 27px; height: 28px; cursor: pointer; }
+.voice-control.active { background: var(--primary); color: white; }
+.voice-control:disabled { opacity: .45; cursor: default; }
+.voice-volume { width: 100%; display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text2); }
+.voice-volume input { min-width: 0; width: 70px; flex: 1; accent-color: var(--primary); }
+.remote-card-footer { width: calc(100% - 28px); min-width: 0; }
+.remote-user-card .remote-card-footer .name { width: 100%; margin-bottom: 6px; }
+.remote-card-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; min-height: 28px; }
+.remote-mic-muted, .remote-speaker-button { display: grid; place-items: center; width: 26px; height: 26px; color: var(--text2); }
+.remote-mic-muted svg, .remote-speaker-button svg { width: 22px; height: 22px; }
+.remote-speaker-button { padding: 2px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.remote-speaker-button:hover, .remote-speaker-button:focus-visible { color: var(--primary); background: var(--surface2); }
+.speaker-control { position: relative; }
+.speaker-control .speaker-popover { display: none; position: absolute; bottom: 100%; right: -8px; width: 190px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); z-index: 10; }
+.speaker-control:hover .speaker-popover, .speaker-control:focus-within .speaker-popover { display: flex; }
+.speaker-control .speaker-popover input { width: 100%; margin: 0; accent-color: var(--primary); }
+.user-card:has(.speaker-control:hover), .user-card:has(.speaker-control:focus-within) { z-index: 5; }
+.own-card-name-row { display: flex; align-items: center; gap: 8px; width: calc(100% - 28px); min-width: 0; }
+.user-card .own-card-name-row .name { width: auto; max-width: calc(100% - 36px); }
+.accompaniment-trigger { position: relative; display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; padding: 2px; border: 0; background: transparent; color: var(--text2); border-radius: 6px; cursor: pointer; }
+.accompaniment-trigger svg { width: 22px; height: 22px; }
+.accompaniment-trigger:hover, .accompaniment-trigger.active { color: var(--primary); }
+.accompaniment-trigger:disabled { opacity: .5; cursor: wait; }
+.accompaniment-tooltip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 7px 10px; border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); color: var(--text2); white-space: nowrap; font-size: 13px; z-index: 10; pointer-events: none; }
+.accompaniment-trigger:hover .accompaniment-tooltip, .accompaniment-trigger:focus-visible .accompaniment-tooltip { display: block; }
+.accompaniment-menu { overflow-y: auto; position: fixed; width: 242px; padding: 14px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); z-index: 1200; }
+.accompaniment-heading { display: flex; align-items: center; gap: 7px; padding: 3px 10px 9px; color: var(--text2); font-size: 13px; }
+.accompaniment-heading .help-tip { margin: 0; }
+.accompaniment-source { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px; padding: 9px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.accompaniment-source:hover, .accompaniment-source[aria-pressed="true"] { background: var(--surface2); color: var(--primary); }
+.accompaniment-source:disabled { opacity: .5; cursor: wait; }
+.music-provider-badge { display: grid; place-items: center; width: 21px; height: 21px; flex-shrink: 0; border-radius: 50%; color: white; font-size: 12px; font-weight: 700; }
+.accompaniment-more::after { content: '›'; margin-left: auto; font-size: 24px; line-height: 16px; }
+.accompaniment-more-list { position: fixed; z-index: 1201; width: 280px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.accompaniment-more-list .accompaniment-source { overflow-wrap: anywhere; }
+.accompaniment-more-list .accompaniment-source::after { content: ''; width: 15px; height: 15px; flex: 0 0 15px; margin-left: auto; border: 1px solid var(--text2); border-radius: 50%; }
+.accompaniment-more-list .accompaniment-source[aria-pressed="true"]::after { background: var(--primary); border-color: var(--primary); box-shadow: inset 0 0 0 3px var(--surface); }
+.accompaniment-divider { margin: 8px 10px 14px; border-top: 1px solid var(--border); }
+.accompaniment-volume { display: flex; flex-direction: column; gap: 16px; padding: 0 12px 9px; color: var(--text2); }
+.accompaniment-volume input { width: 100%; accent-color: var(--primary); }
+.accompaniment-current { display: block; padding: 8px 12px; color: var(--text2); overflow-wrap: anywhere; }
+.accompaniment-stop { color: var(--danger); }
+.voice-device-actions { display: flex; gap: 8px; margin-top: 12px; }
+#microphoneLevel { width: 100%; height: 16px; margin: 8px 0; }
+.setting-voice small { display: block; color: var(--text2); }
 .user-card .avatar { font-size: 48px; background: var(--surface2); width: 80px; height: 80px; line-height: 80px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; }
 .user-card .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .user-card .name { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
@@ -596,3 +644,25 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .default-avatar { display: grid; place-items: center; font-size: 14px; overflow: hidden; }
 .default-avatar img, .user-card .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .profile-avatar:not(.has-image) { font-size: 18px; }
+
+/* Channel member cards: cover, name, microphone and listening controls. */
+.cards-grid { grid-template-columns: repeat(auto-fill, minmax(192.5px, 227.5px)); }
+.user-card { zoom: 0.875; position: relative; padding: 0 0 12px; gap: 12px; text-align: left; }
+.user-card:has(.microphone-control:hover), .user-card:has(.microphone-control:focus-within) { z-index: 5; }
+.card-cover { position: relative; width: 100%; }
+.user-card .avatar { width: 100%; height: 180px; border-radius: var(--radius) var(--radius) 0 0; font-size: 72px; }
+.user-card .name { width: calc(100% - 28px); font-size: 16px; font-weight: 500; }
+.user-card .btn-watch { position: absolute; right: 10px; bottom: 10px; width: auto; background: var(--surface); color: var(--text2); opacity: .9; }
+.card-voice-row { display: flex; align-items: center; gap: 10px; width: calc(100% - 28px); }
+.voice-control { display: grid; place-items: center; width: 28px; height: 28px; border: 0; background: transparent; padding: 3px; color: var(--text2); }
+.voice-control svg { width: 22px; height: 22px; }
+.voice-control.active { background: transparent; color: var(--text2); }
+.voice-control:hover { background: var(--surface2); }
+.voice-status { flex: 1; font-size: 13px; color: var(--text2); }
+.microphone-control { position: relative; }
+.microphone-popover { display: none; position: absolute; bottom: 100%; left: -6px; width: 220px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); z-index: 10; }
+.microphone-control:hover .microphone-popover, .microphone-control:focus-within .microphone-popover { display: flex; flex-direction: column; gap: 12px; }
+.microphone-popover label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text2); }
+.microphone-popover select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); color: var(--text); }
+.microphone-popover input { width: 100%; accent-color: var(--primary); }
+.microphone-settings-link { padding: 8px 0 0; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; cursor: pointer; }

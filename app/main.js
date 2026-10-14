@@ -76,6 +76,42 @@ ipcMain.handle('download-and-install-update', async () => {
   return true;
 });
 const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i.address);
+let voiceRuntime;
+function getVoiceRuntime() {
+  if (!voiceRuntime) {
+    const { VoiceRuntime } = require('./voice-runtime.cjs');
+    voiceRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'voice-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml'), message => mainWindow?.webContents.send('voice-error', message));
+  }
+  return voiceRuntime;
+}
+ipcMain.handle('voice-devices', () => getVoiceRuntime().devices());
+ipcMain.handle('voice-start', (_event, deviceId) => {
+  if (typeof deviceId !== 'string' || deviceId.length > 512) throw new Error('无效的麦克风');
+  return getVoiceRuntime().start(deviceId);
+});
+ipcMain.handle('voice-stop', () => voiceRuntime?.stop());
+let accompanimentRuntime;
+let processAudio;
+function getProcessAudio() {
+  if (!processAudio) {
+    const { ProcessAudio } = require('./process-audio.cjs');
+    processAudio = new ProcessAudio(resource('screensh-process-audio.exe'), message => mainWindow?.webContents.send('accompaniment-pcm', message), message => mainWindow?.webContents.send('accompaniment-error', message));
+  }
+  return processAudio;
+}
+ipcMain.handle('accompaniment-sources', () => getProcessAudio().list());
+ipcMain.handle('accompaniment-start', (_event, sourceId) => {
+  if (typeof sourceId !== 'string' || !sourceId || sourceId.length > 8192) throw new Error('无效的伴奏音源');
+  if (/^process:[1-9]\d{0,9}$/.test(sourceId)) return getProcessAudio().start(Number(sourceId.slice(8)));
+  if (!accompanimentRuntime) {
+    const { VoiceRuntime } = require('./voice-runtime.cjs');
+    accompanimentRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'accompaniment-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml'), message => mainWindow?.webContents.send('accompaniment-error', message), { httpPort: 8891, icePort: 8191, sourceType: 'accompaniment' });
+  }
+  return accompanimentRuntime.start(sourceId);
+});
+ipcMain.handle('accompaniment-stop', () => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()]));
+// Expose virtual adapter candidates for the channel voice mesh.
+app.commandLine?.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 function createWindow() {
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
@@ -140,7 +176,7 @@ function validateConfig(config) {
     || !['screen', 'window'].includes(config.sourceType || 'screen')
     || (config.sourceType === 'window' && typeof config.sourceId !== 'string')
     || !['auto', 'wgc', 'dxgi'].includes(config.captureMethod ?? 'auto')
-    || !['x264', 'nvenc', 'amf'].includes(config.videoEncoder ?? 'x264')
+    || !['x264', 'nvenc', 'amf', 'qsv'].includes(config.videoEncoder ?? 'x264')
     || !['auto', '1920x1080', '1280x720', '854x480'].includes(config.resolution)
     || ![15, 30, 60].includes(config.frameRate)
     || !Number.isInteger(config.maxBitrate) || (config.maxBitrate !== 0 && (config.maxBitrate < 100 || config.maxBitrate > 10000))
@@ -211,8 +247,10 @@ function leaveRuntime() {
   virtualIp = null;
   runtimeLeave = Promise.allSettled([
     stopShare(),
+    Promise.resolve().then(() => voiceRuntime?.stop()),
+    Promise.resolve().then(() => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()])),
     Promise.resolve().then(() => easytier.stop()),
-  ]).then(results => checkCleanup(results, ['媒体', '虚拟网络']))
+  ]).then(results => checkCleanup(results, ['媒体', '语音', '伴奏', '虚拟网络']))
     .finally(() => { virtualIp = null; runtimeLeave = null; });
   return runtimeLeave;
 }

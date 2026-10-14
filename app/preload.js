@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
+  voiceDevices: () => ipcRenderer.invoke('voice-devices'),
+  voiceStart: deviceId => ipcRenderer.invoke('voice-start', deviceId),
+  voiceStop: () => ipcRenderer.invoke('voice-stop'),
+  accompanimentStart: sourceId => ipcRenderer.invoke('accompaniment-start', sourceId),
+  accompanimentStop: () => ipcRenderer.invoke('accompaniment-stop'),
+  accompanimentSources: () => ipcRenderer.invoke('accompaniment-sources'),
+  onAccompanimentPCM: callback => { const handler = (_event, data) => callback(data); ipcRenderer.on('accompaniment-pcm', handler); return () => ipcRenderer.removeListener('accompaniment-pcm', handler); },
+  onAccompanimentError: callback => { const handler = (_event, message) => callback(message); ipcRenderer.on('accompaniment-error', handler); return () => ipcRenderer.removeListener('accompaniment-error', handler); },
+  onVoiceError: callback => { const fn = (_event, message) => callback(message); ipcRenderer.on('voice-error', fn); return () => ipcRenderer.removeListener('voice-error', fn); },
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),

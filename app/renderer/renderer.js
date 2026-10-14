@@ -3,12 +3,14 @@
 // ============================================================
 import { state, $, $$ } from './shared.js';
 import { toast } from './toast.js';
-import { socket, connectServer, requestServer, applyServerState } from './signaling.js';
+import { socket, connectServer, requestServer, applyServerState, rememberJoinCredentials } from './signaling.js';
 import { loadScreenSources, startScreenCapture, stopSharing, stopWatch } from './media.js';
 import { leaveRoom, enterRoom } from './room.js';
 import { normalizePeers } from './easytier-peers.mjs';
 import { requestPassword } from './password-dialog.js';
 import { showContextMenu } from './context-menu.js';
+import { initVoice } from './voice.js';
+import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
 
 // --- 初始化主题---
@@ -73,6 +75,7 @@ async function joinServer() {
       identity = Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join('');
       localStorage.setItem(identityKey, identity);
     }
+    rememberJoinCredentials({ userName, identity, password });
     toast('正在准备网络连接…');
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
     const joined = await requestServer('join-server', { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar }, connection);
@@ -260,7 +263,7 @@ function initSettings() {
     localStorage.setItem('autoPreview', state.autoPreview);
   });
   const savedEncoder = localStorage.getItem('videoEncoder');
-  state.videoEncoder = ['x264', 'nvenc', 'amf'].includes(savedEncoder) ? savedEncoder : 'x264';
+  state.videoEncoder = ['x264', 'nvenc', 'amf', 'qsv'].includes(savedEncoder) ? savedEncoder : 'x264';
   $('#videoEncoderSelect').value = state.videoEncoder;
   $('#videoEncoderSelect').addEventListener('change', e => {
     state.videoEncoder = e.target.value;
@@ -367,6 +370,8 @@ function initSettings() {
 }
 
 initSettings();
+initAccompaniment();
+initVoice();
 
 // GitHub Releases update check is explicit so it does not create background traffic.
 const updateStatus = $('#updateStatus');
@@ -454,7 +459,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware').forEach(el => el.style.display = '');
+      $$('.setting-hardware, .setting-voice').forEach(el => el.style.display = '');
       $$('.setting-server').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
@@ -465,7 +470,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware').forEach(el => el.style.display = 'none');
+      $$('.setting-hardware, .setting-voice').forEach(el => el.style.display = 'none');
       $$('.setting-server').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');

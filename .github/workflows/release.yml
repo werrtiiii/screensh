@@ -51,6 +51,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefix app
 
+      - name: Prepare process audio compiler
+        shell: pwsh
+        run: |
+          $compilers = @('C:/mingw64/bin/g++.exe', 'C:/msys64/mingw64/bin/g++.exe', 'C:/msys64/ucrt64/bin/g++.exe', 'C:/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin/g++.exe')
+          if (-not (Get-Command g++ -ErrorAction SilentlyContinue) -and -not ($compilers | Where-Object { Test-Path -LiteralPath $_ })) {
+            choco install mingw --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot install the process audio compiler.' }
+          }
+
       - name: Build NSIS installer
         run: npm run pack:win --prefix app
 

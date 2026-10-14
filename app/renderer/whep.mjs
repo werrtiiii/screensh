@@ -1,6 +1,7 @@
 export class WhepSession {
-  constructor(url, configuration, onTrack, onFailure) {
+  constructor(url, configuration, onTrack, onFailure, options = {}) {
     this.url = url; this.controller = new AbortController(); this.closed = false;
+    this.audioOnly = options.audioOnly === true;
     this.candidates = []; this.patchChain = Promise.resolve();
     this.pc = new RTCPeerConnection({ ...configuration, bundlePolicy: 'max-bundle' });
     this.pc.ontrack = onTrack;
@@ -20,7 +21,7 @@ export class WhepSession {
     this.connectTimer = setTimeout(() => {
       if (!this.closed) this.onFailure(new Error(`无法连接共享端 ${new URL(this.url).host}：请检查双方 EasyTier 节点、虚拟网卡路由及共享端防火墙（TCP 8889、UDP/TCP 8189）`));
     }, 20000);
-    pc.addTransceiver('video', { direction: 'recvonly' });
+    if (!this.audioOnly) pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);

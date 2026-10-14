@@ -82,6 +82,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   app.set('trust proxy', trustedProxies);
   const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 256 * 1024 });
   const members = new Map();
+  const mutedIdentities = new Set();
   const attempts = new Map();
   const nameKey = name => name.normalize('NFKC').toLowerCase();
   function isImageData(value) {
@@ -108,12 +109,14 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (!timingSafeEqual(digest, Buffer.from(passwordRecord.hash, 'hex'))) throw new Error('服务器密码错误');
       entry.count = Math.max(0, entry.count - 1);
     }
-    if ([...members.values()].some(u => nameKey(u.name) === nameKey(name.trim()))) throw new Error('名称已被使用，请换一个');
+    const key = typeof payload?.identity === 'string' && /^[a-f0-9]{64}$/.test(payload.identity)
+      ? createHash('sha256').update(payload.identity).digest('hex') : null;
+    if ([...members.values()].some(u => nameKey(u.name) === nameKey(name.trim()) && u.key !== key)) throw new Error('名称已被使用，请换一个');
   }
   const role = key => key === saved.owner ? 'host' : saved.admins.includes(key) ? 'admin' : 'member';
   const snapshot = () => ({ serverId: saved.serverId, channels: saved.channels, easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
     users: [...members].map(([socketId, u]) => ({ socketId, name: u.name, virtualIp: u.virtualIp,
-      channelId: u.channelId, isSharing: u.isSharing, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
+      channelId: u.channelId, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
@@ -146,7 +149,14 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         || typeof payload.identity !== 'string' || !/^[a-f0-9]{64}$/.test(payload.identity)) throw new Error('请填写有效名称和连接信息');
       if (members.size >= 100) throw new Error('服务器已满（最多100人）');
       const key = createHash('sha256').update(payload.identity).digest('hex');
-      if ([...members.values()].some(u => u.key === key)) throw new Error('本机身份已在线，请先退出原连接');
+      let channelId = 'main';
+      const previous = [...members.entries()].find(([, u]) => u.key === key);
+      if (previous) {
+        channelId = previous[1].channelId;
+        members.delete(previous[0]);
+        const stale = io.sockets.sockets.get(previous[0]);
+        stale?.leave('members'); stale?.leave(group(channelId)); stale?.disconnect(true);
+      }
       if ([...members.values()].some(u => u.virtualIp === payload.virtualIp)) throw new Error('虚拟 IP 冲突，请重新连接');
       if ([...members.values()].some(u => nameKey(u.name) === nameKey(payload.userName.trim()))) throw new Error('名称已被使用，请换一个');
       const avatar = validateImage(Object.hasOwn(payload, 'avatar') ? payload.avatar : saved.userProfiles[key]?.avatar ?? null, '用户头像');
@@ -155,8 +165,8 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         if (avatar) userProfiles[key] = { avatar }; else delete userProfiles[key];
         persist({ ...saved, owner: saved.owner || key, userProfiles });
       }
-      members.set(socket.id, { key, name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId: 'main', isSharing: false });
-      socket.join('members'); socket.join(group('main')); publish();
+      members.set(socket.id, { key, name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, isSharing: false, voiceEnabled: false, voiceMuted: mutedIdentities.has(key) });
+      socket.join('members'); socket.join(group(channelId)); publish();
       return snapshot();
     });
     handle('get-image', payload => {
@@ -173,6 +183,45 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (avatar) userProfiles[u.key] = { avatar }; else delete userProfiles[u.key];
       persist({ ...saved, userProfiles });
       publish(); return { avatar: imageRef(avatar) };
+    });
+    handle('set-voice-state', payload => {
+      const u = requireMember();
+      if (typeof payload?.enabled !== 'boolean') throw new Error('无效的语音状态');
+      if (payload.muted !== undefined && typeof payload.muted !== 'boolean') throw new Error('无效的麦克风状态');
+      if (payload.accompaniment !== undefined && typeof payload.accompaniment !== 'boolean') throw new Error('无效的伴奏状态');
+      u.voiceEnabled = payload.enabled;
+      if (!payload.enabled) u.accompanimentActive = false;
+      else if (payload.accompaniment !== undefined) u.accompanimentActive = payload.accompaniment;
+      if (payload.muted !== undefined) u.microphoneMuted = payload.muted;
+      if (!payload.enabled || (u.microphoneMuted && !u.accompanimentActive)) u.voiceSpeaking = false;
+      publish(); return {};
+    });
+    handle('voice-activity', payload => {
+      const u = requireMember();
+      if (typeof payload?.speaking !== 'boolean') throw new Error('无效的发言状态');
+      const active = u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && payload.speaking;
+      if (!!u.voiceSpeaking !== active) {
+        u.voiceSpeaking = active;
+        socket.to(group(u.channelId)).emit('voice-activity', { from: socket.id, speaking: active });
+      }
+      return {};
+    });
+    handle('set-member-mute', payload => {
+      const actor = requireMember(), target = members.get(payload?.socketId);
+      const rank = { host: 2, admin: 1, member: 0 };
+      if (!target || rank[role(actor.key)] <= rank[role(target.key)] || actor.channelId !== target.channelId) throw new Error('只能禁言同频道中权限更低的成员');
+      if (typeof payload?.muted !== 'boolean') throw new Error('无效的禁言状态');
+      target.voiceMuted = payload.muted;
+      if (payload.muted) target.voiceSpeaking = false;
+      if (payload.muted) mutedIdentities.add(target.key); else mutedIdentities.delete(target.key);
+      publish();
+      io.to(payload.socketId).emit('voice-mute', { muted: target.voiceMuted }); return {};
+    });
+    handle('voice-signal', payload => {
+      const actor = requireMember(), target = members.get(payload?.to);
+      if (!actor.voiceEnabled || !target?.voiceEnabled || actor === target || actor.channelId !== target.channelId) throw new Error('目标不在当前语音频道');
+      if (!payload.data || JSON.stringify(payload.data).length > 24000) throw new Error('语音信令无效');
+      io.to(payload.to).emit('voice-signal', { from: socket.id, data: payload.data }); return {};
     });
     handle('set-server-icon', payload => {
       if (role(requireMember().key) !== 'host') throw new Error('只有房主可以设置服务器图标');
@@ -214,7 +263,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       for (const [sid, member] of members) if (member.channelId === id) {
         const client = io.sockets.sockets.get(sid);
         client?.leave(group(id)); client?.join(group('main'));
-        member.channelId = 'main'; member.isSharing = false;
+        member.channelId = 'main'; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
         client?.emit('channel-deleted');
       }
       publish(); return {};
@@ -239,7 +288,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const u = requireMember();
       if (!saved.channels.some(c => c.id === payload?.channelId)) throw new Error('频道不存在');
       if (u.channelId !== payload.channelId) {
-        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.isSharing = false;
+        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
         socket.join(group(u.channelId)); publish();
       }
       return snapshot();

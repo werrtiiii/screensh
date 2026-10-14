@@ -14,6 +14,16 @@ const mtx = new ManagedProcess('MediaMTX-test');
 const obs = new SyntheticEngine(temporary, message => console.error('OUTPUT FAILURE:', message));
 (async () => {
   try {
+    if (process.env.SCREENSH_TEST_ENCODER_API === '1') {
+      obs.init();
+      console.log('ENCODER_TYPES', JSON.stringify(obs.osn.VideoEncoderFactory.types()));
+      for (const id of ['h264_texture_amf', 'h264_fallback_amf', 'amd', 'obs_qsv11_v2', 'qsv']) {
+        let value;
+        try { value = obs.osn.VideoEncoderFactory.create(id, 'probe-' + id, {}); console.log('ENCODER_API', id, value.id); }
+        catch (error) { console.log('ENCODER_API_ERROR', id, error.message); }
+        finally { value?.release(); }
+      }
+    }
     await mtx.start(path.join(root, 'res/mediamtx.exe'), [path.join(root, 'mediamtx.yml')], {
       cwd: temporary, ready: log => /\[WebRTC\] listener opened/.test(log),
       env: { ...process.env, MTX_WEBRTCADDRESS: '127.0.0.1:8889', MTX_WEBRTCLOCALUDPADDRESS: '127.0.0.1:8189', MTX_WEBRTCADDITIONALHOSTS: '127.0.0.1' },

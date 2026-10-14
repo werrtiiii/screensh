@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../dist/win-unpacked');
 const resources = path.join(root, 'resources');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe',
-  'resources/mediamtx.exe', 'resources/wintun.dll', 'resources/Packet.dll',
+  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node']) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
 }

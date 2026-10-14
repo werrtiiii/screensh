@@ -1,18 +1,23 @@
 {
   "name": "screensh",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
-    "pack:win": "electron-builder --win nsis --publish never",
-    "publish:win": "electron-builder --win nsis --publish always",
-    "pack:portable": "node scripts/package-win.cjs",
+    "pack:win": "npm run build:process-audio && electron-builder --win nsis --publish never",
+    "publish:win": "npm run build:process-audio && electron-builder --win nsis --publish always",
+    "pack:portable": "npm run build:process-audio && node scripts/package-win.cjs",
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test",
     "test:native": "node scripts/run-electron.cjs smoke-native.cjs",
     "test:media": "node scripts/run-electron.cjs smoke-electron.cjs",
-    "test:ui": "node scripts/run-electron.cjs smoke-ui.cjs"
+    "test:ui": "node scripts/run-electron.cjs smoke-ui.cjs",
+    "test:voice": "node scripts/run-electron.cjs smoke-voice.cjs",
+    "test:mic-meter": "node scripts/run-electron.cjs smoke-mic-meter.cjs",
+    "test:speaking": "node scripts/run-electron.cjs smoke-speaking.cjs",
+    "test:voice-ui": "node scripts/run-electron.cjs smoke-voice-ui.cjs",
+    "build:process-audio": "node scripts/build-process-audio.cjs"
   },
   "keywords": [],
   "author": "",
@@ -42,12 +47,17 @@
       "managed-process.js",
       "peer-test.js",
       "obs-engine.js",
+      "obs-host-path.js",
+      "voice-runtime.cjs",
+      "voice-worker.cjs",
       "obs-constants.js",
       "capture-sources.js",
       "mediamtx.yml",
       "renderer/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "process-audio.cjs",
+      "video-encoder.js"
     ],
     "extraResources": [
       {

@@ -3,6 +3,9 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+app.commandLine.appendSwitch('mute-audio');
 const path = require('path');
 const assert = require('assert/strict');
 const { createSignalingServer } = require('../../server/server');
@@ -11,6 +14,8 @@ app.setPath('userData', path.join(root, '.runtime-probe', `ui-${process.pid}`));
 app.on('window-all-closed', () => {});
 let stops = 0, captureConfig, attempts = 0, networkPeers;
 let hardwareAcceleration = false;
+ipcMain.handle('voice-stop', () => true);
+ipcMain.handle('voice-devices', () => [{ id: 'default', name: '测试麦克风' }]);
 ipcMain.handle('get-hardware-acceleration', () => hardwareAcceleration);
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => { hardwareAcceleration = enabled; return enabled; });
 ipcMain.handle('start-easytier', (_event, _roomId, peers) => { networkPeers = peers; return '10.144.1.1'; });
@@ -39,7 +44,7 @@ app.whenReady().then(async () => {
     window.webContents.on('console-message', (_event, level, message) => { if (level >= 2) console.log('RENDERER', message); });
     await window.loadFile(path.join(root, 'renderer/index.html'));
     const saved = await window.webContents.executeJavaScript(`(async () => {
-      await import('./renderer.js');
+      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js');
       document.querySelector('#btnSettings').click();
       if ([...document.querySelectorAll('.profile-avatar')].some(n => n.textContent !== '👤' || n.classList.contains('has-image'))) throw new Error('Default profile avatar missing');
       if (document.querySelector('.setting-avatar') || document.querySelector('.panel-kicker')) throw new Error('Removed settings/header remain visible');
@@ -64,12 +69,13 @@ app.whenReady().then(async () => {
     window = new BrowserWindow({ show: false, webPreferences: { preload: path.join(root, 'preload.js'), contextIsolation: true, nodeIntegration: false } });
     await window.loadFile(path.join(root, 'renderer/index.html'));
     const result = await window.webContents.executeJavaScript(`(async () => {
-      await import('./renderer.js');
+      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js');
       const $ = s => document.querySelector(s);
+      const { state } = await import('./shared.js');
       const peersRestored = !$('#easytierPeers') && !$('#peerTestInput');
       if ($('#captureMethodSelect').value !== 'wgc') throw new Error('Capture method not restored');
       if ($('#videoEncoderSelect').value !== 'amf') throw new Error('Encoder not restored');
-      async function until(fn) { for(let i=0;i<100;i++){if(fn())return;await new Promise(r=>setTimeout(r,50))}throw new Error('UI timeout: ' + fn.toString()) }
+      async function until(fn) { for(let i=0;i<100;i++){if(fn())return;await new Promise(r=>setTimeout(r,50))}throw new Error('UI timeout: ' + fn.toString() + '\\n' + document.body.innerText.slice(-1000)) }
       $('#serverUrl').value = 'http://127.0.0.1:${server.address().port}';
       $('#userName').value = ''; $('#btnConnect').click();
       await new Promise(r => setTimeout(r, 100));
@@ -111,12 +117,12 @@ app.whenReady().then(async () => {
       if ((await peerRequest('create-channel', { name: 'denied' })).ok) throw new Error('Member created a channel');
       $('#userList li:last-child').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
       $('.context-menu button').click();
-      await until(() => $('#userList').textContent.includes('管理员'));
+      await until(() => state.serverUsers.some(u => u.name === 'Other' && u.role === 'admin'));
       if (!(await peerRequest('create-channel', { name: '管理员频道' })).ok) throw new Error('Admin creation failed');
       await until(() => document.querySelectorAll('.channel-button').length === 3);
       $('#userList li:last-child').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
       $('.context-menu button').click();
-      await until(() => !$('#userList').textContent.includes('管理员'));
+      await until(() => state.serverUsers.some(u => u.name === 'Other' && u.role === 'member'));
       if ((await peerRequest('create-channel', { name: 'denied-again' })).ok) throw new Error('Revoked admin created channel');
       peer.disconnect(); await until(() => $('#userCount').textContent === '1');
       $('#btnShare').click(); await until(() => $('.screen-item')); $('.screen-item').click(); $('#btnConfirmShare').click();
@@ -175,7 +181,7 @@ app.whenReady().then(async () => {
       $('#btnLeave').click(); await until(() => $('#lobby').classList.contains('active'));
       if (localStorage.getItem('userName') !== 'Smoke' || localStorage.getItem('serverUrl') !== $('#serverUrl').value) throw new Error('Connection preferences not saved');
       $('#btnConnect').click(); await until(() => $('#room').classList.contains('active'));
-      if (!$('#userList').textContent.includes('房主')) throw new Error('Owner not restored');
+      if (!state.serverUsers.some(u => u.name === 'Smoke' && u.role === 'host')) throw new Error('Owner not restored');
       if (document.querySelectorAll('.channel-button').length !== 3) throw new Error('Channels lost after reconnect');
       document.querySelectorAll('.channel-button')[1].click();
       await until(() => $('#channelNameDisplay').textContent === '测试频道');
@@ -226,6 +232,8 @@ app.whenReady().then(async () => {
       $('#btnLeave').click(); await until(() => $('#lobby').classList.contains('active') && !$('#btnConnect').disabled);
       $('#btnConnect').click(); await until(() => $('#room').classList.contains('active') && $('#userCount').textContent === '1');
       if ($('.member-avatar img') || $('#roomServerIcon').classList.contains('has-image')) throw new Error('Removed images returned after reconnect');
+      if (document.querySelectorAll('.user-card [data-voice]').length !== 2) throw new Error('Missing card voice controls');
+      if (![...document.styleSheets[0].cssRules].every(r => r.selectorText !== '.user-card:hover')) throw new Error('Hover animation remains');
       return { failedCleanly, autoPreview, keepsSharing, peersRestored, channelName: $('#channelNameDisplay').textContent, ioLoaded: typeof io === 'function' };
     })()`);
     assert.equal(result.failedCleanly, true); assert.equal(result.ioLoaded, true); assert.equal(result.channelName, '主频道');
@@ -244,6 +252,13 @@ app.whenReady().then(async () => {
     window.showInactive();
     await new Promise(resolve => setTimeout(resolve, 200));
     require('fs').writeFileSync(path.join(root, '.runtime-probe', 'room-menus.png'), (await window.webContents.capturePage()).toPNG());
+    await window.webContents.executeJavaScript(`document.querySelector('[data-voice="mute"]').focus(); document.querySelector('.microphone-control').dispatchEvent(new Event('mouseenter'))`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    require('fs').writeFileSync(path.join(root, '.runtime-probe', 'microphone-popover.png'), (await window.webContents.capturePage()).toPNG());
+    await window.webContents.executeJavaScript(`document.querySelector('#btnRoomSettings').click(); document.querySelector('#btnVoiceDevices').click()`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    require('fs').writeFileSync(path.join(root, '.runtime-probe', 'voice-settings.png'), (await window.webContents.capturePage()).toPNG());
+    await window.webContents.executeJavaScript(`document.querySelector('#btnCloseSettings').click()`);
     for (const [button, close, filename] of [['btnServerSettings', '#btnCloseServerSettings', 'server-settings.png'], ['btnServerPassword', '.password-cancel', 'password-dialog.png'], ['btnAddChannel', '#btnCancelChannel', 'channel-dialog.png'], ['btnServerPeers', '#btnCancelServerPeers', 'peers-dialog.png']]) {
       await window.webContents.executeJavaScript(`document.querySelector('#${button}').click()`);
       await new Promise(resolve => setTimeout(resolve, 200));

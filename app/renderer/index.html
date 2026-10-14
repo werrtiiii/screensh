@@ -94,7 +94,6 @@
             <div class="video-header">
               <button id="btnStopWatch" class="btn btn-outline btn-sm">← 返回</button>
               <span id="viewerNames" class="viewer-names" aria-live="polite">观众（0）：暂无观众</span>
-              <span id="watchingUserName" class="watching-title">正在观看...</span>
             </div>
             <div id="videoContainer" class="video-container"></div>
           </div>
@@ -188,14 +187,24 @@
               <span class="help-tip" data-tooltip="使用显卡渲染软件界面。修改后需要重启客户端；关闭后使用软件渲染。">?</span>
             </label>
           </div>
+          <div class="form-group setting-voice">
+            <label for="voiceMicrophone">麦克风</label>
+            <select id="voiceMicrophone" class="form-control"><option value="default">系统默认麦克风</option></select>
+            <label for="voiceSpeaker">扬声器</label>
+            <select id="voiceSpeaker" class="form-control"><option value="default">系统默认扬声器</option></select>
+            <div class="voice-device-actions"><button id="btnVoiceDevices" class="btn btn-outline btn-sm" type="button">刷新设备</button><button id="btnMicrophoneTest" class="btn btn-outline btn-sm" type="button">测试</button></div>
+            <meter id="microphoneLevel" min="0" max="1" value="0" aria-label="麦克风电平"></meter>
+            <small id="voiceTestStatus" class="hidden" role="status"></small>
+          </div>
           <div class="form-group setting-room">
             <label for="videoEncoderSelect">视频编码器
-              <span class="help-tip" data-tooltip="按显卡选择 NVENC 或 AMF，可降低 CPU 占用。需显卡及驱动支持；失败时改用软件编码。">?</span>
+              <span class="help-tip" data-tooltip="Intel 核显选 QSV，AMD 核显或独显选 AMF，NVIDIA 选 NVENC。需对应显卡及驱动支持；失败时可选软件编码。">?</span>
             </label>
             <select id="videoEncoderSelect" class="form-control">
               <option value="x264">软件编码 · H.264 (CPU / x264)</option>
               <option value="nvenc">硬件编码 · H.264 (NVIDIA NVENC)</option>
-              <option value="amf">硬件编码 · H.264 (AMD AMF)</option>
+              <option value="qsv">硬件编码 · H.264 (Intel 核显 / QSV)</option>
+              <option value="amf">硬件编码 · H.264 (AMD 核显 / 独显 AMF)</option>
             </select>
           </div>
           <div class="form-group setting-room">
@@ -238,7 +247,7 @@
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0;">
               <input type="checkbox" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
               <span>同时共享音频</span>
-              <span class="help-tip" data-tooltip="窗口共享程序声音，显示器共享系统声音。">?</span>
+              <span class="help-tip" data-tooltip="窗口共享程序声音，全屏共享系统声音。">?</span>
             </label>
           </div>
           <div class="form-group setting-room">

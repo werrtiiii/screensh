@@ -81,7 +81,7 @@ export function updateSharingUI(sharing) {
   $('#btnConfirmShare').disabled = busy || state.shareCleanupFailed;
   $('#btnStopShare').classList.toggle('hidden', !showStop);
   $('#btnStopShare').disabled = state.stoppingShare || state.leaving;
-  $('#btnStopShare').textContent = state.stoppingShare ? '正在停止…' : state.shareCleanupFailed ? '重试停止' : '⏹ 停止共享';
+  $('#btnStopShare').textContent = state.stoppingShare ? '正在停止…' : state.shareCleanupFailed ? '重试停止' : '停止共享 ';
 }
 export async function displayRemoteVideo(targetSocketId) {
   stopWatch();
@@ -94,7 +94,6 @@ export async function displayRemoteVideo(targetSocketId) {
   state.watchingId = targetSocketId;
   renderViewerNames();
   $('#userCardsView').classList.add('hidden'); $('#activeVideoView').classList.remove('hidden');
-  $('#watchingUserName').textContent = isSelf ? '我的共享预览' : `正在观看 ${targetUser.name} 的共享`;
   const container = $('#videoContainer');
   container.innerHTML = '<video autoplay playsinline controls></video><div class="pip-bar"><button id="btnPip">画中画</button></div>';
   const video = container.querySelector('video');

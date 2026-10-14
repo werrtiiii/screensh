@@ -23,14 +23,11 @@ export function updateUserList(users) {
   list.innerHTML = users
     .map((u) => {
       const isMe = u.socketId === socket?.id;
-      const roleText = { host: '房主', admin: '管理员', member: '成员' }[u.role];
-      const shareText = u.isSharing ? ' (共享中)' : '';
       return `
         <li class="${isMe ? 'me' : ''}">
           <span class="member-avatar default-avatar" aria-hidden="true">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</span>
-          <span>${escapeHtml(u.name)}${isMe ? ' (我)' : ''}</span>
-                    <span class="user-role">${roleText}${shareText}</span>
-          <small>${escapeHtml(state.channels.find(c => c.id === u.channelId)?.name || '')}</small>
+          <span>${escapeHtml(u.name)}</span>
+          <small class="user-channel">${escapeHtml(state.channels.find(c => c.id === u.channelId)?.name || '')}</small>
         </li>
       `;
     })
@@ -47,6 +44,7 @@ export function updateUserList(users) {
         run: () => perform('set-admin', { socketId: user.socketId, enabled: user.role !== 'admin' })
       });
       if (rank[myRole] > rank[user.role]) actions.push({ label: '踢出服务器', run: () => perform('kick-member', { socketId: user.socketId }) });
+      if (rank[myRole] > rank[user.role] && user.channelId === state.channelId) actions.push({ label: user.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: user.socketId, muted: !user.voiceMuted }) });
       showContextMenu(event, actions);
     };
   });
@@ -79,12 +77,12 @@ export function updateUserList(users) {
       btnHtml = `<button class="btn btn-outline btn-sm btn-watch" disabled>未共享</button>`;
     }
 
-    const displayName = isMe ? `${escapeHtml(u.name)}（我）` : escapeHtml(u.name);
+    const displayName = escapeHtml(u.name);
 
     card.innerHTML = `
-      <div class="avatar">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</div>
+      <div class="card-cover"><div class="avatar">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</div>
+      ${isSharing ? btnHtml : ''}</div>
       <div class="name">${displayName}</div>
-      ${btnHtml}
     `;
 
     // 自己和其他成员都播放实际共享流。
@@ -95,6 +93,8 @@ export function updateUserList(users) {
     }
 
     cardsView.appendChild(card);
+    window.channelVoice?.decorate(card, u, isMe);
+    if (rank[myRole] > rank[u.role]) card.oncontextmenu = event => showContextMenu(event, [{ label: u.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: u.socketId, muted: !u.voiceMuted }) }]);
   });
 }
 
@@ -126,10 +126,11 @@ export async function switchChannel(channelId) {
   state.switchingChannel = true; renderChannels(state.serverUsers); updateSharingUI(state.isSharing);
   try {
     if (!await stopSharing()) throw new Error('当前共享未能停止，请重试后再切换频道');
+    await window.channelVoice?.stop();
     $('#screenPicker').classList.add('hidden');
     applyServerState(await requestServer('switch-channel', { channelId }));
   } catch (error) { toast(error.message, 'error'); }
-  finally { state.switchingChannel = false; renderChannels(state.serverUsers); updateSharingUI(state.isSharing); }
+  finally { state.switchingChannel = false; window.channelVoice?.sync(); renderChannels(state.serverUsers); updateSharingUI(state.isSharing); }
 }
 
 async function perform(event, payload) {
@@ -214,6 +215,7 @@ export async function leaveRoom() {
   $('#btnRetryCleanup').disabled = true;
   $('#btnConnect').disabled = true;
   stopWatch();
+  const voiceStopping = window.channelVoice?.stop();
   const stopping = stopSharing({ reportErrors: false });
   disconnectSignaling();
   roomUsers.clear();
@@ -227,6 +229,7 @@ export async function leaveRoom() {
     // Start network cleanup even if a previous media stop fails or is pending.
     const results = await Promise.allSettled([
       stopping, Promise.resolve().then(() => window.electronAPI.leaveRuntime()),
+      voiceStopping,
     ]);
     const failed = results.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;

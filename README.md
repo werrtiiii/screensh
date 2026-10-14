@@ -15,7 +15,13 @@ ScreenSh 是 Windows 屏幕共享客户端，支持频道、成员管理和观�
 
 服务器部署方法见 [部署教程](server/部署教程.md)。客户端和服务端需要使用兼容的频道协议版本；当前服务端 `/health` 返回 `protocol: 2`。
 
+自己的卡片名称旁提供“播放伴奏”按钮。先在本机音乐软件中播放歌曲，再选择网易云音乐、QQ 音乐、酷狗音乐、汽水音乐或“更多音源”中的程序。伴奏会混入频道语音；伴奏音量独立保存，麦克风静音不影响伴奏。菜单中可停止伴奏，切换频道或退出服务器也会停止。选择“全部音源”会包含系统声音和正在收听的语音。
+
+伴奏验证：`node app/scripts/run-electron.cjs smoke-accompaniment.cjs` 验证菜单、混音和音量；`node app/scripts/run-electron.cjs smoke-accompaniment-native.cjs` 播放较轻的测试音，验证真实程序音频采集及麦克风进程隔离。
+
 ## 本地开发
+
+服务器连接意外中断时，客户端会在断线后的5秒内自动尝试重新连接，并恢复身份和原频道；原频道被删除时返回主频道。被踢出或主动退出时不重连，5秒内未恢复则返回主界面。验证：`node app/scripts/run-electron.cjs smoke-reconnect.cjs`。
 
 需要 Node.js 24、Windows x64，以及项目所需的 OBS、EasyTier、MediaMTX、Wintun 等原生资源。原生资源必须在构建前放到 `obs-studio-node/` 和 `app/res/` 的预期位置；发布工作流会检查这些文件。
 
