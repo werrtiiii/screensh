@@ -116,7 +116,7 @@ app.commandLine?.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 function createWindow() {
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
-  mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 1000, minHeight: 640, frame: false,
+  mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   trayController?.attach(mainWindow);
