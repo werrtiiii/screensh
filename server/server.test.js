@@ -6,6 +6,94 @@ const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('./server');
 const identity = () => randomBytes(32).toString('hex');
 
+test('short network disconnect suppresses channel cues and restores original channel with stable public presence', async t => {
+  const { ChannelSoundTracker } = await import('../app/renderer/channel-sound-tracker.mjs');
+  const f = await fixture(t, { disconnectGraceMs: 800 }), host = await f.client(), member = await f.client();
+  await request(host, 'join-server', { userName: 'Observer', virtualIp: '10.144.7.1', identity: identity() });
+  const key = identity();
+  await request(member, 'join-server', { userName: 'Reconnect', virtualIp: '10.144.7.2', identity: key });
+  const channel = (await request(host, 'create-channel', { name: 'Restore' })).channel;
+  await request(member, 'switch-channel', { channelId: channel.id });
+  const before = await request(host, 'switch-channel', { channelId: channel.id });
+  const tracker = new ChannelSoundTracker(); tracker.update(before, host.id);
+  const original = before.users.find(u => u.socketId === member.id);
+  const dropped = new Promise(resolve => host.once('server-update', resolve));
+  member.io.engine.close();
+  const missing = await dropped;
+  assert.equal(missing.users.length, 1, 'disconnected member disappears from actual membership immediately');
+  assert.deepEqual(tracker.update(missing, host.id).sounds, []);
+  const returning = await f.client();
+  const restored = await request(returning, 'join-server', { userName: 'Reconnect', virtualIp: '10.144.7.2', identity: key });
+  const user = restored.users.find(u => u.socketId === returning.id);
+  assert.equal(user.channelId, channel.id); assert.equal(user.memberId, original.memberId); assert.notEqual(user.socketId, original.socketId);
+  assert.equal(user.voiceEnabled, false); assert.equal(user.isSharing, false);
+  assert.deepEqual(tracker.update(restored, host.id).sounds, []);
+  const left = new Promise(resolve => host.once('server-update', resolve));
+  await request(returning, 'leave-server');
+  assert.deepEqual(tracker.update(await left, host.id).sounds, ['person_exit_voice']);
+});
+
+test('lost member emits one exit after grace; intentional disconnect and channel switch remain immediate', async t => {
+  const { ChannelSoundTracker } = await import('../app/renderer/channel-sound-tracker.mjs');
+  const f = await fixture(t, { disconnectGraceMs: 150 }), host = await f.client(), peer = await f.client();
+  await request(host, 'join-server', { userName: 'Observer', virtualIp: '10.144.7.1', identity: identity() });
+  const payload = { userName: 'Peer', virtualIp: '10.144.7.2', identity: identity() };
+  const joined = await request(peer, 'join-server', payload);
+  const originalMemberId = joined.users.find(u => u.socketId === peer.id).memberId;
+  const tracker = new ChannelSoundTracker(); tracker.update(joined, host.id);
+  const dropped = new Promise(resolve => host.once('server-update', resolve)); peer.io.engine.close();
+  assert.deepEqual(tracker.update(await dropped, host.id).sounds, []);
+  const expired = await new Promise(resolve => host.once('server-update', resolve));
+  assert.deepEqual(tracker.update(expired, host.id).sounds, ['person_exit_voice']);
+  const again = await f.client(); const rejoined = await request(again, 'join-server', payload);
+  assert.notEqual(rejoined.users.find(u => u.socketId === again.id).memberId, originalMemberId);
+  assert.deepEqual(tracker.update(rejoined, host.id).sounds, ['person_enter_voice']);
+  const channel = (await request(host, 'create-channel', { name: 'Elsewhere' })).channel;
+  const switched = await request(again, 'switch-channel', { channelId: channel.id });
+  assert.deepEqual(tracker.update(switched, host.id).sounds, ['person_exit_voice']);
+  tracker.update(await request(again, 'switch-channel', { channelId: 'main' }), host.id);
+  const left = new Promise(resolve => host.once('server-update', resolve)); again.disconnect();
+  assert.deepEqual(tracker.update(await left, host.id).sounds, ['person_exit_voice']);
+  const kicked = await f.client(); tracker.update(await request(kicked, 'join-server', payload), host.id);
+  const removed = new Promise(resolve => host.once('server-update', resolve));
+  await request(host, 'kick-member', { socketId: kicked.id });
+  assert.deepEqual(tracker.update(await removed, host.id).sounds, ['person_exit_voice']);
+});
+
+test('server name defaults and persists, only owner can rename, and deafen is independent of voice enablement', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'screensh-name-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stateFile = path.join(dir, 'state.json');
+  const f = await fixture(t, { stateFile }), host = await f.client(), admin = await f.client(), outsider = await f.client();
+  const hostIdentity = identity();
+  const joined = await request(host, 'join-server', { userName: 'Host', virtualIp: '10.144.6.1', identity: hostIdentity, voiceDeafened: true });
+  assert.equal(joined.serverName, '0091 Server'); assert.equal(joined.users[0].voiceDeafened, true);
+  await request(admin, 'join-server', { userName: 'Admin', virtualIp: '10.144.6.2', identity: identity() });
+  assert.equal((await request(admin, 'set-server-name', { name: 'Denied' })).ok, false);
+  await request(host, 'set-admin', { socketId: admin.id, enabled: true });
+  assert.equal((await request(admin, 'set-server-name', { name: 'Denied' })).ok, false);
+  assert.equal((await request(outsider, 'set-server-name', { name: 'Denied' })).ok, false);
+  for (const name of ['', '   ', 'x'.repeat(41), 'bad\nname', 123]) assert.equal((await request(host, 'set-server-name', { name })).ok, false);
+  const changed = new Promise(resolve => admin.once('server-update', resolve));
+  assert.equal((await request(host, 'set-server-name', { name: '  我的服务器  ' })).serverName, '我的服务器');
+  assert.equal((await changed).serverName, '我的服务器');
+  assert.equal((await request(host, 'set-voice-state', { enabled: false, deafened: 'yes' })).ok, false);
+  await request(host, 'set-voice-state', { enabled: false, deafened: false });
+  let snapshot = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(snapshot.users.find(u => u.socketId === host.id).voiceDeafened, false);
+  await request(host, 'set-voice-state', { enabled: false, deafened: true });
+  snapshot = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(snapshot.users.find(u => u.socketId === host.id).voiceDeafened, true);
+  await f.close();
+  const g = await fixture(t, { stateFile }), client = await g.client();
+  assert.equal((await request(client, 'server-info')).serverName, '我的服务器');
+  // Existing state files without a name are migrated without losing ownership.
+  await g.close(); const saved = JSON.parse(fs.readFileSync(stateFile)); delete saved.serverName; fs.writeFileSync(stateFile, JSON.stringify(saved));
+  const h = await fixture(t, { stateFile }), returning = await h.client();
+  const restored = await request(returning, 'join-server', { userName: 'Host', virtualIp: '10.144.6.1', identity: hostIdentity });
+  assert.equal(restored.serverName, '0091 Server'); assert.equal(restored.users[0].role, 'host');
+});
+
 test('interactions validate membership, target, channel and enforce a shared one-second cooldown', async t => {
   const f = await fixture(t), a = await f.client(), b = await f.client(), c = await f.client(), outsider = await f.client();
   const key = identity();

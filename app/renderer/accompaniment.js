@@ -93,7 +93,7 @@ async function showMenu(trigger) {
   sources = [];
   menu.className = 'accompaniment-menu'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', '播放伴奏');
   const heading = document.createElement('div'); heading.className = 'accompaniment-heading'; heading.textContent = '伴奏来源';
-  const help = document.createElement('span'); help.className = 'help-tip'; help.textContent = '?'; help.dataset.tooltip = '采集正在播放的程序声音并发送给频道成员。选择全部音源会包含语音收听声音。'; heading.append(help); menu.append(heading);
+  menu.append(heading);
   for (const provider of providers) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'accompaniment-source'; button.disabled = true;
     const badge = document.createElement('span'); badge.className = 'music-provider-badge'; badge.style.background = provider.color; badge.textContent = provider.mark;

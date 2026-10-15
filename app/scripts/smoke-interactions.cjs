@@ -33,6 +33,10 @@ app.whenReady().then(async () => {
       })()`);
     }
     const [a, b, c] = windows;
+    const adminId = await run(c, `(async () => (await import('./signaling.js')).socket.id)()`);
+    await run(a, `(async () => (await import('./signaling.js')).requestServer('set-admin', {socketId:'${adminId}',enabled:true}))()`);
+    await wait(b, `document.querySelector('#userList').children[1]?.textContent.includes('Interaction 2')`);
+    for (const win of windows) assert.equal(await run(win, `(async () => document.querySelector('.user-card').dataset.userId === (await import('./signaling.js')).socket.id)()`), true);
     await wait(a, `document.querySelectorAll('.interaction-trigger').length === 2`);
     const target = await run(b, `(async () => (await import('./signaling.js')).socket.id)()`);
     await run(a, `document.querySelector('[data-user-id="${target}"] .interaction-trigger').click()`);

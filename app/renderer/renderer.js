@@ -86,7 +86,7 @@ async function joinServer() {
     rememberJoinCredentials({ userName, identity, password });
     toast('正在准备网络连接…');
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
-    const joined = await requestServer('join-server', { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar }, connection);
+    const joined = await requestServer('join-server', { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, connection);
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;
     enterRoom(info.serverId); applyServerState(joined);
@@ -497,7 +497,7 @@ if (settingsModal && btnCloseSettings) {
   });
 }
 
-// Server bookmarks and the profile name live locally, independent of server state.
+// Bookmarks are stored locally; connected server metadata keeps them current.
 const bookmarkIconCache = new Map();
 function readBookmarks() {
   try { const value = JSON.parse(localStorage.getItem('serverBookmarks') || '[]'); return Array.isArray(value) ? value.map(item => item.icon === 'cached' ? { ...item, icon: bookmarkIconCache.get(item.url) || null, cachedIcon: true } : item) : []; }
@@ -518,7 +518,10 @@ function saveBookmarks(value) {
   localStorage.setItem('serverBookmarks', JSON.stringify(records));
 }
 for (const item of readBookmarks().filter(item => item.cachedIcon)) {
-  void readCachedImage('bookmark:' + item.url).then(icon => { if (icon) bookmarkIconCache.set(item.url, icon); renderBookmarks(); }).catch(console.error);
+  void readCachedImage('bookmark:' + item.url).then(icon => {
+    if (icon && !bookmarkIconCache.has(item.url) && readBookmarks().some(record => record.url === item.url && record.cachedIcon)) bookmarkIconCache.set(item.url, icon);
+    renderBookmarks();
+  }).catch(console.error);
 }
 function escapeBookmark(value) {
   return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -552,12 +555,23 @@ function addBookmark(url, name = '') {
   name = name.trim() || new URL(url).hostname;
   const bookmarks = readBookmarks().filter(item => item.url !== url);
   const previous = readBookmarks().find(item => item.url === url);
-  bookmarks.unshift({ name, url, ...(previous?.icon ? { icon: previous.icon } : {}) }); saveBookmarks(bookmarks); renderBookmarks(); toast('服务器已加入书签', 'success');
+  bookmarks.unshift({ ...previous, name, url }); saveBookmarks(bookmarks); renderBookmarks(); toast('服务器已加入书签', 'success');
 }
 document.addEventListener('server-icon-updated', event => {
   $('#btnResetServerIcon').disabled = !event.detail;
-  const url = $('#serverUrl')?.value.trim(); if (!url) return;
-  const next = readBookmarks().map(item => item.url === url ? { ...item, icon: event.detail, cachedIcon: false } : item); saveBookmarks(next); renderBookmarks();
+});
+document.addEventListener('server-bookmark-updated', event => {
+  const { url, name, icon, iconResolved, autoAdd } = event.detail;
+  if (!url) return;
+  try {
+    const bookmarks = readBookmarks(), index = bookmarks.findIndex(item => item.url === url);
+    if (index < 0 && !autoAdd) return;
+    const previous = bookmarks[index];
+    const next = { ...previous, url, name, ...(iconResolved ? { icon, cachedIcon: false } : {}) };
+    if (previous && previous.name === next.name && (!iconResolved || previous.icon === icon && (icon !== null || !previous.cachedIcon))) return;
+    if (index < 0) bookmarks.unshift(next); else bookmarks[index] = next;
+    saveBookmarks(bookmarks); renderBookmarks();
+  } catch (error) { console.error('Bookmark sync:', error); toast('服务器已连接，但书签保存失败', 'error'); }
 });
 function addCurrentBookmark() {
   const url = $('#serverUrl')?.value.trim();
@@ -620,7 +634,7 @@ $('#bookmarkEditForm')?.addEventListener('submit', event => {
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
     const next = readBookmarks();
     const old = next[editingBookmarkIndex];
-    next[editingBookmarkIndex] = { name, url: parsed.origin, ...(old?.url === parsed.origin && old.icon ? { icon: old.icon } : {}) };
+    next[editingBookmarkIndex] = { ...(old?.url === parsed.origin ? old : {}), name, url: parsed.origin };
     saveBookmarks(next); renderBookmarks(); $('#bookmarkEditDialog').classList.add('hidden'); toast('书签已更新', 'success');
   } catch { $('#bookmarkEditError').textContent = '请输入有效的 HTTP 或 HTTPS 地址，不要附加路径'; }
 });

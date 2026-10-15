@@ -5,11 +5,13 @@ import { toast } from './toast.js';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
+const blockedSpeakers = new Set();
 let announcedSpeaking = null;
 let capturePending, cancelCaptureWait;
 const peerRetries = new Map(), peerRetryCounts = new Map();
 let attemptedChannel = null;
 let microphoneVolume = Math.max(0, Math.min(1, Number(localStorage.getItem('voiceMicVolume') ?? 1) || 0));
+let receiveVolume = Math.max(0, Math.min(1, Number(localStorage.getItem('voiceReceiveVolume') ?? 1) || 0));
 let generation = 0, context, outgoing, rawStream, micGain, source, localMeter, cleanup, bridge, captureAudio, voiceDestination;
 let testGeneration = 0, testBusy = false, testAudio, testStream, testMeter, testCleanup, testOwnsCapture = false;
 let changingMicrophone = false, microphoneDevices = [];
@@ -98,8 +100,8 @@ function applyMute() {
   if (micGain) micGain.gain.value = voice.muted || me?.voiceMuted ? 0 : microphoneVolume;
   for (const [id, peer] of peers) {
     const user = state.serverUsers.find(u => u.socketId === id);
-    peer.audio.muted = voice.deafened || !!user?.voiceMuted;
-    peer.audio.volume = volumes.get(id) ?? 1;
+    peer.audio.muted = voice.deafened || blockedSpeakers.has(id) || !!user?.voiceMuted;
+    peer.audio.volume = (volumes.get(id) ?? 1) * receiveVolume;
   }
 }
 async function signal(id, data) { await requestServer('voice-signal', { to: id, data }); }
@@ -278,7 +280,7 @@ async function startVoice() {
     } else await ensureCapture();
     if (token !== generation) throw new Error('语音启动已取消');
     voice.enabled = true;
-    await requestServer('set-voice-state', { enabled: true, muted: voice.muted });
+    await requestServer('set-voice-state', { enabled: true, muted: voice.muted, deafened: voice.deafened });
     if (token === generation) syncVoice();
   } catch (error) { if (token === generation) { announce(error); await stopVoice({ keepTest: true }); attemptedChannel = `${socket?.id}:${state.channelId}`; } }
   finally { if (token === generation) { voice.busy = false; paintControls(); } }
@@ -328,7 +330,7 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   localMeter?.(); localMeter = null;
   if (preserveCapture) {
     testOwnsCapture = true; applyMute(); paintControls();
-    return Promise.all([stoppingAccompaniment, wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false }) : Promise.resolve()]);
+    return Promise.all([stoppingAccompaniment, wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]);
   }
   cancelCaptureWait?.();
   const pendingCapture = capturePending;
@@ -338,7 +340,7 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   bridge?.close(); bridge = null; const closing = context?.close(); context = null;
   if (!voice.testing && $('#microphoneLevel')) $('#microphoneLevel').value = 0;
   paintControls();
-  cleanup = Promise.allSettled([stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), window.electronAPI.voiceStop(), wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false }) : Promise.resolve()]).then(results => {
+  cleanup = Promise.allSettled([stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), window.electronAPI.voiceStop(), wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
     const failed = results.find(r => r.status === 'rejected'); if (failed) announce(failed.reason);
   }).finally(() => { cleanup = null; });
   return cleanup;
@@ -352,7 +354,7 @@ async function changeVoicePreference(mode) {
   localStorage.setItem('voiceMuted', String(voice.muted));
   localStorage.setItem('voiceDeafened', String(voice.deafened));
   applyMute(); paintControls();
-  if (voice.enabled && socket?.connected) void requestServer('set-voice-state', { enabled: true, muted: voice.muted }).catch(announce);
+  if (state.roomId && socket?.connected) void requestServer('set-voice-state', { enabled: voice.enabled, muted: voice.muted, deafened: voice.deafened }).catch(announce);
   if (voice.muted && voice.deafened && !window.channelAccompaniment?.active()) await stopVoice({ keepTest: true });
   else { attemptedChannel = null; syncVoice(); }
 }
@@ -390,6 +392,14 @@ async function changeMicrophone(deviceId) {
     catch (restoreError) { announce(restoreError); await stopVoice(); }
   } finally { changingMicrophone = false; paintControls(); syncVoice(); }
 }
+function paintSpeakerButton(button, user) {
+  const blocked = blockedSpeakers.has(user.socketId);
+  button.classList.toggle('is-blocked', blocked);
+  button.setAttribute('aria-pressed', String(blocked));
+  button.title = blocked ? '取消屏蔽语音' : '屏蔽语音';
+  button.setAttribute('aria-label', `${blocked ? '取消屏蔽' : '屏蔽'}${user.name}的语音`);
+  button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 8H3v8h3l5 4V4Z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/>${blocked ? '<path d="M2 2l20 20"/>' : ''}</svg>`;
+}
 export function decorateVoiceCard(card, user, isMe) {
   card.dataset.userId = user.socketId; card.classList.toggle('is-speaking', !!levels.get(user.socketId));
   const row = document.createElement('div'); row.className = 'card-voice-row'; card.append(row);
@@ -408,7 +418,11 @@ export function decorateVoiceCard(card, user, isMe) {
     select.onchange = () => void changeMicrophone(select.value);
     const settings = document.createElement('button'); settings.type = 'button'; settings.className = 'microphone-settings-link'; settings.textContent = '语音设置'; settings.onclick = () => { $('#btnSettings').click(); void refreshVoiceDevices(); }; panel.append(settings); wrap.append(panel);
     const status = document.createElement('span'); status.className = 'voice-status'; row.append(status);
-    const headphones = document.createElement('button'); headphones.type = 'button'; headphones.className = 'voice-control'; headphones.dataset.voice = 'deafen'; headphones.onclick = () => void changeVoicePreference('deafen'); row.append(headphones);
+    const receiver = document.createElement('div'); receiver.className = 'speaker-control receive-volume-control'; row.append(receiver);
+    const headphones = document.createElement('button'); headphones.type = 'button'; headphones.className = 'voice-control'; headphones.dataset.voice = 'deafen'; headphones.onclick = () => void changeVoicePreference('deafen'); receiver.append(headphones);
+    const receivePanel = document.createElement('div'); receivePanel.className = 'voice-volume speaker-popover';
+    const receiveGain = document.createElement('input'); receiveGain.type = 'range'; receiveGain.min = 0; receiveGain.max = 100; receiveGain.value = receiveVolume * 100; receiveGain.setAttribute('aria-label', '语音总接收音量');
+    receiveGain.oninput = () => { receiveVolume = Number(receiveGain.value) / 100; localStorage.setItem('voiceReceiveVolume', String(receiveVolume)); applyMute(); }; receivePanel.append(receiveGain); receiver.append(receivePanel);
     window.channelAccompaniment?.decorate(card);
   } else {
     card.classList.add('remote-user-card');
@@ -418,9 +432,17 @@ export function decorateVoiceCard(card, user, isMe) {
       const muted = document.createElement('span'); muted.className = 'remote-mic-muted'; muted.innerHTML = voiceIcon('mute', true);
       muted.title = user.voiceMuted ? '已被禁言' : '麦克风已关闭'; muted.setAttribute('aria-label', muted.title); row.append(muted);
     }
+    if (user.voiceDeafened) {
+      const deafened = document.createElement('span'); deafened.className = 'remote-headphones-off'; deafened.innerHTML = voiceIcon('deafen', true);
+      deafened.title = '已关闭听筒'; deafened.setAttribute('aria-label', deafened.title); row.append(deafened);
+    }
     const control = document.createElement('div'); control.className = 'speaker-control'; row.append(control);
-    const speakerButton = document.createElement('button'); speakerButton.type = 'button'; speakerButton.className = 'remote-speaker-button'; speakerButton.title = '调整语音音量'; speakerButton.setAttribute('aria-label', `调整${user.name}的语音音量`);
-    speakerButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 8H3v8h3l5 4V4Z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg>'; control.append(speakerButton);
+    const speakerButton = document.createElement('button'); speakerButton.type = 'button'; speakerButton.className = 'remote-speaker-button';
+    paintSpeakerButton(speakerButton, user);
+    speakerButton.onclick = () => {
+      if (blockedSpeakers.has(user.socketId)) blockedSpeakers.delete(user.socketId); else blockedSpeakers.add(user.socketId);
+      applyMute(); paintSpeakerButton(speakerButton, user);
+    }; control.append(speakerButton);
     const label = document.createElement('label'); label.className = 'voice-volume speaker-popover';
     const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = '100'; input.value = String((volumes.get(user.socketId) ?? 1) * 100); input.setAttribute('aria-label', `${user.name}的音量`);
     input.oninput = () => { volumes.set(user.socketId, Number(input.value) / 100); applyMute(); }; label.append(input); control.append(label);
@@ -463,7 +485,7 @@ export async function refreshVoiceDevices() {
 export function initVoice() {
   window.channelVoice = { accompanimentState: async active => {
     if (voice.enabled && socket?.connected) {
-      await requestServer('set-voice-state', { enabled: true, muted: voice.muted, accompaniment: active });
+      await requestServer('set-voice-state', { enabled: true, muted: voice.muted, deafened: voice.deafened, accompaniment: active });
       announcedSpeaking = null;
     }
   }, sync: syncVoice, stop: stopVoice, receive: receiveVoice, activity: receiveVoiceActivity, decorate: decorateVoiceCard, isEnabled: () => voice.enabled, mix: mixAccompaniment, stopIfIdle: () => voice.muted && voice.deafened ? stopVoice({ keepTest: true }) : Promise.resolve() };

@@ -1,7 +1,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const script = process.argv[2];
-if (!['smoke-electron.cjs', 'smoke-ui.cjs', 'smoke-native.cjs', 'smoke-obs-isolation.cjs', 'smoke-voice.cjs', 'smoke-voice-ui.cjs', 'smoke-mic-meter.cjs', 'smoke-speaking.cjs', 'smoke-reconnect.cjs', 'smoke-accompaniment.cjs', 'smoke-accompaniment-native.cjs', 'smoke-process-audio.cjs', 'smoke-tray.cjs', 'smoke-interactions.cjs'].includes(script)) throw new Error('Unknown smoke test');
+if (!['smoke-electron.cjs', 'smoke-ui.cjs', 'smoke-native.cjs', 'smoke-obs-isolation.cjs', 'smoke-voice.cjs', 'smoke-voice-ui.cjs', 'smoke-mic-meter.cjs', 'smoke-speaking.cjs', 'smoke-reconnect.cjs', 'smoke-accompaniment.cjs', 'smoke-accompaniment-native.cjs', 'smoke-process-audio.cjs', 'smoke-tray.cjs', 'smoke-interactions.cjs', 'smoke-bookmarks.cjs'].includes(script)) throw new Error('Unknown smoke test');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 if (['smoke-native.cjs', 'smoke-obs-isolation.cjs'].includes(script)) env.ELECTRON_RUN_AS_NODE = '1';

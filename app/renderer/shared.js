@@ -8,6 +8,7 @@ export const state = {
   serverUsers: [],
   passwordRequired: false,
   serverIcon: null,
+  serverName: '0091 Server',
   userAvatar: typeof localStorage !== 'undefined' ? (localStorage.getItem('userAvatar') || null) : null,
   easytierPeers: [],
   switchingChannel: false,

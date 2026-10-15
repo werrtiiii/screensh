@@ -15,6 +15,7 @@ let joinCredentials = null;
 let kickedOut = false;
 let reconnectPromise = null;
 let reconnectGeneration = 0;
+let connectedServerUrl = null, bookmarkSocketId = null;
 const isImageRef = value => /^image:[a-f0-9]{64}\.(png|jpg|webp|gif)$/.test(value || '');
 function cachedImage(value) {
   if (!isImageRef(value)) return typeof value === 'string' && value.startsWith('data:image/') ? value : null;
@@ -63,8 +64,16 @@ export function applyServerState(data, restoring = false) {
   state.channels = data.channels;
   state.passwordRequired = !!data.passwordRequired;
   state.serverIcon = data.serverIcon || null;
+  state.serverName = data.serverName || '0091 Server';
+  $('#roomServerName').textContent = state.serverName;
   const roomIcon = $('#roomServerIcon'); if (roomIcon) { roomIcon.style.backgroundImage = state.serverIcon ? `url("${state.serverIcon}")` : ''; roomIcon.classList.toggle('has-image', !!state.serverIcon); roomIcon.textContent = state.serverIcon ? '' : 'S'; }
   document.dispatchEvent(new CustomEvent('server-icon-updated', { detail: state.serverIcon }));
+  document.dispatchEvent(new CustomEvent('server-bookmark-updated', { detail: {
+    url: connectedServerUrl, name: state.serverName, icon: state.serverIcon,
+    iconResolved: !isImageRef(raw.serverIcon) || typeof imageCache.get(raw.serverIcon) === 'string',
+    autoAdd: bookmarkSocketId !== connection.id,
+  } }));
+  bookmarkSocketId = connection.id;
   const meAvatar = data.users.find(u => u.socketId === socket?.id)?.avatar || null;
   if ((!isImageRef(me.avatar) || cachedImage(me.avatar)) && meAvatar !== state.userAvatar) {
     state.userAvatar = meAvatar;
@@ -86,7 +95,8 @@ export function applyServerState(data, restoring = false) {
 export function connectServer() {
   imageRevision++; imageCache.clear();
   if (socket) { socket.removeAllListeners(); socket.disconnect(); }
-  socket = io($('#serverUrl').value.trim(), { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
+  connectedServerUrl = new URL($('#serverUrl').value.trim()).origin; bookmarkSocketId = null;
+  socket = io(connectedServerUrl, { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
   socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
   socket.on('disconnect', reason => {
     resetInteractions();
@@ -139,7 +149,7 @@ async function reconnectJoin(deadline, previousChannel) {
   if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
   let joined = await request('join-server', {
     userName: credentials.userName, identity: credentials.identity, password: credentials.password,
-    easytierPeers: access.easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar,
+    easytierPeers: access.easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true',
   });
   if (generation !== reconnectGeneration || !connection.connected) throw new Error('连接已断开');
   if (previousChannel !== 'main' && joined.channels.some(c => c.id === previousChannel)) joined = await request('switch-channel', { channelId: previousChannel });
@@ -187,6 +197,7 @@ function startReconnect() {
   })();
 }
 export function disconnectSignaling() {
+  connectedServerUrl = null; bookmarkSocketId = null;
   resetInteractions();
   leaveChannelSounds();
   imageRevision++; imageCache.clear();

@@ -3,11 +3,12 @@ export class ChannelSoundTracker {
     const me = snapshot.users.find(user => user.socketId === selfId);
     if (!me) return { sounds: [], replace: false };
     const current = { server: snapshot.serverId, channel: me.channelId,
-      members: new Set(snapshot.users.filter(user => user.channelId === me.channelId && user.socketId !== selfId).map(user => user.socketId)) };
+      members: new Set((snapshot.soundMembers || snapshot.users).filter(user => user.channelId === me.channelId
+        && (user.memberId || user.socketId) !== (me.memberId || selfId)).map(user => user.memberId || user.socketId)) };
     const previous = this.current; this.current = current;
     if (silent) return { sounds: [], replace: true };
     if (!previous) return { sounds: ['enter_voice'], replace: true };
-    if (previous.server !== current.server || previous.channel !== current.channel) return { sounds: ['exit_voice', 'enter_voice'], replace: true };
+    if (previous.server !== current.server || previous.channel !== current.channel) return { sounds: ['enter_voice'], replace: true };
     const sounds = [];
     // One cue per event type in a snapshot avoids a burst when a group moves.
     if ([...previous.members].some(id => !current.members.has(id))) sounds.push('person_exit_voice');

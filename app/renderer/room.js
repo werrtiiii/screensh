@@ -18,10 +18,12 @@ import {
 // --- 成员列表 + 卡片网格 ---
 
 export function updateUserList(users) {
+  const rank = { host: 2, admin: 1, member: 0 };
+  const orderedMembers = [...users].sort((a, b) => (rank[b.role] ?? 0) - (rank[a.role] ?? 0));
   // 侧边栏列表
   const list = $('#userList');
   $('#userCount').textContent = users.length;
-  list.innerHTML = users
+  list.innerHTML = orderedMembers
     .map((u) => {
       const isMe = u.socketId === socket?.id;
       return `
@@ -35,9 +37,8 @@ export function updateUserList(users) {
     .join('');
 
   const myRole = users.find(u => u.socketId === socket?.id)?.role;
-  const rank = { host: 2, admin: 1, member: 0 };
   [...list.children].forEach((row, index) => {
-    const user = users[index];
+    const user = orderedMembers[index];
     row.oncontextmenu = event => {
       const actions = [];
       if (myRole === 'host' && user.role !== 'host') actions.push({
@@ -50,7 +51,7 @@ export function updateUserList(users) {
     };
   });
   renderChannels(users);
-  users = users.filter(u => u.channelId === state.channelId);
+  users = users.filter(u => u.channelId === state.channelId).sort((a, b) => Number(b.socketId === socket?.id) - Number(a.socketId === socket?.id));
   // 同步共享者状态
   const sharer = users.find((u) => u.isSharing);
   state.activeSharerId = sharer ? sharer.socketId : null;
@@ -140,7 +141,17 @@ async function perform(event, payload) {
 }
 $('#btnServerSettings').addEventListener('click', () => {
   if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
+  $('#serverNameInput').value = state.serverName || '0091 Server';
+  $('#serverNameError').textContent = '';
   $('#serverSettingsDialog').classList.remove('hidden'); $('#btnCloseServerSettings').focus();
+});
+$('#serverNameForm').addEventListener('submit', async event => {
+  event.preventDefault(); $('#btnSaveServerName').disabled = true; $('#serverNameError').textContent = '';
+  try {
+    const result = await requestServer('set-server-name', { name: $('#serverNameInput').value });
+    $('#serverNameInput').value = result.serverName; toast('服务器名称已保存', 'success');
+  } catch (error) { $('#serverNameError').textContent = error.message; }
+  finally { $('#btnSaveServerName').disabled = false; }
 });
 $('#btnCloseServerSettings').addEventListener('click', () => { $('#serverSettingsDialog').classList.add('hidden'); $('#btnServerSettings').focus(); });
 $('#btnServerPeers').addEventListener('click', () => {
@@ -191,7 +202,7 @@ export function enterRoom(roomId) {
   $('#room').classList.add('active');
   $('#channelNameDisplay').textContent = '主频道';
   const serverUrl = $('#serverUrl').value.trim();
-  $('#roomServerName').textContent = (() => { try { return new URL(serverUrl).hostname; } catch { return '服务器'; } })();
+  $('#roomServerName').textContent = state.serverName || '0091 Server';
   $('#roomServerAddress').textContent = serverUrl;
   const icon = state.serverIcon;
   const iconNode = $('#roomServerIcon');
@@ -222,6 +233,7 @@ export async function leaveRoom() {
   disconnectSignaling();
   roomUsers.clear();
   state.roomId = null; state.channelId = null; state.channels = []; state.serverUsers = [];
+  state.serverName = '0091 Server';
   state.virtualIp = null;
   state.activeSharerId = null;
   state.selectedSourceId = null;
