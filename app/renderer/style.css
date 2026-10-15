@@ -344,7 +344,6 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .user-card.is-speaking { transform: translateY(-3px); border-color: var(--green); box-shadow: 0 8px 24px rgba(35,165,89,0.22); }
 .interaction-trigger { position: absolute; right: 10px; top: 136px; z-index: 3; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: #d9f1ff; cursor: pointer; font-size: 21px; display: grid; place-items: center; }
 .interaction-trigger:hover { background: #bce6ff; }
-.interaction-trigger:disabled, .interaction-choice:disabled { opacity: .45; cursor: wait; }
 .interaction-picker { position: fixed; z-index: 10000; box-sizing: border-box; width: 228px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 30px rgba(0,0,0,.18); }
 .interaction-choice { background: transparent; border: 0; border-radius: 10px; cursor: pointer; min-width: 0; padding: 6px; }
 .interaction-choice:hover, .interaction-choice:focus-visible { background: var(--surface2); }

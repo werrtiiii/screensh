@@ -44,17 +44,33 @@ app.whenReady().then(async () => {
     for (const win of windows) await wait(win, `document.querySelector('[data-user-id="${target}"] .interaction-animation')?.naturalWidth > 0`);
     await wait(a, 'interactionSounds === 1'); await wait(b, 'interactionSounds === 1');
     assert.equal(await run(c, 'interactionSounds'), 0);
-    assert.equal(await run(a, `[...document.querySelectorAll('.interaction-trigger')].every(b=>b.disabled)`), true);
+    assert.equal(await run(a, `!!document.querySelector('.interaction-picker') && [...document.querySelectorAll('.interaction-choice')].every(b=>!b.disabled)`), true);
+    await run(a, `for(let i=0;i<10;i++) document.querySelector('.interaction-choice[aria-label="炸弹"]').click()`);
+    assert.equal(await run(a, `interactionSounds`), 1, 'rapid clicks are allowed but have no extra effect');
     await run(b, `(async () => { window.effectBefore = document.querySelector('.interaction-animation'); const s=await import('./signaling.js');s.applyServerState(await s.requestServer('switch-channel',{channelId:'main'})); })()`);
     assert.equal(await run(b, `effectBefore === document.querySelector('.interaction-animation')`), true);
+    assert.equal(await run(a, `!!document.querySelector('.interaction-picker')`), true, 'member updates must not dismiss picker');
     await new Promise(r => setTimeout(r, 1100));
-    assert.equal(await run(a, `[...document.querySelectorAll('.interaction-trigger')].every(b=>!b.disabled)`), true);
+    await run(a, `document.querySelector('.interaction-choice[aria-label="爱心"]').click()`);
+    await wait(a, 'interactionSounds === 2'); await wait(b, 'interactionSounds === 2');
+    assert.equal(await run(a, `!!document.querySelector('.interaction-picker')`), true);
+    await run(b, `(async () => { const s=await import('./signaling.js'); await s.requestServer('start-sharing'); })()`);
+    await wait(a, `!document.querySelector('[data-user-id="${target}"] .interaction-trigger')`);
+    assert.equal(await run(a, `document.querySelectorAll('.interaction-picker').length`), 0, 'sharing hides trigger and closes its picker');
+    await run(b, `(async () => { const s=await import('./signaling.js'); await s.requestServer('stop-sharing'); })()`);
+    await wait(a, `!!document.querySelector('[data-user-id="${target}"] .interaction-trigger')`);
     await run(b, `(async () => (await import('./signaling.js')).disconnectSignaling())()`);
     assert.equal(await run(b, `document.querySelectorAll('.interaction-animation').length`), 0);
     await run(a, `document.querySelector('.interaction-trigger').click(); window.dispatchEvent(new Event('resize'));`);
+    assert.equal(await run(a, `document.querySelectorAll('.interaction-picker').length`), 1);
+    await run(a, `document.querySelector('#channelNameDisplay').dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}))`);
     assert.equal(await run(a, `document.querySelectorAll('.interaction-picker').length`), 0);
-    await new Promise(r => setTimeout(r, 6100));
+    await new Promise(r => setTimeout(r, 6500));
     assert.equal(await run(a, `document.querySelectorAll('.interaction-animation, .interaction-badge').length`), 0);
+    const preview = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } }); windows.push(preview);
+    await preview.loadFile(path.join(root, 'tools/interaction-audio-preview.html'));
+    await wait(preview, `[...document.querySelectorAll('audio')].length===9 && [...document.querySelectorAll('audio')].every(a=>Number.isFinite(a.duration) && a.duration>0)`);
+    assert.equal(await run(preview, `(() => { const s=document.querySelector('select');s.value='炸弹';s.dispatchEvent(new Event('change'));return document.querySelector('#result').value.split(String.fromCharCode(10))[0]; })()`), '音效 1 → 炸弹');
     console.log('INTERACTIONS_OK', JSON.stringify({ picker: true, animationOnAllThree: true, soundsOnlyForParticipants: true, cooldown: true, effectSurvivesRender: true, cleanup: true }));
   } catch (error) { console.error(error.stack); process.exitCode = 1; }
   finally { windows.forEach(win => win.destroy()); await new Promise(r => io.close(r)); app.exit(process.exitCode || 0); }
