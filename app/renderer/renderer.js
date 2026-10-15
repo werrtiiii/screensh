@@ -1,6 +1,8 @@
 // ============================================================
 // ScreenSh — 入口文件：UI 事件绑定
 // ============================================================
+import { readCachedImage, saveCachedImage } from './image-cache.mjs';
+import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { state, $, $$ } from './shared.js';
 import { toast } from './toast.js';
 import { socket, connectServer, requestServer, applyServerState, rememberJoinCredentials } from './signaling.js';
@@ -12,6 +14,11 @@ import { showContextMenu } from './context-menu.js';
 import { initVoice } from './voice.js';
 import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
+
+const initialAvatar = state.userAvatar;
+const avatarReady = readCachedImage('avatar').then(avatar => {
+  if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
+}).catch(error => console.error('Avatar cache:', error));
 
 // --- 初始化主题---
 function initTheme() {
@@ -36,6 +43,7 @@ initTheme();
 
 // A server has one permanent room; its stable ID also names the EasyTier network.
 async function joinServer() {
+  await avatarReady;
   if (state.joining || state.leaving || state.runtimeCleanupFailed || state.roomId) return;
   const userName = $('#userName').value.trim();
   if (!userName) { $('#userName').focus(); return toast('请输入名称', 'error'); }
@@ -90,9 +98,9 @@ $('#btnConnect').addEventListener('click', joinServer);
 function readImage(file) {
   return new Promise((resolve, reject) => {
     if (!file || !/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return reject(new Error('请选择 PNG、JPEG、WebP 或 GIF 图片'));
-    if (file.size > 128 * 1024) return reject(new Error('图片不能大于128KB'));
+    if (file.size > MAX_IMAGE_BYTES) return reject(new Error('图片不能大于2MB'));
     const reader = new FileReader(); reader.onload = () => {
-      if (typeof reader.result !== 'string' || reader.result.length > 128 * 1024) return reject(new Error('图片编码后不能大于128KB，请压缩图片后重试'));
+      if (!isImageData(reader.result)) return reject(new Error('图片无效或大于2MB，请重新选择'));
       resolve(reader.result);
     }; reader.onerror = () => reject(new Error('图片读取失败')); reader.readAsDataURL(file);
   });
@@ -104,7 +112,7 @@ let avatarBusy = false, serverIconBusy = false;
 async function saveAvatar(avatar) {
   if (state.roomId) await requestServer('set-avatar', { avatar });
   state.userAvatar = avatar;
-  if (avatar) localStorage.setItem('userAvatar', avatar); else localStorage.removeItem('userAvatar');
+  await saveCachedImage('avatar', avatar); localStorage.removeItem('userAvatar');
   applyAvatarImage(avatar);
 }
 async function chooseAvatar(file) {
@@ -190,7 +198,7 @@ $('#btnConfirmShare').addEventListener('click', startScreenCapture);
 $('#btnStopShare').addEventListener('click', stopSharing);
 
 // --- 返回大厅 / 取消观看 ---
-$('#btnStopWatch').addEventListener('click', stopWatch);
+$('#btnStopWatch').addEventListener('click', () => stopWatch({ retain: true }));
 
 // --- 信令服务器连通性检测 ---
 function testServerConnection() {
@@ -490,11 +498,28 @@ if (settingsModal && btnCloseSettings) {
 }
 
 // Server bookmarks and the profile name live locally, independent of server state.
+const bookmarkIconCache = new Map();
 function readBookmarks() {
-  try { const value = JSON.parse(localStorage.getItem('serverBookmarks') || '[]'); return Array.isArray(value) ? value : []; }
+  try { const value = JSON.parse(localStorage.getItem('serverBookmarks') || '[]'); return Array.isArray(value) ? value.map(item => item.icon === 'cached' ? { ...item, icon: bookmarkIconCache.get(item.url) || null, cachedIcon: true } : item) : []; }
   catch { return []; }
 }
-function saveBookmarks(value) { localStorage.setItem('serverBookmarks', JSON.stringify(value.slice(0, 30))); }
+function saveBookmarks(value) {
+  const records = value.slice(0, 30).map(item => {
+    const { cachedIcon, ...record } = item;
+    if (record.icon?.startsWith('data:')) {
+      if (bookmarkIconCache.get(record.url) !== record.icon) {
+        bookmarkIconCache.set(record.url, record.icon);
+        void saveCachedImage('bookmark:' + record.url, record.icon).catch(console.error);
+      }
+      return { ...record, icon: 'cached' };
+    }
+    return cachedIcon && !record.icon ? { ...record, icon: 'cached' } : record;
+  });
+  localStorage.setItem('serverBookmarks', JSON.stringify(records));
+}
+for (const item of readBookmarks().filter(item => item.cachedIcon)) {
+  void readCachedImage('bookmark:' + item.url).then(icon => { if (icon) bookmarkIconCache.set(item.url, icon); renderBookmarks(); }).catch(console.error);
+}
 function escapeBookmark(value) {
   return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
@@ -532,7 +557,7 @@ function addBookmark(url, name = '') {
 document.addEventListener('server-icon-updated', event => {
   $('#btnResetServerIcon').disabled = !event.detail;
   const url = $('#serverUrl')?.value.trim(); if (!url) return;
-  const next = readBookmarks().map(item => item.url === url ? { ...item, icon: event.detail } : item); saveBookmarks(next); renderBookmarks();
+  const next = readBookmarks().map(item => item.url === url ? { ...item, icon: event.detail, cachedIcon: false } : item); saveBookmarks(next); renderBookmarks();
 });
 function addCurrentBookmark() {
   const url = $('#serverUrl')?.value.trim();

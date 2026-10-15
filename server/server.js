@@ -80,17 +80,19 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   persist(saved);
   const app = express(), server = http.createServer(app);
   app.set('trust proxy', trustedProxies);
-  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 256 * 1024 });
+  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 3 * 1024 * 1024 });
   const members = new Map();
   const mutedIdentities = new Set();
+  const interactionTimes = new Map();
+  const interactionIds = new Set(['poop', 'tomato', 'egg', 'heart', 'bomb', 'cake', 'thumb', 'boxing', 'question']);
   const attempts = new Map();
   const nameKey = name => name.normalize('NFKC').toLowerCase();
   function isImageData(value) {
-    return typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(value) && Buffer.byteLength(value, 'utf8') <= 128 * 1024;
+    return typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(value) && value.length <= Math.ceil(2 * 1024 * 1024 / 3) * 4 + 64 && Buffer.byteLength(value.slice(value.indexOf(',') + 1), 'base64') <= 2 * 1024 * 1024;
   }
   function validateImage(value, label) {
     if (value === null || value === '') return null;
-    if (!isImageData(value)) throw new Error(`${label}必须是 PNG、JPEG、WebP 或 GIF，且不能大于128KB`);
+    if (!isImageData(value)) throw new Error(`${label}必须是 PNG、JPEG、WebP 或 GIF，且不能大于2MB`);
     return value;
   }
   async function checkAccess(socket, payload) {
@@ -183,6 +185,17 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (avatar) userProfiles[u.key] = { avatar }; else delete userProfiles[u.key];
       persist({ ...saved, userProfiles });
       publish(); return { avatar: imageRef(avatar) };
+    });
+    handle('interact', payload => {
+      const actor = requireMember(), target = members.get(payload?.target);
+      if (!interactionIds.has(payload?.sticker)) throw new Error('无效的互动');
+      if (!target || target === actor || target.channelId !== actor.channelId) throw new Error('只能与当前频道的其他成员互动');
+      const now = performance.now();
+      for (const [key, time] of interactionTimes) if (now - time >= 1000) interactionTimes.delete(key);
+      if (interactionTimes.has(actor.key)) throw new Error('互动间隔至少一秒，请稍后再试');
+      interactionTimes.set(actor.key, now);
+      io.to(group(actor.channelId)).emit('interaction', { id: randomUUID(), serverId: saved.serverId, channelId: actor.channelId, from: socket.id, target: payload.target, sticker: payload.sticker });
+      return {};
     });
     handle('set-voice-state', payload => {
       const u = requireMember();

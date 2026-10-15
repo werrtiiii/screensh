@@ -41,7 +41,7 @@ const executable = path.join(output, 'ScreenSh.exe');
 const resources = path.join(output, 'resources');
 const appDir = path.join(resources, 'app');
 fs.mkdirSync(appDir, { recursive: true });
-for (const file of ['main.js', 'preload.js', 'managed-process.js', 'peer-test.js', 'obs-engine.js', 'video-encoder.js', 'obs-host-path.js', 'process-audio.cjs', 'voice-runtime.cjs', 'voice-worker.cjs', 'obs-constants.js', 'capture-sources.js', 'updater.js', 'update-config.json', 'mediamtx.yml', 'renderer']) {
+for (const file of ['tray-controller.cjs', 'main.js', 'preload.js', 'managed-process.js', 'peer-test.js', 'obs-engine.js', 'video-encoder.js', 'obs-host-path.js', 'process-audio.cjs', 'voice-runtime.cjs', 'voice-worker.cjs', 'obs-constants.js', 'capture-sources.js', 'updater.js', 'update-config.json', 'mediamtx.yml', 'renderer']) {
   copy(path.join(root, file), path.join(appDir, file));
 }
 fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify({

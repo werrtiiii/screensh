@@ -5,6 +5,41 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('./server');
 const identity = () => randomBytes(32).toString('hex');
+
+test('interactions validate membership, target, channel and enforce a shared one-second cooldown', async t => {
+  const f = await fixture(t), a = await f.client(), b = await f.client(), c = await f.client(), outsider = await f.client();
+  const key = identity();
+  for (const [i, client] of [a, b, c].entries()) assert.equal((await request(client, 'join-server', { userName: 'Interact' + i, virtualIp: '10.144.5.' + (i + 1), identity: i === 0 ? key : identity() })).ok, true);
+  const channel = (await request(a, 'create-channel', { name: 'Other' })).channel;
+  await request(c, 'switch-channel', { channelId: channel.id });
+  let outsideEvents = 0; c.on('interaction', () => outsideEvents++); outsider.on('interaction', () => outsideEvents++);
+  assert.equal((await request(outsider, 'interact', { target: b.id, sticker: 'bomb' })).ok, false);
+  for (const payload of [{ target: a.id, sticker: 'bomb' }, { target: 'missing', sticker: 'bomb' }, { target: c.id, sticker: 'bomb' }, { target: b.id, sticker: '../file' }]) assert.equal((await request(a, 'interact', payload)).ok, false);
+  const sent = new Promise(resolve => a.once('interaction', resolve)), received = new Promise(resolve => b.once('interaction', resolve));
+  assert.equal((await request(a, 'interact', { target: b.id, sticker: 'bomb' })).ok, true);
+  const event = await sent; assert.deepEqual(await received, event);
+  assert.equal(event.from, a.id); assert.equal(event.target, b.id); assert.equal(event.sticker, 'bomb'); assert.equal(event.channelId, 'main');
+  assert.equal((await request(a, 'interact', { target: b.id, sticker: 'heart' })).ok, false);
+  const returning = await f.client();
+  assert.equal((await request(returning, 'join-server', { userName: 'Interact0', virtualIp: '10.144.5.1', identity: key })).ok, true);
+  assert.equal((await request(returning, 'interact', { target: b.id, sticker: 'heart' })).ok, false, 'reconnect must not reset cooldown');
+  await new Promise(resolve => setTimeout(resolve, 1050));
+  assert.equal((await request(returning, 'interact', { target: b.id, sticker: 'heart' })).ok, true);
+  assert.equal(outsideEvents, 0);
+});
+test('2 MiB avatar and server icon survive upload and retrieval; larger images are rejected', async t => {
+  const f = await fixture(t), host = await f.client();
+  const image = 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024, 1).toString('base64');
+  const join = await request(host, 'join-server', { userName: 'Large image', virtualIp: '10.144.1.1', identity: identity(), avatar: image });
+  assert.equal(join.ok, true);
+  assert.equal((await request(host, 'get-image', { ref: join.users[0].avatar })).data, image);
+  const icon = await request(host, 'set-server-icon', { icon: image }); assert.equal(icon.ok, true);
+  assert.equal((await request(host, 'get-image', { ref: icon.serverIcon })).data, image);
+  const oversized = 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024 + 1, 1).toString('base64');
+  assert.equal((await request(host, 'set-avatar', { avatar: oversized })).ok, false);
+  assert.equal((await request(host, 'set-server-icon', { icon: oversized })).ok, false);
+  assert.equal(host.connected, true);
+});
 test('voice isolation, mute hierarchy and channel cleanup', async t => {
   const f = await fixture(t), host = await f.client(), admin = await f.client(), member = await f.client(), outsider = await f.client();
   for (const [i, client] of [host, admin, member].entries()) assert.equal((await request(client, 'join-server', { userName: 'Voice' + i, virtualIp: '10.144.2.' + (i + 1), identity: identity() })).ok, true);

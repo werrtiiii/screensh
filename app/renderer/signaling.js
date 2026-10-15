@@ -1,7 +1,11 @@
+import { syncChannelSounds, leaveChannelSounds } from './channel-sounds.mjs';
+import { saveCachedImage } from './image-cache.mjs';
+import { isImageData } from './image-data.mjs';
+import { receiveInteraction, resetInteractions, syncInteractions } from './interactions.js';
 import { state, $ } from './shared.js';
 import { toast } from './toast.js';
 import { updateUserList, leaveRoom } from './room.js';
-import { stopWatch, stopSharing, renderViewerNames } from './media.js';
+import { stopWatch, stopSharing, renderViewerNames, validateRetainedWatch } from './media.js';
 
 export let socket = null;
 export const roomUsers = new Map();
@@ -21,7 +25,7 @@ function fetchImage(ref, connection) {
   if (!imageCache.has(ref)) {
     const pending = requestServer('get-image', { ref }, connection).then(result => {
       if (socket !== connection) return;
-      const data = result.ref === ref && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(result.data || '') && result.data.length <= 128 * 1024 ? result.data : null;
+      const data = result.ref === ref && isImageData(result.data) ? result.data : null;
       imageCache.set(ref, data);
     }).catch(() => { if (socket === connection) imageCache.set(ref, null); });
     imageCache.set(ref, pending);
@@ -44,6 +48,7 @@ export function applyServerState(data, restoring = false) {
   if (!state.roomId || data.serverId !== state.roomId) return;
   const me = data.users.find(u => u.socketId === socket?.id);
   if (!me) return;
+  syncChannelSounds(data, socket.id, restoring);
   const revision = ++imageRevision, connection = socket;
   const raw = data;
   const refs = new Set([data.serverIcon, ...data.users.map(u => u.avatar)].filter(isImageRef));
@@ -63,13 +68,15 @@ export function applyServerState(data, restoring = false) {
   const meAvatar = data.users.find(u => u.socketId === socket?.id)?.avatar || null;
   if ((!isImageRef(me.avatar) || cachedImage(me.avatar)) && meAvatar !== state.userAvatar) {
     state.userAvatar = meAvatar;
-    if (typeof localStorage !== 'undefined') { if (meAvatar) localStorage.setItem('userAvatar', meAvatar); else localStorage.removeItem('userAvatar'); }
+    if (typeof localStorage !== 'undefined') { void saveCachedImage('avatar', meAvatar).catch(console.error); localStorage.removeItem('userAvatar'); }
     document.dispatchEvent(new CustomEvent('user-avatar-updated', { detail: meAvatar }));
   }
   state.easytierPeers = data.easytierPeers || [];
   state.serverUsers = data.users;
   roomUsers.clear();
   data.users.filter(u => u.channelId === state.channelId).forEach(u => roomUsers.set(u.socketId, u));
+  validateRetainedWatch();
+  syncInteractions();
   if (state.watchingId && (!roomUsers.has(state.watchingId) || !roomUsers.get(state.watchingId).isSharing)) stopWatch();
   $('#channelNameDisplay').textContent = data.channels.find(c => c.id === state.channelId)?.name || '主频道';
   updateUserList(data.users);
@@ -82,12 +89,14 @@ export function connectServer() {
   socket = io($('#serverUrl').value.trim(), { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
   socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
   socket.on('disconnect', reason => {
+    resetInteractions();
     $('#serverStatus').className = 'status-dot disconnected';
     if (state.roomId && !state.leaving && !kickedOut && reason !== 'io client disconnect') startReconnect();
   });
   socket.on('server-update', applyServerState);
   socket.on('voice-signal', data => window.channelVoice?.receive(data));
   socket.on('voice-activity', data => window.channelVoice?.activity(data));
+  socket.on('interaction', receiveInteraction);
   socket.on('channel-deleted', () => {
     stopWatch(); void stopSharing();
     $('#screenPicker').classList.add('hidden');
@@ -178,6 +187,8 @@ function startReconnect() {
   })();
 }
 export function disconnectSignaling() {
+  resetInteractions();
+  leaveChannelSounds();
   imageRevision++; imageCache.clear();
   reconnectGeneration++;
   reconnectPromise = null;

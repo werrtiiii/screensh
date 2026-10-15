@@ -54,6 +54,7 @@ function runtime() {
     screen: {},
   };
   const dependencies = {
+    './tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },
     electron, './capture-sources': {}, './managed-process': { ManagedProcess: FakeProcess },
     './obs-engine': { ObsEngine: FakeObs }, './peer-test': { createPeerTester: () => ({ stop: async () => {} }) },
   };

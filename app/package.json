@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -57,7 +57,8 @@
       "node_modules/**/*",
       "package.json",
       "process-audio.cjs",
-      "video-encoder.js"
+      "video-encoder.js",
+      "tray-controller.cjs"
     ],
     "extraResources": [
       {

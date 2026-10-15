@@ -32,7 +32,7 @@
         <div class="profile-bar">
           <label class="profile-avatar profile-avatar-button" id="btnAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label><input id="avatarInput" class="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
           <input id="userName" class="profile-name" type="text" placeholder="设置名称" maxlength="20" autocomplete="off" /><button id="btnEditName" class="icon-btn" title="编辑名称">✎</button>
-          <button id="btnSettings" class="icon-btn settings-trigger" title="系统设置">⚙</button>
+          <button id="btnSettings" class="icon-btn settings-trigger" title="系统设置" aria-label="系统设置"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.7 4.3 10.2 2h3.6l.5 2.3 1.7 1 2.2-.7 1.8 3.1-1.7 1.6v2l1.7 1.6-1.8 3.1-2.2-.7-1.7 1-.5 2.3h-3.6l-.5-2.3-1.7-1-2.2.7L4 13.9l1.7-1.6v-2L4 8.7l1.8-3.1 2.2.7z" transform="translate(0 1.5)"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
       </aside>
       <main class="empty-workspace">
@@ -69,7 +69,7 @@
         <div class="profile-bar">
           <label class="profile-avatar profile-avatar-button" id="btnRoomAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label>
           <input id="roomUserName" class="profile-name" type="text" placeholder="设置名称" maxlength="20" autocomplete="off" /><button id="btnEditRoomName" class="icon-btn" title="编辑名称">✎</button>
-          <button id="btnRoomSettings" class="icon-btn settings-trigger" title="系统设置">⚙</button>
+          <button id="btnRoomSettings" class="icon-btn settings-trigger" title="系统设置" aria-label="系统设置"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.7 4.3 10.2 2h3.6l.5 2.3 1.7 1 2.2-.7 1.8 3.1-1.7 1.6v2l1.7 1.6-1.8 3.1-2.2-.7-1.7 1-.5 2.3h-3.6l-.5-2.3-1.7-1-2.2.7L4 13.9l1.7-1.6v-2L4 8.7l1.8-3.1 2.2.7z" transform="translate(0 1.5)"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
       </aside>
       <div class="room-topbar">
@@ -130,7 +130,7 @@
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverSettingsTitle">
         <div class="modal-header"><h2 id="serverSettingsTitle">服务器设置</h2><button id="btnCloseServerSettings" class="btn-close" aria-label="关闭">×</button></div>
         <div class="server-setting-row"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
-        <div class="server-setting-row"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大128KB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
+        <div class="server-setting-row"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="server-setting-row"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
       </div>
     </div>

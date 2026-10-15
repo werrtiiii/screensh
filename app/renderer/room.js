@@ -7,6 +7,7 @@ import { toast } from './toast.js';
 import { requestPassword } from './password-dialog.js';
 import { showContextMenu, closeContextMenu } from './context-menu.js';
 import { normalizePeers } from './easytier-peers.mjs';
+import { decorateInteractionCard } from './interactions.js';
 import {
   escapeHtml,
   displayRemoteVideo,
@@ -94,6 +95,7 @@ export function updateUserList(users) {
 
     cardsView.appendChild(card);
     window.channelVoice?.decorate(card, u, isMe);
+    decorateInteractionCard(card, u, isMe);
     if (rank[myRole] > rank[u.role]) card.oncontextmenu = event => showContextMenu(event, [{ label: u.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: u.socketId, muted: !u.voiceMuted }) }]);
   });
 }

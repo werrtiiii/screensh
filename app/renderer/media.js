@@ -6,7 +6,7 @@ import { attachVideoStats } from './video-stats.mjs';
 
 let session = null, sharingGeneration = 0;
 let stoppingPromise = null;
-let disposeStats = null;
+let disposeStats = null, watchContext = null, retainWatchTimer = null;
 export function escapeHtml(str) {
   const div = document.createElement('div'); div.textContent = str; return div.innerHTML;
 }
@@ -83,59 +83,88 @@ export function updateSharingUI(sharing) {
   $('#btnStopShare').disabled = state.stoppingShare || state.leaving;
   $('#btnStopShare').textContent = state.stoppingShare ? '正在停止…' : state.shareCleanupFailed ? '重试停止' : '停止共享 ';
 }
+function reportViewing(context) {
+  if (watchContext !== context || context.isSelf) return;
+  const connected = state.watchingId === context.target && context.current.pc.connectionState === 'connected';
+  if (context.reported === connected) return;
+  context.reported = connected;
+  socket?.emit(connected ? 'request-view' : 'stop-viewing', { target: context.target });
+}
+export function validateRetainedWatch() {
+  if (!watchContext) return;
+  const user = roomUsers.get(watchContext.target);
+  if (watchContext.room !== state.roomId || watchContext.channel !== state.channelId
+    || (watchContext.isSelf ? !state.isSharing : !user?.isSharing || user.virtualIp !== watchContext.host)) stopWatch();
+}
 export async function displayRemoteVideo(targetSocketId) {
-  stopWatch();
   const targetUser = roomUsers.get(targetSocketId);
   const isSelf = targetSocketId === socket?.id;
-  // Local capture is ready before the server broadcasts the updated member list.
-  if (isSelf ? !state.isSharing : (!targetUser?.isSharing || !/^\d{1,3}(\.\d{1,3}){3}$/.test(targetUser.virtualIp))) {
-    return toast('共享者地址不可用', 'error');
-  }
+  const valid = isSelf ? state.isSharing : targetUser?.isSharing && /^\d{1,3}(\.\d{1,3}){3}$/.test(targetUser.virtualIp);
+  if (!valid) { stopWatch(); return toast('共享者地址不可用', 'error'); }
+  const reusable = retainWatchTimer !== null && watchContext?.target === targetSocketId
+    && watchContext.room === state.roomId && watchContext.channel === state.channelId
+    && watchContext.host === (isSelf ? '127.0.0.1' : targetUser.virtualIp)
+    && !session.closed && !['failed', 'closed', 'disconnected'].includes(session.pc.connectionState);
+  if (!reusable) stopWatch();
+  else { clearTimeout(retainWatchTimer); retainWatchTimer = null; }
   state.watchingId = targetSocketId;
   renderViewerNames();
   $('#userCardsView').classList.add('hidden'); $('#activeVideoView').classList.remove('hidden');
   const container = $('#videoContainer');
   container.innerHTML = '<video autoplay playsinline controls></video><div class="pip-bar"><button id="btnPip">画中画</button></div>';
   const video = container.querySelector('video');
-  video.muted = isSelf;
-  video.defaultMuted = isSelf;
+  video.muted = isSelf; video.defaultMuted = isSelf;
   $('#btnPip').onclick = async () => {
     try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); }
     catch (error) { toast(`画中画开启失败：${error.message}`, 'error'); }
   };
-  const fail = error => { if (session === current) { stopWatch(); toast(`观看失败：${error.message}`, 'error'); } };
-  const stream = new MediaStream();
-  const host = isSelf ? '127.0.0.1' : targetUser.virtualIp;
-  const current = new WhepSession(`http://${host}:8889/live/whep`, getIceServers(), event => {
-    if (session !== current) return;
-    stream.addTrack(event.track); video.srcObject = stream;
-    video.play().catch(() => toast('请点击视频播放按钮'));
-  }, fail);
-  session = current;
-  let reported = false;
-  const reportViewing = () => {
-    if (session !== current || isSelf) return;
-    const connected = current.pc.connectionState === 'connected';
-    if (reported === connected) return;
-    reported = connected;
-    socket?.emit(connected ? 'request-view' : 'stop-viewing', { target: targetSocketId });
+  if (reusable) {
+    watchContext.video = video; video.srcObject = watchContext.stream;
+    disposeStats = attachVideoStats(container, session.pc);
+    if (watchContext.stream.getTracks().length) video.play().catch(() => { if (watchContext?.video === video) toast('请点击视频播放按钮'); });
+    reportViewing(watchContext); return;
+  }
+  const context = { target: targetSocketId, isSelf, room: state.roomId, channel: state.channelId,
+    host: isSelf ? '127.0.0.1' : targetUser.virtualIp, stream: new MediaStream(), video, reported: false };
+  const fail = error => {
+    if (watchContext !== context) return;
+    const visible = state.watchingId === context.target;
+    stopWatch(); if (visible) toast(`观看失败：${error.message}`, 'error');
   };
-  current.pc.addEventListener('connectionstatechange', reportViewing);
+  const current = context.current = new WhepSession(`http://${context.host}:8889/live/whep`, getIceServers(), event => {
+    if (watchContext !== context) return;
+    context.stream.addTrack(event.track);
+    const activeVideo = context.video;
+    if (!activeVideo) return;
+    activeVideo.srcObject = context.stream;
+    activeVideo.play().catch(() => { if (context.video === activeVideo) toast('请点击视频播放按钮'); });
+  }, fail);
+  session = current; watchContext = context;
+  current.pc.addEventListener('connectionstatechange', () => reportViewing(context));
   disposeStats = attachVideoStats(container, current.pc);
-  try { await current.start(); reportViewing(); } catch (error) { fail(error); }
+  try { await current.start(); reportViewing(context); } catch (error) { fail(error); }
 }
 export function renderViewerNames() {
   const viewers = state.serverUsers.filter(u => u.watchingId === state.watchingId && u.socketId !== state.watchingId);
   $('#viewerNames').textContent = viewers.length ? `观众（${viewers.length}）：${viewers.map(u => u.name).join('、')}` : '观众（0）：暂无观众';
 }
-export function stopWatch() {
-  if (state.watchingId && state.watchingId !== socket?.id) socket?.emit('stop-viewing', { target: state.watchingId });
+export function stopWatch({ retain = false } = {}) {
   disposeStats?.(); disposeStats = null;
-  session?.close(); session = null; state.watchingId = null;
+  const context = watchContext;
+  state.watchingId = null;
+  if (context) reportViewing(context);
+  const video = context?.video || $('#videoContainer').querySelector('video');
+  if (video) { video.pause(); video.muted = true; video.srcObject = null; }
+  if (context) context.video = null;
+  if (retain && session && context && state.roomId === context.room && state.channelId === context.channel) {
+    if (retainWatchTimer === null) retainWatchTimer = setTimeout(() => { if (watchContext === context) stopWatch(); }, 10000);
+  } else {
+    clearTimeout(retainWatchTimer); retainWatchTimer = null;
+    session?.close(); session = null; watchContext = null;
+    context?.stream.getTracks().forEach(track => track.stop());
+  }
   $('#viewerNames').textContent = '';
   if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
-  const video = $('#videoContainer').querySelector('video');
-  if (video?.srcObject) { video.srcObject.getTracks().forEach(track => track.stop()); video.srcObject = null; }
   $('#activeVideoView').classList.add('hidden'); $('#userCardsView').classList.remove('hidden');
   $('#videoContainer').innerHTML = '';
 }

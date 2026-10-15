@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const { listCaptureSources } = require('./capture-sources');
 const path = require('path');
 const os = require('os');
@@ -35,6 +35,7 @@ function getUpdater() {
 }
 
 let mainWindow, obs, virtualIp, generation = 0, quitting = false;
+let trayController, quitReady = false, quitPromise;
 let shareStart = null, shareStop = null, shareCleanup = null, runtimeLeave = null;
 const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'res'), name);
 function failure(message) {
@@ -71,7 +72,7 @@ ipcMain.handle('check-for-update', async () => {
 ipcMain.handle('download-and-install-update', async () => {
   if (!app.isPackaged) throw new Error('开发模式不能安装更新');
   const updater = getUpdater();
-  updater.once('update-downloaded', () => updater.quitAndInstall(false, true));
+  updater.once('update-downloaded', () => { void prepareQuit(() => updater.quitAndInstall(false, true)); });
   await updater.downloadUpdate();
   return true;
 });
@@ -116,8 +117,9 @@ app.commandLine?.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 function createWindow() {
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
   mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 1000, minHeight: 640, frame: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
+  trayController?.attach(mainWindow);
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if ((input.control && input.shift && input.key.toLowerCase() === 'i') || input.key.toLowerCase() === 'f12') {
       mainWindow.webContents.toggleDevTools(); event.preventDefault();
@@ -262,13 +264,26 @@ ipcMain.on('window-close', () => mainWindow?.close());
 // Fixed media ports mean a second local instance cannot safely share simultaneously.
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (mainWindow) { mainWindow.restore(); mainWindow.focus(); } });
-  app.whenReady().then(createWindow);
+  app.on('second-instance', () => trayController?.show());
+  app.whenReady().then(() => {
+    const { createTrayController } = require('./tray-controller.cjs');
+    trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
+    createWindow();
+  });
+  app.on('activate', () => trayController?.show());
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
-    if (quitting) return;
-    event.preventDefault(); quitting = true;
-    Promise.allSettled([leaveRuntime(), peerTester.stop()]).finally(() => { obs?.shutdown(); app.quit(); });
+    if (quitReady) return;
+    event.preventDefault(); void prepareQuit(() => app.quit());
   });
 }
 
+
+function prepareQuit(exit) {
+  if (quitPromise) return quitPromise;
+  quitting = true;
+  quitPromise = Promise.allSettled([leaveRuntime(), peerTester.stop()]).then(() => {
+    try { obs?.shutdown(); } finally { trayController?.destroy(); quitReady = true; exit(); }
+  });
+  return quitPromise;
+}
