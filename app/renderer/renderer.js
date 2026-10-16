@@ -15,9 +15,11 @@ import { initVoice } from './voice.js';
 import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
 import { initMemberNetwork } from './member-network.js';
+import { initSoundVolume } from './sound-volume.mjs';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
+initSoundVolume();
 const avatarReady = readCachedImage('avatar').then(avatar => {
   if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
 }).catch(error => console.error('Avatar cache:', error));
@@ -482,7 +484,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware, .setting-voice').forEach(el => el.style.display = '');
+      $$('.setting-hardware, .setting-voice, .setting-sounds').forEach(el => el.style.display = '');
       $$('.setting-server').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
@@ -493,7 +495,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware, .setting-voice').forEach(el => el.style.display = 'none');
+      $$('.setting-hardware, .setting-voice, .setting-sounds').forEach(el => el.style.display = 'none');
       $$('.setting-server').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');
@@ -616,7 +618,7 @@ $('#roomBookmarkAddForm')?.addEventListener('submit', event => { event.preventDe
 function setBookmarkCollapsed(collapsed) {
   localStorage.setItem('bookmarksCollapsed', collapsed);
   document.querySelectorAll('.bookmark-list, .bookmark-empty').forEach(node => node.classList.toggle('collapsed', collapsed));
-  document.querySelectorAll('#btnCollapseBookmarks, #btnCollapseRoomBookmarks').forEach(button => { button.textContent = collapsed ? '⌄' : '⌃'; button.title = collapsed ? '展开书签' : '收起书签'; });
+  document.querySelectorAll('#btnCollapseBookmarks, #btnCollapseRoomBookmarks').forEach(button => { button.classList.toggle('is-collapsed', collapsed); button.title = collapsed ? '展开书签' : '收起书签'; button.setAttribute('aria-label', button.title); button.setAttribute('aria-expanded', String(!collapsed)); });
 }
 function toggleBookmarkLists() { setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') !== 'true'); }
 $('#btnCollapseBookmarks')?.addEventListener('click', toggleBookmarkLists);
@@ -631,7 +633,7 @@ $('#roomUserName').value = savedName;
 $('#userName').addEventListener('input', event => { localStorage.setItem('userName', event.target.value.trim()); $('#roomUserName').value = event.target.value; });
 $('#roomUserName')?.addEventListener('input', event => { localStorage.setItem('userName', event.target.value.trim()); $('#userName').value = event.target.value; });
 renderBookmarks();
-if (localStorage.getItem('bookmarksCollapsed') === 'true') setBookmarkCollapsed(true);
+setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') === 'true');
 function focusNameEditor() {
   const input = $('#lobby')?.classList.contains('active') ? $('#userName') : $('#roomUserName');
   input?.focus(); input?.select();

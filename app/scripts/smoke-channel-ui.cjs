@@ -19,7 +19,7 @@ app.whenReady().then(async()=>{
   assert.equal(await run(`document.querySelector('.member-role').textContent`),'服主');
   assert.equal(await run(`!!document.querySelector('.member-role svg') && !!document.querySelector('.channel-default svg path') && getComputedStyle(document.querySelector('.channel-icon')).backgroundColor==='rgb(255, 255, 255)' && !document.querySelector('.room-label')`),true);
   await run(`document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
-  assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),2,'main channel offers rename and icon settings');
+  assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),3,'main channel offers rename, icon and voice bitrate settings');
   assert.equal(await run(`document.querySelector('.context-menu').textContent.includes('删除')`),false);
   await run(`[...document.querySelectorAll('.context-menu button')].find(b=>b.textContent==='重命名').click();document.querySelector('#channelNameInput').value='新的主频道';document.querySelector('#createChannelForm').requestSubmit()`);
   await wait(`document.querySelector('.channel-name').textContent==='新的主频道' && document.querySelector('#channelNameDisplay').textContent==='新的主频道' && document.querySelector('#channelDialog').classList.contains('hidden')`);
@@ -56,6 +56,14 @@ app.whenReady().then(async()=>{
   await wait(`document.querySelectorAll('#memberNetworkRows tr').length===2 && document.querySelector('#memberNetworkRows').textContent.includes('32 ms')`);
   assert.equal(await run(`document.querySelector('#memberNetworkRows').textContent.includes('未响应') && !document.querySelector('#memberNetworkRows').textContent.includes('Owner')`),true,'network panel includes other channels and excludes self');
   assert.equal(pingCalls,2);
+  assert.equal(await run(`getComputedStyle(document.querySelector('.member-virtual-ip')).userSelect`),'text');
+  await run(`window.copiedIps=[];navigator.clipboard.writeText=async text=>copiedIps.push(text);document.querySelector('.member-virtual-ip').click()`);
+  assert.deepEqual(await run(`copiedIps`),['10.144.11.2'],'click copies the selected member IP');
+  await run(`(()=>{const ip=document.querySelector('.member-virtual-ip'),range=document.createRange();range.selectNodeContents(ip);window.getSelection().removeAllRanges();window.getSelection().addRange(range);ip.click();window.selectedIpNode=ip.firstChild;})()`);
+  assert.equal(await run(`copiedIps.length`),1,'selecting text does not trigger click-to-copy');
+  await new Promise(resolve=>setTimeout(resolve,3200));
+  assert.equal(await run(`window.getSelection().toString()==='10.144.11.2' && document.querySelector('.member-virtual-ip').firstChild===selectedIpNode`),true,'Ping refresh preserves selected IP text');
+  await run(`window.getSelection().removeAllRanges()`);
   const position=await run(`(()=>{const b=document.querySelector('#btnMemberNetwork').getBoundingClientRect(),area=document.querySelector('#mainContent').getBoundingClientRect();return {inside:b.left>=area.left&&b.right<=area.right&&b.top>=area.top&&b.bottom<=area.bottom,right:area.right-b.right,bottom:area.bottom-b.bottom}})()`);
   assert.equal(position.inside,true);assert.ok(position.right<20&&position.bottom<20,'button is at the bottom right of the card area');
   await new Promise(resolve=>setTimeout(resolve,150));
@@ -77,7 +85,7 @@ app.whenReady().then(async()=>{
   const overflow=await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const me=state.serverUsers[0];updateUserList([me,...Array.from({length:60},(_,i)=>({...me,socketId:'extra-'+i,name:'Member '+i,role:'member',channelJoinedOrder:i+100}))]);const list=document.querySelector('#channelList');list.scrollTop=list.scrollHeight;const last=list.querySelector('.channel-member:last-child').getBoundingClientRect(),bounds=list.getBoundingClientRect(),profile=document.querySelector('#room .profile-bar').getBoundingClientRect();const result={scrolls:list.scrollHeight>list.clientHeight,lastVisible:last.bottom<=bounds.bottom+1,aboveProfile:bounds.bottom<=profile.top};updateUserList(state.serverUsers);return result;})()`);
   assert.deepEqual(overflow,{scrolls:true,lastVisible:true,aboveProfile:true},'long member lists scroll without covering profile controls: '+JSON.stringify(overflow));
   // Modal bounds and bottom controls remain reachable at minimum window size.
-  for(const id of ['settingsModal','serverSettingsDialog','serverPeersDialog','bookmarkEditDialog','channelDialog','screenPicker','memberNetworkDialog']){
+  for(const id of ['settingsModal','serverSettingsDialog','serverPeersDialog','bookmarkEditDialog','channelDialog','channelBitrateDialog','screenPicker','memberNetworkDialog']){
    await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));document.querySelector('#${id}').classList.remove('hidden');document.querySelectorAll('#${id} .form-group').forEach(n=>n.style.display='')`);
    const check=await run(`(()=>{const panel=document.querySelector('#${id} .modal-content'),scroll=panel.querySelector('.modal-body')||panel;scroll.scrollTop=scroll.scrollHeight;const r=panel.getBoundingClientRect(),header=panel.querySelector('.modal-header').getBoundingClientRect();return {top:r.top,bottom:r.bottom,viewport:innerHeight,headerTop:header.top,headerBottom:header.bottom,reachable:scroll.scrollTop+scroll.clientHeight>=scroll.scrollHeight-1}})()`);
    assert.ok(check.top>=38 && check.bottom<=check.viewport,id+' panel is within viewport');assert.ok(check.headerTop>=check.top && check.headerBottom<=check.bottom,id+' close header stays visible');assert.equal(check.reachable,true);
@@ -87,7 +95,24 @@ app.whenReady().then(async()=>{
   assert.equal(await run(`document.querySelector('#settingsModal .modal-content').scrollTop`),0,'reopening settings restores first field');
   win.show();await new Promise(r=>setTimeout(r,500));
   fs.writeFileSync(path.join(root,'.runtime-probe','share-settings-minimum.png'),(await win.webContents.capturePage()).toPNG());
-  console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true}));
+  await run(`document.querySelector('#btnSettings').click()`);
+  assert.equal(await run(`getComputedStyle(document.querySelector('.setting-sounds')).display!=='none'`),true,'sound volume belongs to system settings');
+  const soundVolume = await run(`(async()=>{
+    const {trackSound,getSoundVolume}=await import('./sound-volume.mjs');
+    const audio=new Audio(),release=trackSound(audio),slider=document.querySelector('#softwareSoundVolume');
+    const initial=audio.volume;
+    slider.value='23';slider.dispatchEvent(new Event('input'));
+    const changed=audio.volume, saved=localStorage.getItem('softwareSoundVolume'), label=document.querySelector('#softwareSoundVolumeValue').textContent;
+    slider.value='0';slider.dispatchEvent(new Event('input'));const muted=audio.volume;
+    release();slider.value='78';slider.dispatchEvent(new Event('input'));
+    const next=new Audio(),dispose=trackSound(next);
+    const result={initial,changed,saved,label,muted,released:audio.volume,next:next.volume,stored:getSoundVolume()};dispose();return result;
+  })()`);
+  assert.deepEqual(soundVolume,{initial:0.6,changed:0.23,saved:'0.23',label:'23%',muted:0,released:0,next:0.78,stored:0.78});
+  fs.writeFileSync(path.join(root,'.runtime-probe','sound-volume-settings.png'),(await win.webContents.capturePage()).toPNG());
+  await run(`document.querySelector('#btnCloseSettings').click();document.querySelector('#btnRoomSettingsToolbar').click()`);
+  assert.equal(await run(`getComputedStyle(document.querySelector('.setting-sounds')).display`),'none','share settings do not show sound volume');
+  console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true,soundVolume:true}));
  }catch(error){console.error(error.stack);process.exitCode=1;}
  finally{clients.forEach(client=>client.disconnect());win?.destroy();await new Promise(r=>io.close(r));app.exit(process.exitCode||0)}
 });

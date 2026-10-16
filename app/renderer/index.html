@@ -168,6 +168,14 @@
       </form>
     </div>
     <!-- ===== Settings Modal ===== -->
+    <div id="channelBitrateDialog" class="modal hidden">
+      <form id="channelBitrateForm" class="modal-content">
+        <div class="modal-header"><h2>频道语音码率</h2><button id="btnCloseChannelBitrate" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="form-group"><label id="channelBitrateName" for="channelBitrateSelect">语音码率</label><select id="channelBitrateSelect"><option value="24">24 kbps</option><option value="32">32 kbps</option><option value="64">64 kbps</option><option value="96">96 kbps</option></select></div>
+        <p id="channelBitrateError" role="alert"></p>
+        <div class="dialog-actions"><button id="btnSaveChannelBitrate" type="submit" class="btn btn-primary">保存</button></div>
+      </form>
+    </div>
     <div id="settingsModal" class="modal hidden">
       <div class="modal-content">
         <div class="modal-header">
@@ -183,6 +191,10 @@
               <option value="dark">深色</option>
               <option value="light" selected>浅色</option>
             </select>
+          </div>
+          <div class="form-group setting-sounds">
+            <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
+            <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
           <div class="form-group setting-update">
             <label>软件更新</label>

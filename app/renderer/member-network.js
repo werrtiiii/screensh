@@ -1,19 +1,39 @@
 import { state, $ } from './shared.js';
 import { socket } from './signaling.js';
+import { toast } from './toast.js';
 
 export function initMemberNetwork() {
   const dialog = $('#memberNetworkDialog'), body = $('#memberNetworkRows'), button = $('#btnMemberNetwork');
   let generation = 0, timer;
+  const rows = new Map();
   const open = () => !dialog.classList.contains('hidden');
   function close() { generation++; clearTimeout(timer); dialog.classList.add('hidden'); button.setAttribute('aria-expanded', 'false'); }
   async function refresh(token) {
     if (!open() || token !== generation || !state.roomId) return close();
     const room = state.roomId;
     const members = state.serverUsers.filter(user => user.socketId !== socket?.id);
-    body.replaceChildren();
-    const jobs = members.map(user => {
-      const row = document.createElement('tr'), name = document.createElement('td'), ip = document.createElement('td'), delay = document.createElement('td');
-      name.textContent = user.name; ip.textContent = user.virtualIp || '—'; delay.textContent = '检测中…'; row.append(name, ip, delay); body.append(row);
+    const present = new Set(members.map(user => user.socketId));
+    for (const [id, item] of rows) if (!present.has(id)) { item.row.remove(); rows.delete(id); }
+    const jobs = members.map((user, index) => {
+      let item = rows.get(user.socketId);
+      if (!item) {
+        const row = document.createElement('tr'), name = document.createElement('td'), ipCell = document.createElement('td'), ip = document.createElement('span'), delay = document.createElement('td');
+        ip.className = 'member-virtual-ip'; ipCell.append(ip); row.append(name, ipCell, delay);
+        item = { row, name, ip, delay }; rows.set(user.socketId, item);
+      }
+      const { row, name, ip, delay } = item;
+      if (name.textContent !== user.name) name.textContent = user.name;
+      if (ip.textContent !== (user.virtualIp || '—')) ip.textContent = user.virtualIp || '—';
+      ip.title = user.virtualIp ? '点击复制虚拟 IP，可拖动选取' : '';
+      ip.onclick = user.virtualIp ? async () => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && (ip.contains(selection.anchorNode) || ip.contains(selection.focusNode))) return;
+        try { await navigator.clipboard.writeText(user.virtualIp); toast('IP 已复制', 'success'); }
+        catch { toast('复制失败，请选中 IP 后手动复制', 'error'); }
+      } : null;
+      delay.textContent = '检测中…';
+      // Keep unchanged IP text nodes intact so periodic Ping refreshes don't clear selection.
+      if (body.children[index] !== row) body.insertBefore(row, body.children[index] || null);
       return { user, delay };
     });
     let index = 0;

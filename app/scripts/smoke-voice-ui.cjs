@@ -44,6 +44,33 @@ app.whenReady().then(async () => {
       assert.equal(stats.length, 1); assert.ok(stats.every(count => count > 0));
     }
     const [host, guest] = windows;
+    const peerCountBeforeEncoding = await run(host,'voicePCs.length');
+    await run(host, `document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:160}));[...document.querySelectorAll('.context-menu button')].find(b=>b.textContent==='语音码率').click()`);
+    assert.equal(await run(host,`document.querySelector('#channelBitrateDialog').classList.contains('hidden')`),false);
+    for(const kbps of [24,32,64,96]) {
+      await run(host,`document.querySelector('#channelBitrateSelect').value='${kbps}';document.querySelector('#channelBitrateForm').requestSubmit()`);
+      for(const win of windows) await wait(win,`voicePCs.filter(pc=>pc.connectionState==='connected').every(pc=>pc.getSenders().filter(s=>s.track?.kind==='audio').every(s=>s.getParameters().encodings[0].maxBitrate===${kbps*1000}))`);
+    }
+    assert.equal(await run(host,'voicePCs.length'),peerCountBeforeEncoding,'bitrate updates do not recreate peers');
+    await run(host,`(async()=>{
+      const ctx=window.musicTestContext=new AudioContext({sampleRate:48000});await ctx.resume();
+      const merger=ctx.createChannelMerger(2),out=ctx.createMediaStreamDestination();
+      [700,1300].forEach((frequency,index)=>{const osc=ctx.createOscillator(),gain=ctx.createGain();osc.frequency.value=frequency;gain.gain.value=.15;osc.connect(gain);gain.connect(merger,0,index);osc.start();});merger.connect(out);
+      window.musicTestMix=await channelVoice.mix(out.stream,1);await channelVoice.accompanimentState(true);
+    })()`);
+    await run(guest,`(async()=>{
+      const ctx=window.stereoTestContext=new AudioContext();await ctx.resume();
+      const stream=document.querySelector('audio').srcObject,source=ctx.createMediaStreamSource(stream),split=ctx.createChannelSplitter(2),silent=ctx.createGain();silent.gain.value=0;source.connect(split);silent.connect(ctx.destination);
+      window.stereoAnalysers=[0,1].map(index=>{const analyser=ctx.createAnalyser();analyser.fftSize=4096;split.connect(analyser,index);analyser.connect(silent);return analyser;});
+      window.stereoLevels=()=>stereoAnalysers.map(a=>{const data=new Float32Array(a.frequencyBinCount);a.getFloatFrequencyData(data);return [700,1300].map(f=>data[Math.round(f*a.fftSize/ctx.sampleRate)]);});
+    })()`);
+    await new Promise(r=>setTimeout(r,1500));
+    await wait(guest,`(()=>{const [l,r]=stereoLevels();return l[0]>l[1]+10&&r[1]>r[0]+10;})()`);
+    console.log('STEREO_LEVELS',await run(guest,'stereoLevels()'));
+    await run(host,`(async()=>{musicTestMix.dispose();await channelVoice.accompanimentState(false);await musicTestContext.close();})()`);
+    await wait(guest,`(()=>{const [l,r]=stereoLevels();return Math.abs(l[0]-r[0])<3&&Math.abs(l[1]-r[1])<3;})()`);
+    await run(guest,`stereoTestContext.close()`);
+    assert.equal(await run(host,'voicePCs.length'),peerCountBeforeEncoding,'starting and stopping stereo does not recreate peers');
     for (const win of windows) assert.equal(await run(win, `(async () => document.querySelector('.user-card').dataset.userId === (await import('./signaling.js')).socket.id)()`), true);
     const guestId = await run(guest, `(async () => (await import('./signaling.js')).socket.id)()`);
     await run(host, `document.querySelector('#btnServerSettings').click(); document.querySelector('#serverNameInput').value='语音测试服务器';document.querySelector('#serverNameForm').requestSubmit()`);

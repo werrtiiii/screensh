@@ -131,6 +131,7 @@ function renderChannels(users) {
   const canManage = ['host', 'admin'].includes(me?.role);
   $('#btnAddChannel').classList.toggle('hidden', !canManage);
   if (!canManage) $('#channelDialog').classList.add('hidden');
+  if (!canManage || !state.channels.some(channel => channel.id === bitrateChannelId)) $('#channelBitrateDialog').classList.add('hidden');
   const list = $('#channelList'); list.innerHTML = '';
   for (const channel of state.channels) {
     const section = document.createElement('div');
@@ -143,6 +144,7 @@ function renderChannels(users) {
     button.oncontextmenu = event => showContextMenu(event, canManage ? [
       { label: '重命名', run: () => { const current = state.channels.find(item => item.id === channel.id); if (current) openChannelDialog(current, 'rename'); } },
       { label: '设置图标', run: () => openChannelDialog(state.channels.find(item => item.id === channel.id)) },
+      { label: '语音码率', run: () => openChannelBitrate(channel.id) },
       ...(channel.id === 'main' ? [] : [{ label: '删除', run: () => perform('delete-channel', { channelId: channel.id }) }]),
     ] : []);
     section.append(button);
@@ -180,6 +182,28 @@ export async function switchChannel(channelId) {
 async function perform(event, payload) {
   try { await requestServer(event, payload); } catch (error) { toast(error.message, 'error'); }
 }
+let bitrateChannelId = null;
+function openChannelBitrate(channelId) {
+  const channel = state.channels.find(item => item.id === channelId);
+  if (!channel) return;
+  bitrateChannelId = channelId;
+  $('#channelBitrateName').textContent = channel.name;
+  $('#channelBitrateSelect').value = String(channel.voiceBitrate || 32);
+  $('#channelBitrateError').textContent = '';
+  $('#channelBitrateDialog').classList.remove('hidden');
+  $('#channelBitrateSelect').focus();
+}
+$('#btnCloseChannelBitrate').onclick = () => $('#channelBitrateDialog').classList.add('hidden');
+$('#channelBitrateForm').onsubmit = async event => {
+  event.preventDefault();
+  const channelId = bitrateChannelId;
+  $('#btnSaveChannelBitrate').disabled = true;
+  try {
+    await requestServer('set-channel-voice-bitrate', { channelId, bitrate: Number($('#channelBitrateSelect').value) });
+    $('#channelBitrateDialog').classList.add('hidden');
+  } catch (error) { $('#channelBitrateError').textContent = error.message; }
+  finally { $('#btnSaveChannelBitrate').disabled = false; }
+};
 $('#btnServerSettings').addEventListener('click', () => {
   if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
   $('#serverNameInput').value = state.serverName || '0091 Server';
@@ -293,7 +317,7 @@ export function enterRoom(roomId) {
 export async function leaveRoom() {
   if (state.leaving) return;
   state.leaving = true;
-  closeContextMenu(); $('#channelDialog').classList.add('hidden');
+  closeContextMenu(); $('#channelDialog').classList.add('hidden'); $('#channelBitrateDialog').classList.add('hidden');
   $('#serverSettingsDialog').classList.add('hidden');
   $('#serverPeersDialog').classList.add('hidden');
   $('#btnLeave').disabled = true;

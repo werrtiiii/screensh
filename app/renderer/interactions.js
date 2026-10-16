@@ -2,6 +2,7 @@ import { state } from './shared.js';
 import { socket, roomUsers, requestServer } from './signaling.js';
 import { toast } from './toast.js';
 import { interactions, interactionById } from './interaction-catalog.mjs';
+import { trackSound } from './sound-volume.mjs';
 
 const active = new Map();
 let popup = null, anchor = null, pickerTarget = null, cooldownUntil = 0, sending = false;
@@ -17,13 +18,14 @@ function positionPicker() {
 function stopSound() {
   audioGeneration++;
   if (!playing) return;
-  const { audio, timer } = playing; playing = null;
+  const { audio, timer, releaseVolume } = playing; playing = null;
+  releaseVolume();
   clearTimeout(timer); audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load();
 }
 async function playSound(url) {
   stopSound(); const token = audioGeneration;
-  const audio = new Audio(url); audio.volume = 0.6;
-  const current = { audio, timer: null }; playing = current;
+  const audio = new Audio(url);
+  const current = { audio, timer: null, releaseVolume: trackSound(audio) }; playing = current;
   const finish = () => { if (playing === current) stopSound(); };
   audio.onended = audio.onerror = finish;
   current.timer = setTimeout(finish, 10000);

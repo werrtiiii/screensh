@@ -29,7 +29,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   if (!saved.userProfiles || typeof saved.userProfiles !== 'object' || Array.isArray(saved.userProfiles)) saved.userProfiles = {};
   if (typeof saved.serverName !== 'string' || !saved.serverName.trim()) saved.serverName = '0091 Server';
   if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
-  saved.channels = saved.channels.map(channel => ({ ...channel, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
+  saved.channels = saved.channels.map(channel => ({ ...channel, voiceBitrate: [24, 32, 64, 96].includes(channel.voiceBitrate) ? channel.voiceBitrate : 32, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
   for (const [key, profile] of Object.entries(saved.userProfiles)) {
     if (profile?.avatar && !isImageData(profile.avatar)) profile.avatar = readImageReference(profile.avatar);
     if (!profile?.avatar) delete saved.userProfiles[key];
@@ -293,8 +293,15 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 30 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('频道名称需为1至30个字符');
       if (saved.channels.some(c => c.name === name.trim())) throw new Error('频道名称已存在');
       if (saved.channels.length >= 50) throw new Error('最多创建50个频道');
-      const channel = { id: randomUUID(), name: name.trim(), icon: validateImage(payload?.icon ?? null, '频道图标') };
+      const channel = { id: randomUUID(), name: name.trim(), voiceBitrate: 32, icon: validateImage(payload?.icon ?? null, '频道图标') };
       persist({ ...saved, channels: [...saved.channels, channel] }); publish(); return { channel: { ...channel, icon: imageRef(channel.icon) } };
+    });
+    handle('set-channel-voice-bitrate', payload => {
+      if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以设置频道语音码率');
+      if (!saved.channels.some(channel => channel.id === payload?.channelId)) throw new Error('频道不存在');
+      if (![24, 32, 64, 96].includes(payload?.bitrate)) throw new Error('语音码率只能为24、32、64或96 kbps');
+      persist({ ...saved, channels: saved.channels.map(channel => channel.id === payload.channelId ? { ...channel, voiceBitrate: payload.bitrate } : channel) });
+      publish(); return {};
     });
     handle('rename-channel', payload => {
       if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以修改频道名称');

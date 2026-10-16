@@ -6,6 +6,25 @@ const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('./server');
 const identity = () => randomBytes(32).toString('hex');
 
+test('channel voice bitrate is manager-controlled, validated, isolated and persisted', async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-bitrate-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const stateFile=path.join(dir,'state.json'),f=await fixture(t,{stateFile});
+  const host=await f.client(),admin=await f.client(),member=await f.client();
+  for(const [i,client]of[host,admin,member].entries())await request(client,'join-server',{userName:'Bitrate'+i,virtualIp:'10.144.17.'+(i+1),identity:identity()});
+  await request(host,'set-admin',{socketId:admin.id,enabled:true});
+  const channel=(await request(host,'create-channel',{name:'Music'})).channel;
+  assert.equal(channel.voiceBitrate,32);
+  assert.equal((await request(member,'set-channel-voice-bitrate',{channelId:'main',bitrate:96})).ok,false);
+  for(const bitrate of [0,48,'64',null,96000])assert.equal((await request(host,'set-channel-voice-bitrate',{channelId:'main',bitrate})).ok,false);
+  assert.equal((await request(admin,'set-channel-voice-bitrate',{channelId:'missing',bitrate:64})).ok,false);
+  for(const bitrate of [24,32,64,96])assert.equal((await request(admin,'set-channel-voice-bitrate',{channelId:channel.id,bitrate})).ok,true);
+  const snapshot=await request(host,'switch-channel',{channelId:'main'});
+  assert.equal(snapshot.channels.find(c=>c.id==='main').voiceBitrate,32);
+  assert.equal(snapshot.channels.find(c=>c.id===channel.id).voiceBitrate,96);
+  await f.close();const g=await fixture(t,{stateFile}),reader=await g.client();
+  const restored=await request(reader,'join-server',{userName:'Reader',virtualIp:'10.144.17.4',identity:identity()});
+  assert.equal(restored.channels.find(c=>c.id===channel.id).voiceBitrate,96);
+});
 test('all channels can be renamed by managers, persist names, and main remains undeletable',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-channel-names-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const stateFile=path.join(dir,'state.json'),f=await fixture(t,{stateFile}),host=await f.client(),admin=await f.client(),member=await f.client();
@@ -401,7 +420,7 @@ test('single server: required names, role enforcement, channels and isolation', 
   const owner = identity(), admin = identity();
   const joined = await request(a, 'join-server', { userName: 'A', virtualIp: '10.144.1.1', identity: owner });
   assert.equal(joined.users[0].role, 'host');
-  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道', icon: null }]);
+  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道', icon: null, voiceBitrate: 32 }]);
   assert.equal((await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.1', identity: admin })).ok, false);
   await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.2', identity: admin });
   assert.equal((await request(c, 'join-server', { userName: ' a ', virtualIp: '10.144.1.3', identity: identity() })).ok, false);

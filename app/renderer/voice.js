@@ -3,6 +3,7 @@ import { socket, requestServer } from './signaling.js';
 import { captureMicrophone } from './microphone-capture.mjs';
 import { attachVoiceStats } from './voice-stats.mjs';
 import { toast } from './toast.js';
+import { channelVoiceBitrate, allowOpusStereo, setVoiceBitrate } from './voice-encoding.mjs';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
@@ -16,6 +17,7 @@ let receiveVolume = Math.max(0, Math.min(1, Number(localStorage.getItem('voiceRe
 let generation = 0, context, outgoing, rawStream, micGain, source, localMeter, cleanup, voiceDestination;
 let testGeneration = 0, testBusy = false, testAudio, testStream, testMeter, testCleanup, testOwnsCapture = false;
 let changingMicrophone = false, microphoneDevices = [];
+let accompanimentStereo = false;
 const microphone = () => localStorage.getItem('voiceMicrophone') || 'default';
 // WASAPI endpoint identifiers from the former OBS backend aren't browser IDs.
 if (microphone().startsWith('{')) localStorage.setItem('voiceMicrophone', 'default');
@@ -37,7 +39,7 @@ async function waitForAudioReady(audio) {
 }
 function candidateAllowed(candidate, ip) { return candidate?.split(' ')[4] === ip; }
 function onlyVirtualSDP(description, ip) {
-  return { type: description.type, sdp: description.sdp.split('\r\n').filter(line => !line.startsWith('a=candidate:') || candidateAllowed(line.slice(2), ip)).join('\r\n') };
+  return { type: description.type, sdp: allowOpusStereo(description.sdp.split('\r\n').filter(line => !line.startsWith('a=candidate:') || candidateAllowed(line.slice(2), ip)).join('\r\n')) };
 }
 function speaking(id, active) {
   levels.set(id, active);
@@ -183,9 +185,22 @@ function schedulePeerRetry(user) {
     else void signal(user.socketId, { restart: true }).catch(announce);
   }, Math.min(5000, 500 * 2 ** count)));
 }
+async function applyPeerBitrate(peer) {
+  if (peer.pc.signalingState !== 'stable' || !peer.pc.remoteDescription) return;
+  if (peer.bitratePending) return peer.bitratePending;
+  peer.bitratePending = (async () => {
+    while (peer.pc.signalingState === 'stable' && peers.size && [...peers.values()].includes(peer)) {
+      const bitrate = channelVoiceBitrate(state.channels, state.channelId);
+      if (peer.appliedBitrate === bitrate) return;
+      await setVoiceBitrate(peer.pc, bitrate);
+      peer.appliedBitrate = bitrate;
+    }
+  })().finally(() => { peer.bitratePending = null; });
+  return peer.bitratePending;
+}
 async function offer(user) {
   const peer = ensurePeer(user);
-  try { await peer.pc.setLocalDescription(await peer.pc.createOffer()); await signal(user.socketId, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) }); }
+  try { const description = await peer.pc.createOffer(); description.sdp = allowOpusStereo(description.sdp); await peer.pc.setLocalDescription(description); await signal(user.socketId, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) }); }
   catch (error) { if (peers.get(user.socketId) === peer) { closePeer(user.socketId); announce(error); schedulePeerRetry(user); } }
 }
 export function receiveVoice({ from, data }) {
@@ -199,9 +214,11 @@ export function receiveVoice({ from, data }) {
       await peer.pc.setRemoteDescription(onlyVirtualSDP(data.description, user.virtualIp));
       for (const candidate of peer.queued.splice(0)) await peer.pc.addIceCandidate(candidate);
       if (data.description.type === 'offer') {
-        await peer.pc.setLocalDescription(await peer.pc.createAnswer());
+        const description = await peer.pc.createAnswer(); description.sdp = allowOpusStereo(description.sdp);
+        await peer.pc.setLocalDescription(description);
         await signal(from, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) });
       }
+      await applyPeerBitrate(peer);
     } else if (data.candidate && candidateAllowed(data.candidate.candidate, user.virtualIp)) {
       if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(data.candidate); else peer.queued.push(data.candidate);
     }
@@ -210,6 +227,7 @@ export function receiveVoice({ from, data }) {
 export function syncVoice() {
   if ((voice.enabled || voice.busy) && voice.channel && (voice.channel !== state.channelId || !state.roomId)) { void stopVoice().then(syncVoice); return; }
   applyMute();
+  for (const peer of peers.values()) void applyPeerBitrate(peer).catch(error => { if ([...peers.values()].includes(peer)) announce(error); });
   for (const user of state.serverUsers) if (user.socketId !== socket?.id && user.channelId === state.channelId && typeof user.voiceSpeaking === 'boolean') speaking(user.socketId, !!user.voiceEnabled && !user.voiceMuted && user.voiceSpeaking);
   if (voice.enabled && outgoing) {
     const users = state.serverUsers.filter(u => u.socketId !== socket?.id && u.channelId === state.channelId && u.voiceEnabled);
@@ -234,7 +252,7 @@ async function capture() {
   } catch (error) { stream?.getTracks().forEach(track => track.stop()); throw error; }
   finally { if (captureController === controller) captureController = null; }
   rawStream = stream; source = context.createMediaStreamSource(stream); micGain = context.createGain();
-  const destination = voiceDestination ||= context.createMediaStreamDestination(); source.connect(micGain); micGain.connect(destination); outgoing = destination.stream;
+  const destination = voiceDestination ||= context.createMediaStreamDestination(); destination.channelCount = accompanimentStereo ? 2 : 1; source.connect(micGain); micGain.connect(destination); outgoing = destination.stream;
   localMeter?.();
   localMeter = meter(outgoing, socket?.id, () => (!voice.muted || window.channelAccompaniment?.active()) && !state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted);
   applyMute(); return outgoing;
@@ -459,6 +477,8 @@ export async function refreshVoiceDevices() {
 export function initVoice() {
   attachVoiceStats($('#voiceDiagnostics'), { getPeers: () => [...peers].map(([id, peer]) => ({ id, name: state.serverUsers.find(u => u.socketId === id)?.name || '成员', pc: peer.pc })), getCapture: () => ({ track: rawStream?.getAudioTracks()[0], context, enabled: voice.enabled }) });
   window.channelVoice = { accompanimentState: async active => {
+    accompanimentStereo = !!active;
+    if (voiceDestination) voiceDestination.channelCount = active ? 2 : 1;
     if (voice.enabled && socket?.connected) {
       await requestServer('set-voice-state', { enabled: true, muted: voice.muted, deafened: voice.deafened, accompaniment: active });
       announcedSpeaking = null;

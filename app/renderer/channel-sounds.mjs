@@ -1,4 +1,5 @@
 import { ChannelSoundTracker } from './channel-sound-tracker.mjs';
+import { trackSound } from './sound-volume.mjs';
 const tracker = new ChannelSoundTracker();
 const sources = Object.fromEntries(['enter_voice', 'exit_voice', 'person_enter_voice', 'person_exit_voice'].map(name => [name, new URL(`./assets/sounds/${name}.wav`, import.meta.url).href]));
 let queue = Promise.resolve(), epoch = 0, pending = 0, finishCurrent;
@@ -11,7 +12,7 @@ function play({ sounds, replace }) {
     queue = queue.then(async () => {
       if (token !== epoch) return;
       pending--;
-      const audio = new Audio(sources[name]); audio.volume = 0.6;
+      const audio = new Audio(sources[name]); const releaseVolume = trackSound(audio);
       try {
         if (audio.setSinkId) {
           const device = localStorage.getItem('voiceSpeaker') || 'default';
@@ -30,6 +31,7 @@ function play({ sounds, replace }) {
           timer = setTimeout(finish, 5000); audio.play().catch(finish);
         });
       } catch (error) { console.warn('[Channel sound]', error.message); }
+      finally { releaseVolume(); }
     }).catch(error => console.warn('[Channel sound]', error.message));
   }
 }
