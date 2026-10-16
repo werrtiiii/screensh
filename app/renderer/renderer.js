@@ -14,11 +14,17 @@ import { showContextMenu } from './context-menu.js';
 import { initVoice } from './voice.js';
 import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
+import { initMemberNetwork } from './member-network.js';
 
 const initialAvatar = state.userAvatar;
+initMemberNetwork();
 const avatarReady = readCachedImage('avatar').then(avatar => {
   if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
 }).catch(error => console.error('Avatar cache:', error));
+
+document.addEventListener('dragstart', event => {
+  if (event.target instanceof Element && event.target.closest('img,svg,.channel-icon,.profile-avatar,.server-icon,.bookmark-icon,.member-avatar,.avatar')) event.preventDefault();
+});
 
 // --- 初始化主题---
 function initTheme() {
@@ -61,7 +67,7 @@ async function joinServer() {
     const connection = connectServer();
     await new Promise((resolve, reject) => {
       const finish = error => { clearTimeout(timer); connection.off('connect', ready); connection.off('connect_error', failed); error ? reject(error) : resolve(); };
-      const ready = () => finish(), failed = error => finish(new Error(error.message || '连接失败'));
+      const ready = () => finish(), failed = () => finish(new Error('无法连接到服务器，请检查服务器地址、网络连接及服务器是否已启动'));
       const timer = setTimeout(() => finish(new Error('连接服务器超时')), 12000);
       connection.once('connect', ready); connection.once('connect_error', failed);
       if (connection.connected) ready();
@@ -137,9 +143,6 @@ for (const id of ['btnAvatar', 'btnRoomAvatar']) $('#' + id).addEventListener('c
   { label: '更换头像', run: () => $('#avatarInput').click() },
   { label: '恢复默认头像', disabled: !state.userAvatar || avatarBusy, run: resetAvatar },
 ]));
-for (const id of ['btnAvatar', 'btnRoomAvatar']) $('#' + id)?.addEventListener('keydown', event => {
-  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('#avatarInput')?.click(); }
-});
 $('#avatarInput')?.addEventListener('change', event => { void chooseAvatar(event.target.files?.[0]); event.target.value = ''; });
 applyAvatarImage(state.userAvatar);
 $('#btnServerIcon')?.addEventListener('click', () => $('#serverIconInput').click());
@@ -182,13 +185,22 @@ for (const [id, close] of [['screenPicker', 'btnCancelPicker'], ['channelDialog'
   modal.addEventListener('click', event => { if (event.target === modal) $('#' + close).click(); });
   modal.addEventListener('keydown', event => {
     event.stopPropagation();
-    if (event.key === 'Escape') { event.preventDefault(); $('#' + close).click(); }
     if (event.key === 'Tab') {
       const nodes = [...modal.querySelectorAll('button,input')].filter(n => !n.disabled && !n.classList.contains('hidden'));
       if (event.shiftKey && document.activeElement === nodes[0]) { event.preventDefault(); nodes.at(-1)?.focus(); }
       else if (!event.shiftKey && document.activeElement === nodes.at(-1)) { event.preventDefault(); nodes[0]?.focus(); }
     }
   });
+}
+
+// Reopening a settings/dialog page always starts at its first field.
+for (const modal of document.querySelectorAll('.modal')) {
+  let wasOpen = !modal.classList.contains('hidden');
+  new MutationObserver(() => {
+    const open = !modal.classList.contains('hidden');
+    if (open && !wasOpen) { for (const panel of modal.querySelectorAll('.modal-content, .modal-body')) panel.scrollTop = 0; }
+    wasOpen = open;
+  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
 }
 
 // --- 确认开始共享 ---
@@ -245,14 +257,10 @@ window.electronAPI.onRuntimeError(async message => { toast(message, 'error'); aw
 // Only test a server address previously saved by the user.
 if ($('#serverUrl').value) testServerConnection();
 
-// --- 回车键快捷提交 ---
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && settingsModal.classList.contains('hidden')) {
-    if ($('#lobby').classList.contains('active')) {
-      if (e.target.tagName !== 'BUTTON') { e.preventDefault(); $('#btnConnect').click(); }
-    }
-  }
-});
+// Forms are submitted explicitly with their buttons, never by an input's Enter key.
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault();
+}, true);
 
 // --- 窗口关闭前清理 ---
 window.addEventListener('beforeunload', () => {
@@ -292,6 +300,14 @@ function initSettings() {
                      ? parseInt(localStorage.getItem('maxBitrate'))
                      : state.maxBitrate;
   state.shareAudio = localStorage.getItem('shareAudio') === 'true';
+  localStorage.removeItem('lowBandwidth');
+  state.adaptiveResolution = localStorage.getItem('adaptiveResolution') === 'true';
+  $('#adaptiveResolutionCheckbox').checked = state.adaptiveResolution;
+  $('#adaptiveResolutionCheckbox').addEventListener('change', event => {
+    state.adaptiveResolution = event.target.checked;
+    localStorage.setItem('adaptiveResolution', String(state.adaptiveResolution));
+    toast('自动调整分辨率设置已保存，下次开始共享时生效');
+  });
   state.audioBitrate = parseInt(localStorage.getItem('audioBitrate')) || state.audioBitrate;
   if (!['auto', '1920x1080', '1280x720', '854x480'].includes(state.resolution)) state.resolution = '1280x720';
   if (![15, 30, 60].includes(state.frameRate)) state.frameRate = 30;
@@ -458,7 +474,6 @@ $$('.help-tip').forEach(tip => {
   tip.setAttribute('aria-label', tip.dataset.tooltip);
   tip.addEventListener('click', event => { event.preventDefault(); tip.focus(); });
   tip.addEventListener('keydown', event => {
-    if (event.key === 'Escape') tip.blur();
     if (event.key === 'Enter' || event.key === ' ') event.preventDefault();
   });
 });

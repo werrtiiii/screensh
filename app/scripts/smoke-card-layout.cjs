@@ -21,6 +21,9 @@ app.whenReady().then(async () => {
       assert.equal(await run(`document.querySelector('.room-sidebar').getBoundingClientRect().width`),238);
       assert.equal(await run(`getComputedStyle(document.querySelector('#mainContent')).paddingLeft`),'12px');
       assert.equal(await run(`getComputedStyle(document.querySelector('.cards-grid')).gap`),'16px');
+      const footerOffsets=await run(`[...document.querySelectorAll('.user-card')].map(card=>card.getBoundingClientRect().bottom-card.querySelector('.card-voice-row,.remote-card-actions').getBoundingClientRect().bottom)`);
+      assert.ok(footerOffsets.every(value=>Math.abs(value-footerOffsets[0])<1),'own and remote controls share the same bottom inset');
+      assert.ok(footerOffsets[0]<8,'controls sit closer to the bottom edge');
       if(width===960) {assert.equal(result.cards.filter(c=>Math.abs(c.top-result.cards[0].top)<1).length,2);assert.ok(result.cards[2].top>result.cards[0].top);assert.ok(Math.abs((result.cards[0].left-result.viewport.left)-(result.viewport.right-result.cards[1].right))<1,'minimum layout has equal left and right padding');win.show();await new Promise(r=>setTimeout(r,100));fs.writeFileSync(path.join(root,'.runtime-probe','cards-minimum.png'),(await win.webContents.capturePage()).toPNG());}
       measurements.push({window:[result.width,result.height],card:[result.cards[0].width,result.cards[0].height]});
     }

@@ -45,6 +45,8 @@ function failure(message) {
 const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./peer-test').createPeerTester(resource('easytier-core.exe'));
+const memberPinger = require('./member-ping.cjs').createMemberPinger();
+ipcMain.handle('ping-member', (_event, ip) => memberPinger.ping(ip));
 ipcMain.handle('get-hardware-acceleration', () => hardwareAccelerationEnabled);
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
   if (typeof enabled !== 'boolean') throw new Error('无效的硬件加速设置');
@@ -115,18 +117,22 @@ ipcMain.handle('accompaniment-stop', () => Promise.all([accompanimentRuntime?.st
 app.commandLine?.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 function createWindow() {
+  Menu.setApplicationMenu(null);
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
   mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   trayController?.attach(mainWindow);
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if ((input.control && input.shift && input.key.toLowerCase() === 'i') || input.key.toLowerCase() === 'f12') {
-      mainWindow.webContents.toggleDevTools(); event.preventDefault();
-    }
+    const key = input.key.toLowerCase();
+    const modifier = input.control || input.meta;
+    if (['f5', 'f11', 'f12'].includes(key) ||
+        (modifier && ['r', '+', '-', '=', '0'].includes(key)) ||
+        (modifier && input.shift && ['i', 'j', 'c'].includes(key)) ||
+        (input.alt && ['left', 'right'].includes(key))) event.preventDefault();
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
+  if (!app.isPackaged && process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
 }
 
 ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {

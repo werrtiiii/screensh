@@ -110,7 +110,7 @@ async function showMenu(trigger) {
   const slider = document.createElement('input'); slider.type = 'range'; slider.min = 0; slider.max = 100; slider.value = String(volume * 100); slider.setAttribute('aria-label', '伴奏音量');
   slider.oninput = () => { volume = Number(slider.value) / 100; localStorage.setItem('accompanimentVolume', String(volume)); mix?.volume(volume); }; label.append(slider); menu.append(label);
   if (selected) {
-    const end = document.createElement('button'); end.type = 'button'; end.className = 'accompaniment-source accompaniment-stop'; end.textContent = '停止伴奏'; end.onclick = () => { closeMenu(); void stop().then(() => window.channelVoice?.stopIfIdle()); }; menu.append(end);
+    const end = document.createElement('button'); end.type = 'button'; end.className = 'accompaniment-source accompaniment-stop'; end.textContent = '停止伴奏'; end.onclick = () => { closeMenu(); void stop(); }; menu.append(end);
   }
   document.body.append(menu);
   positionMenu(); paint();
@@ -132,7 +132,6 @@ export function initAccompaniment() {
   window.channelAccompaniment = { decorate, stop, active: () => !!selected || busy };
   document.addEventListener('pointerdown', event => { if (menu && !menu.contains(event.target) && !event.target.closest('.accompaniment-trigger')) closeMenu(); });
   window.addEventListener('resize', positionMenu);
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenu(); });
   window.electronAPI.onAccompanimentPCM(message => { if (pcmSource && message.session === pcmSession) pcmSource.feed(message.data); });
   window.electronAPI.onAccompanimentError(message => { toast(message, 'error'); void stop(); });
 }

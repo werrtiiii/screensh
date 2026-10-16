@@ -1,22 +1,21 @@
-// Real OBS capture through the production renderer and its visible level meter.
+// Production browser capture and visible level meter. Optional Chromium test input.
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { VoiceRuntime } = require('../voice-runtime.cjs');
 const root = path.resolve(__dirname, '..');
 app.disableHardwareAcceleration();
+if (process.env.SCREENSH_FAKE_MIC === '1') {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+}
 app.setPath('userData', path.join(root, '.runtime-probe', `mic-meter-${process.pid}`));
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
-  const runtime = new VoiceRuntime(path.join(app.getPath('userData'), 'obs'), path.join(root, 'res/mediamtx.exe'), path.join(root, 'mediamtx.yml'), console.error);
-  ipcMain.handle('voice-devices', () => runtime.devices());
-  ipcMain.handle('voice-start', (_, id) => runtime.start(id));
-  ipcMain.handle('voice-stop', () => runtime.stop());
+  for (const name of ['voice-devices','voice-start','voice-stop']) ipcMain.handle(name, () => { throw Error('Microphone capture must not start OBS'); });
   ipcMain.handle('get-hardware-acceleration', () => false);
   let win;
   const timeout = setTimeout(() => app.exit(1), 90000);
   try {
-    console.log('MIC_DEVICES', JSON.stringify(await runtime.devices()));
     win = new BrowserWindow({ show: true, webPreferences: { backgroundThrottling: false, preload: path.join(root, 'preload.js') } });
     // Do not feed automated monitoring back into an open microphone.
     win.webContents.setAudioMuted(true);
@@ -59,5 +58,5 @@ app.whenReady().then(async () => {
       if (document.querySelector('audio[data-microphone-test]') || Number(document.querySelector('#microphoneLevel').value) !== 0) throw new Error('停止测试后播放器或音量条未清理');
     })()`);
   } catch (e) { console.error(e); process.exitCode = 1; }
-  finally { win?.destroy(); await runtime.stop(); clearTimeout(timeout); app.exit(process.exitCode || 0); }
+  finally { win?.destroy(); clearTimeout(timeout); app.exit(process.exitCode || 0); }
 });

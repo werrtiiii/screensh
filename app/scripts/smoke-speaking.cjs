@@ -23,7 +23,6 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(root, 'renderer/index.html'));
     const checking = win.webContents.executeJavaScript(`(async () => {
       await import('./renderer.js');
-      const { WhepSession } = await import('./whep.mjs');
       window.testContext = new AudioContext(); await testContext.resume();
       window.testGain = testContext.createGain(); testGain.gain.value = 0.1;
       const oscillator = testContext.createOscillator(), output = testContext.createMediaStreamDestination();
@@ -38,7 +37,7 @@ app.whenReady().then(async () => {
       await testReceiver.setLocalDescription(await testReceiver.createAnswer());
       await testSender.setRemoteDescription(testReceiver.localDescription);
       const track = await received;
-      WhepSession.prototype.start = async function () { this.pc.ontrack({ track }); };
+      navigator.mediaDevices.getUserMedia=async()=>output.stream.clone();
       localStorage.setItem('voiceMuted', 'false'); localStorage.setItem('voiceDeafened', 'false');
       document.querySelector('#serverUrl').value = 'http://127.0.0.1:${server.address().port}';
       document.querySelector('#userName').value = '发言动效测试';

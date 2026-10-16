@@ -1,0 +1,94 @@
+const {app,BrowserWindow,ipcMain,nativeImage}=require('electron');
+const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
+const {createSignalingServer}=require('../../server/server');
+const {io:connect}=require('../../server/node_modules/socket.io-client');
+const root=path.resolve(__dirname,'..');app.disableHardwareAcceleration();app.setPath('userData',path.join(root,'.runtime-probe','channel-ui-'+process.pid));app.on('window-all-closed',()=>{});
+ipcMain.handle('get-hardware-acceleration',()=>false);
+let pingCalls=0;
+ipcMain.handle('ping-member',(_event,ip)=>{pingCalls++;return {ip,rttMs:ip.endsWith('.2')?32:null}});
+app.whenReady().then(async()=>{
+ const {server,io}=createSignalingServer({initialPeers:'test.example:11010'});let win;const clients=[];
+ try{
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  win=new BrowserWindow({show:false,frame:false,width:960,height:640,webPreferences:{preload:path.join(root,'preload.js'),backgroundThrottling:false}});
+  const run=code=>win.webContents.executeJavaScript(code,true);
+  const wait=async code=>{for(let i=0;i<100;i++){if(await run(code))return;await new Promise(r=>setTimeout(r,30));}throw Error('Timeout: '+code)};
+  await win.loadFile(path.join(root,'renderer/index.html'));
+  await run(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{};const s=await import('./signaling.js');const {state}=await import('./shared.js');document.querySelector('#serverUrl').value='http://127.0.0.1:${server.address().port}';const connection=s.connectServer();await new Promise(r=>connection.once('connect',r));const joined=await s.requestServer('join-server',{userName:'Owner',virtualIp:'10.144.11.1',identity:'${'a'.repeat(64)}',easytierPeers:['tcp://test.example:11010']});state.roomId=joined.serverId;document.querySelector('#lobby').classList.remove('active');document.querySelector('#room').classList.add('active');s.applyServerState(joined)})()`);
+  assert.equal(await run(`document.querySelectorAll('.server-dot,#userCount,.user-channel').length`),0);
+  assert.equal(await run(`document.querySelector('.member-role').textContent`),'服主');
+  assert.equal(await run(`!!document.querySelector('.member-role svg') && !!document.querySelector('.channel-default svg path') && getComputedStyle(document.querySelector('.channel-icon')).backgroundColor==='rgb(255, 255, 255)' && !document.querySelector('.room-label')`),true);
+  await run(`document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
+  assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),2,'main channel offers rename and icon settings');
+  assert.equal(await run(`document.querySelector('.context-menu').textContent.includes('删除')`),false);
+  await run(`[...document.querySelectorAll('.context-menu button')].find(b=>b.textContent==='重命名').click();document.querySelector('#channelNameInput').value='新的主频道';document.querySelector('#createChannelForm').requestSubmit()`);
+  await wait(`document.querySelector('.channel-name').textContent==='新的主频道' && document.querySelector('#channelNameDisplay').textContent==='新的主频道' && document.querySelector('#channelDialog').classList.contains('hidden')`);
+  await run(`document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
+  assert.equal(await run(`document.querySelector('.context-menu').textContent.includes('删除')`),false,'renaming main does not allow deleting it');
+  await run(`(async()=>{(await import('./context-menu.js')).closeContextMenu()})()`);
+  assert.ok(await run(`parseFloat(getComputedStyle(document.querySelector('.channel-button')).borderTopWidth)>0`));
+  const icon=nativeImage.createFromBitmap(Buffer.from([90,180,220,255]),{width:1,height:1}).toDataURL();
+  const choose=async()=>{await run(`(()=>{const bytes=Uint8Array.from(atob('${icon.split(',')[1]}'),c=>c.charCodeAt(0));const transfer=new DataTransfer();transfer.items.add(new File([bytes],'channel.png',{type:'image/png'}));const input=document.querySelector('#channelIconInput');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);await wait(`document.querySelector('#channelIconPreview img')?.src === '${icon}' && !document.querySelector('#btnCreateChannel').disabled`)};
+  await run(`document.querySelector('#btnAddChannel').click();document.querySelector('#channelNameInput').value='图标频道'`);await choose();
+  await run(`document.querySelector('#createChannelForm').requestSubmit()`);
+  await wait(`document.querySelectorAll('.channel-button').length===2 && document.querySelectorAll('.channel-button')[1].querySelector('img')?.src === '${icon}'`);
+  assert.equal(await run(`document.querySelectorAll('.channel-button')[1].querySelector('.channel-name').textContent`),'图标频道');
+  assert.equal(await run(`(()=>{const event=new DragEvent('dragstart',{bubbles:true,cancelable:true});document.querySelector('.channel-icon img').dispatchEvent(event);return event.defaultPrevented;})()`),true);
+  win.show();await new Promise(r=>setTimeout(r,300));
+  fs.writeFileSync(path.join(root,'.runtime-probe','channel-icons-roles.png'),(await win.webContents.capturePage()).toPNG());
+  await run(`document.querySelectorAll('.channel-button')[1].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}));[...document.querySelectorAll('.context-menu button')].find(b=>b.textContent==='设置图标').click()`);
+  await run(`document.querySelector('#btnResetChannelIcon').click();document.querySelector('#createChannelForm').requestSubmit()`);
+  await wait(`!document.querySelectorAll('.channel-button')[1].querySelector('img') && document.querySelector('#channelDialog').classList.contains('hidden')`);
+  const request=(client,event,payload)=>new Promise(resolve=>client.emit(event,payload,resolve));
+  for(let i=0;i<2;i++){
+   const client=connect('http://127.0.0.1:'+server.address().port,{transports:['websocket'],reconnection:false});clients.push(client);
+   await new Promise(r=>client.once('connect',r));
+   assert.equal((await request(client,'join-server',{userName:['First','Second'][i],identity:String(i+1).repeat(64),virtualIp:'10.144.11.'+(i+2),avatar:i===0?icon:undefined,easytierPeers:['tcp://test.example:11010']})).ok,true);
+  }
+  const mainNames=`[...document.querySelectorAll('.channel-section[data-channel-id="main"] .channel-member-name')].map(n=>n.textContent)`;
+  await wait(`JSON.stringify(${mainNames})==='["Owner","First","Second"]'`);
+  assert.equal(await run(`!!document.querySelector('.channel-members img')`),true,'member custom avatar is displayed');
+  const other=await run(`(async()=>{const {state}=await import('./shared.js');return state.channels[1].id})()`);
+  await request(clients[0],'switch-channel',{channelId:other});
+  await wait(`document.querySelectorAll('.channel-section')[1].querySelector('.channel-member-name')?.textContent==='First'`);
+  await run(`document.querySelector('#btnMemberNetwork').click()`);
+  assert.equal(await run(`!!document.querySelector('#memberNetworkDialog #voiceDiagnostics') && !document.querySelector('#settingsModal #voiceDiagnostics')`),true,'voice diagnostics are below the member network table');
+  await wait(`document.querySelectorAll('#memberNetworkRows tr').length===2 && document.querySelector('#memberNetworkRows').textContent.includes('32 ms')`);
+  assert.equal(await run(`document.querySelector('#memberNetworkRows').textContent.includes('未响应') && !document.querySelector('#memberNetworkRows').textContent.includes('Owner')`),true,'network panel includes other channels and excludes self');
+  assert.equal(pingCalls,2);
+  const position=await run(`(()=>{const b=document.querySelector('#btnMemberNetwork').getBoundingClientRect(),area=document.querySelector('#mainContent').getBoundingClientRect();return {inside:b.left>=area.left&&b.right<=area.right&&b.top>=area.top&&b.bottom<=area.bottom,right:area.right-b.right,bottom:area.bottom-b.bottom}})()`);
+  assert.equal(position.inside,true);assert.ok(position.right<20&&position.bottom<20,'button is at the bottom right of the card area');
+  await new Promise(resolve=>setTimeout(resolve,150));
+  fs.writeFileSync(path.join(root,'.runtime-probe','member-network.png'),(await win.webContents.capturePage()).toPNG());
+  await run(`document.querySelector('#btnCloseMemberNetwork').click()`);
+  assert.equal(await run(`document.querySelector('#memberNetworkDialog').classList.contains('hidden')`),true);
+  await request(clients[0],'switch-channel',{channelId:'main'});
+  await wait(`JSON.stringify(${mainNames})==='["Owner","Second","First"]'`);
+  await run(`document.querySelector('.channel-member.me').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:160}))`);
+  assert.equal(await run(`!!document.querySelector('.context-menu')`),false,'no empty menu for self');
+  await run(`document.querySelectorAll('.channel-members .channel-member')[1].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200}))`);
+  assert.deepEqual(await run(`[...document.querySelectorAll('.context-menu button')].map(n=>n.textContent)`),['设为管理员','踢出服务器','禁言']);
+  await run(`[...document.querySelectorAll('.context-menu button')].find(n=>n.textContent==='设为管理员').click()`);
+  await wait(`[...document.querySelectorAll('#userList li')].some(n=>n.querySelector('.member-name').textContent==='Second' && n.querySelector('.member-role').textContent==='管理员')`);
+  assert.deepEqual(await run(mainNames),['Owner','Second','First'],'role changes do not reorder channel members');
+  fs.writeFileSync(path.join(root,'.runtime-probe','channel-member-list.png'),(await win.webContents.capturePage()).toPNG());
+  await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');updateUserList(state.serverUsers.map(u=>({...u,role:'member'})));document.querySelectorAll('.channel-member')[1].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200}));})()`);
+  assert.equal(await run(`!!document.querySelector('.context-menu')`),false,'ordinary members do not see an empty menu');
+  const overflow=await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const me=state.serverUsers[0];updateUserList([me,...Array.from({length:60},(_,i)=>({...me,socketId:'extra-'+i,name:'Member '+i,role:'member',channelJoinedOrder:i+100}))]);const list=document.querySelector('#channelList');list.scrollTop=list.scrollHeight;const last=list.querySelector('.channel-member:last-child').getBoundingClientRect(),bounds=list.getBoundingClientRect(),profile=document.querySelector('#room .profile-bar').getBoundingClientRect();const result={scrolls:list.scrollHeight>list.clientHeight,lastVisible:last.bottom<=bounds.bottom+1,aboveProfile:bounds.bottom<=profile.top};updateUserList(state.serverUsers);return result;})()`);
+  assert.deepEqual(overflow,{scrolls:true,lastVisible:true,aboveProfile:true},'long member lists scroll without covering profile controls: '+JSON.stringify(overflow));
+  // Modal bounds and bottom controls remain reachable at minimum window size.
+  for(const id of ['settingsModal','serverSettingsDialog','serverPeersDialog','bookmarkEditDialog','channelDialog','screenPicker','memberNetworkDialog']){
+   await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));document.querySelector('#${id}').classList.remove('hidden');document.querySelectorAll('#${id} .form-group').forEach(n=>n.style.display='')`);
+   const check=await run(`(()=>{const panel=document.querySelector('#${id} .modal-content'),scroll=panel.querySelector('.modal-body')||panel;scroll.scrollTop=scroll.scrollHeight;const r=panel.getBoundingClientRect(),header=panel.querySelector('.modal-header').getBoundingClientRect();return {top:r.top,bottom:r.bottom,viewport:innerHeight,headerTop:header.top,headerBottom:header.bottom,reachable:scroll.scrollTop+scroll.clientHeight>=scroll.scrollHeight-1}})()`);
+   assert.ok(check.top>=38 && check.bottom<=check.viewport,id+' panel is within viewport');assert.ok(check.headerTop>=check.top && check.headerBottom<=check.bottom,id+' close header stays visible');assert.equal(check.reachable,true);
+  }
+  await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'))`);
+  await run(`document.querySelector('#btnRoomSettingsToolbar').click()`);
+  assert.equal(await run(`document.querySelector('#settingsModal .modal-content').scrollTop`),0,'reopening settings restores first field');
+  win.show();await new Promise(r=>setTimeout(r,500));
+  fs.writeFileSync(path.join(root,'.runtime-probe','share-settings-minimum.png'),(await win.webContents.capturePage()).toPNG());
+  console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true}));
+ }catch(error){console.error(error.stack);process.exitCode=1;}
+ finally{clients.forEach(client=>client.disconnect());win?.destroy();await new Promise(r=>io.close(r));app.exit(process.exitCode||0)}
+});
+

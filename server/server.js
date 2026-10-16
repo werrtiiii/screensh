@@ -29,6 +29,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   if (!saved.userProfiles || typeof saved.userProfiles !== 'object' || Array.isArray(saved.userProfiles)) saved.userProfiles = {};
   if (typeof saved.serverName !== 'string' || !saved.serverName.trim()) saved.serverName = '0091 Server';
   if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
+  saved.channels = saved.channels.map(channel => ({ ...channel, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
   for (const [key, profile] of Object.entries(saved.userProfiles)) {
     if (profile?.avatar && !isImageData(profile.avatar)) profile.avatar = readImageReference(profile.avatar);
     if (!profile?.avatar) delete saved.userProfiles[key];
@@ -57,7 +58,11 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   function persist(next) {
     if (stateFile) {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-      const stateForDisk = { ...next, serverIcon: null, userProfiles: {} };
+      const stateForDisk = { ...next, serverIcon: null, userProfiles: {}, channels: next.channels.map(channel => ({ ...channel, icon: null })) };
+      for (const channel of next.channels) if (channel.icon) {
+        const reference = 'media/' + imageRef(channel.icon).slice(6);
+        writeImage(reference, channel.icon); stateForDisk.channels.find(item => item.id === channel.id).icon = reference;
+      }
       if (next.serverIcon) {
         const reference = 'media/' + imageRef(next.serverIcon).slice(6);
         writeImage(reference, next.serverIcon); stateForDisk.serverIcon = reference;
@@ -70,7 +75,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       fs.renameSync(stateFile + '.tmp', stateFile);
     }
     saved = next;
-    const retained = new Set([next.serverIcon, ...Object.values(next.userProfiles || {}).map(p => p.avatar)].filter(Boolean));
+    const retained = new Set([next.serverIcon, ...next.channels.map(channel => channel.icon), ...Object.values(next.userProfiles || {}).map(p => p.avatar)].filter(Boolean));
     for (const [data, ref] of imageIds) if (!retained.has(data)) { imageIds.delete(data); images.delete(ref); }
   }
   // Deployment peers initialize new state; persisted room settings take precedence afterward.
@@ -83,6 +88,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   app.set('trust proxy', trustedProxies);
   const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 3 * 1024 * 1024 });
   const members = new Map();
+  let channelEntrySequence = 0;
   // Keep sound presence slightly longer than the client's five-second retry window.
   // These records never grant media access or count as connected members.
   const disconnectedMembers = new Map();
@@ -126,10 +132,10 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     if ([...members.values()].some(u => nameKey(u.name) === nameKey(name.trim()) && u.key !== key)) throw new Error('名称已被使用，请换一个');
   }
   const role = key => key === saved.owner ? 'host' : saved.admins.includes(key) ? 'admin' : 'member';
-  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, channels: saved.channels, easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
+  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, channels: saved.channels.map(channel => ({ ...channel, icon: imageRef(channel.icon) })), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
     soundMembers: [...members.values(), ...[...disconnectedMembers.values()].map(record => record.user)].map(u => ({ memberId: u.memberId, channelId: u.channelId })),
     users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, name: u.name, virtualIp: u.virtualIp,
-      channelId: u.channelId, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
+      channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
@@ -181,14 +187,15 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         persist({ ...saved, owner: saved.owner || key, userProfiles });
       }
       forgetDisconnected(key);
-      members.set(socket.id, { key, memberId: returning?.memberId || randomUUID(), name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, isSharing: false, voiceEnabled: false, voiceDeafened: !!payload.voiceDeafened, voiceMuted: mutedIdentities.has(key) });
+      const channelJoinedOrder = returning?.channelId === channelId ? returning.channelJoinedOrder : ++channelEntrySequence;
+      members.set(socket.id, { key, memberId: returning?.memberId || randomUUID(), name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, channelJoinedOrder, isSharing: false, voiceEnabled: false, voiceDeafened: !!payload.voiceDeafened, voiceMuted: mutedIdentities.has(key) });
       socket.join('members'); socket.join(group(channelId)); publish();
       return snapshot();
     });
     handle('get-image', payload => {
       requireMember();
       const ref = payload?.ref;
-      const visible = ref && (ref === imageRef(saved.serverIcon) || [...members.values()].some(u => ref === imageRef(saved.userProfiles[u.key]?.avatar)));
+      const visible = ref && (ref === imageRef(saved.serverIcon) || saved.channels.some(channel => ref === imageRef(channel.icon)) || [...members.values()].some(u => ref === imageRef(saved.userProfiles[u.key]?.avatar)));
       if (!visible || !images.has(ref)) throw new Error('图片不可用');
       return { ref, data: images.get(ref) };
     });
@@ -286,8 +293,24 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 30 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('频道名称需为1至30个字符');
       if (saved.channels.some(c => c.name === name.trim())) throw new Error('频道名称已存在');
       if (saved.channels.length >= 50) throw new Error('最多创建50个频道');
-      const channel = { id: randomUUID(), name: name.trim() };
-      persist({ ...saved, channels: [...saved.channels, channel] }); publish(); return { channel };
+      const channel = { id: randomUUID(), name: name.trim(), icon: validateImage(payload?.icon ?? null, '频道图标') };
+      persist({ ...saved, channels: [...saved.channels, channel] }); publish(); return { channel: { ...channel, icon: imageRef(channel.icon) } };
+    });
+    handle('rename-channel', payload => {
+      if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以修改频道名称');
+      if (!saved.channels.some(channel => channel.id === payload?.channelId)) throw new Error('频道不存在');
+      const name = payload?.name;
+      if (typeof name !== 'string' || !name.trim() || name.trim().length > 30 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('频道名称需为1至30个字符');
+      if (saved.channels.some(channel => channel.id !== payload.channelId && channel.name === name.trim())) throw new Error('频道名称已存在');
+      persist({ ...saved, channels: saved.channels.map(channel => channel.id === payload.channelId ? { ...channel, name: name.trim() } : channel) });
+      publish(); return {};
+    });
+    handle('set-channel-icon', payload => {
+      if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以设置频道图标');
+      if (!saved.channels.some(channel => channel.id === payload?.channelId)) throw new Error('频道不存在');
+      const icon = validateImage(payload?.icon, '频道图标');
+      persist({ ...saved, channels: saved.channels.map(channel => channel.id === payload.channelId ? { ...channel, icon } : channel) });
+      publish(); return {};
     });
     handle('delete-channel', payload => {
       if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以删除频道');
@@ -295,10 +318,10 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (id === 'main') throw new Error('主频道不能删除');
       if (!saved.channels.some(c => c.id === id)) throw new Error('频道不存在');
       persist({ ...saved, channels: saved.channels.filter(c => c.id !== id) });
-      for (const [sid, member] of members) if (member.channelId === id) {
+      for (const [sid, member] of [...members].filter(([, u]) => u.channelId === id).sort((a, b) => a[1].channelJoinedOrder - b[1].channelJoinedOrder)) {
         const client = io.sockets.sockets.get(sid);
         client?.leave(group(id)); client?.join(group('main'));
-        member.channelId = 'main'; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
+        member.channelId = 'main'; member.channelJoinedOrder = ++channelEntrySequence; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
         client?.emit('channel-deleted');
       }
       publish(); return {};
@@ -323,7 +346,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const u = requireMember();
       if (!saved.channels.some(c => c.id === payload?.channelId)) throw new Error('频道不存在');
       if (u.channelId !== payload.channelId) {
-        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
+        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.channelJoinedOrder = ++channelEntrySequence; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
         socket.join(group(u.channelId)); publish();
       }
       return snapshot();
@@ -358,6 +381,19 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const u = requireMember();
       if (!payload?.target || u.watchingId === payload.target) { u.watchingId = null; publish(); }
       return {};
+    });
+    let lastWatchFeedback = 0;
+    socket.on('watch-feedback', payload => {
+      const user = members.get(socket.id), target = members.get(payload?.target), metrics = payload?.metrics;
+      if (!user || !target?.isSharing || target === user || target.channelId !== user.channelId || user.watchingId !== payload.target || !metrics || typeof metrics !== 'object') return;
+      const clean = {};
+      for (const key of ['loss','rtt','buffer','jitter']) {
+        const value = metrics[key];
+        if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > (key === 'loss' ? 100 : 60000))) return;
+        clean[key] = value;
+      }
+      if (clean.loss === null || Date.now() - lastWatchFeedback < 1500) return;
+      lastWatchFeedback = Date.now(); io.to(payload.target).emit('watch-feedback', { from: socket.id, metrics: clean });
     });
     for (const [name, field, outgoing] of [['signal', 'to', 'signal']]) {
       handle(name, payload => {

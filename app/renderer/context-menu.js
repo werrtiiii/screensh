@@ -16,5 +16,4 @@ export function showContextMenu(event, actions) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 document.addEventListener('pointerdown', e => { if (activeMenu && !activeMenu.contains(e.target)) closeContextMenu(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeContextMenu(); });
 window.addEventListener('blur', closeContextMenu);

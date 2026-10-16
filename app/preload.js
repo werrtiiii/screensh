@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeWindow: () => ipcRenderer.send('window-close'),
   startEasyTier: (roomId, peers) => ipcRenderer.invoke('start-easytier', roomId, peers),
   testEasyTierPeer: peer => ipcRenderer.invoke('test-easytier-peer', peer),
+  pingMember: ip => ipcRenderer.invoke('ping-member', ip),
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('download-and-install-update'),
   getHardwareAcceleration: () => ipcRenderer.invoke('get-hardware-acceleration'),

@@ -112,6 +112,5 @@ export function decorateInteractionCard(card, user, isMe) {
   if (popup && pickerTarget === user.socketId) { anchor = button; positionPicker(); }
 }
 document.addEventListener('pointerdown', event => { if (popup && !popup.contains(event.target) && !anchor?.contains(event.target)) closePicker(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { const button = anchor; closePicker(); button?.focus(); } });
 window.addEventListener('resize', positionPicker);
 window.addEventListener('scroll', positionPicker, true);

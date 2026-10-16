@@ -57,14 +57,6 @@ export function attachVideoStats(container, pc) {
       const name = document.createElement('span'), data = document.createElement('strong');
       name.textContent = label; data.textContent = abnormal ? `⚠ ${value}` : value; row.append(name, data); panel.append(row);
     }
-    const note = document.createElement('p');
-    note.textContent = '每秒刷新 · 码率仅含视频接收数据。RTT 为观看端到共享端媒体服务的往返时间，并非端到端画面延迟。';
-    panel.append(note);
-    const details = document.createElement('details');
-    const summary = document.createElement('summary'); summary.textContent = '估算假设与标红规则';
-    const help = document.createElement('p');
-    help.textContent = '估算＝RTT/2＋接收缓冲＋解码＋5～100 ms。假设链路对称、采集30 FPS、显示60 Hz、编码5～30 ms、本地推流转发排队0～20 ms。并非实测或保证范围，实际可能超出；卡顿时暂停估算。红色为排查提示：估算上沿≥300 ms、帧率<10、码率为0、RTT≥150 ms、缓冲≥100 ms、解码≥33 ms、抖动≥30 ms、丢包≥2%或本秒新增丢帧；静态画面也可能触发，不代表故障结论。';
-    details.append(summary, help); panel.append(details);
   }
   async function refresh(token) {
     if (pending || disposed) return;

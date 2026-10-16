@@ -183,6 +183,7 @@ class ObsEngine {
         const done = error => { clearTimeout(timer); this.cancelStart = null; error ? reject(error) : resolve(); };
         this.cancelStart = () => done(new Error('OBS 推流已取消'));
         stream.signalHandler = signal => {
+          if (generation !== this.generation) return;
           console.log('[OBS]', signal);
           if (signal.signal === 'start') { started = true; done(); }
           if (signal.signal === 'stop') {

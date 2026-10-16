@@ -39,17 +39,49 @@ function renderer(ipc = {}) {
     socket: { connected: true, id: 'self', emit() {} }, roomUsers: new Map(), disconnectSignaling() {},
     toast: message => notifications.push(message),
   });
-  for (const file of ['shared.js', 'media.js', 'room.js']) {
+  for (const file of ['shared.js', 'share-adaptation.mjs', 'media.js', 'room.js']) {
     const source = fs.readFileSync(path.join(__dirname, 'renderer', file), 'utf8')
       .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm, '').replace(/^export /gm, '');
     vm.runInContext(source, context, { filename: file });
   }
-  vm.runInContext('globalThis.testApi = { state, startScreenCapture, stopSharing, leaveRoom, updateSharingUI };', context);
+  vm.runInContext('globalThis.testApi = { state, startScreenCapture, stopSharing, leaveRoom, updateSharingUI, buildScreenConfig, adjustShareQuality, hasShareAdaptation:()=>!!shareAdaptation };', context);
   const { state } = context.testApi;
   Object.assign(state, { roomId: 'test', virtualIp: '10.144.1.1', isSharing: true, autoPreview: false });
   context.testApi.updateSharingUI(true);
   return { ...context.testApi, $, ipc: api, notifications };
 }
+
+test('sharing starts at original quality and frame rate without a low-bandwidth override', async () => {
+  const r=renderer();Object.assign(r.state,{resolution:'1920x1080',frameRate:60,maxBitrate:5000,audioBitrate:128});
+  const config=r.buildScreenConfig();assert.equal(config.resolution,'1920x1080');assert.equal(config.frameRate,60);assert.equal(config.maxBitrate,5000);assert.equal(config.audioBitrate,128);
+  r.state.maxBitrate=0;assert.equal(r.buildScreenConfig().maxBitrate,0);
+});
+
+test('automatic resolution is off by default and its switch applies on the next share',async()=>{
+  const r=renderer();r.state.isSharing=false;r.state.selectedSourceId=0;
+  assert.equal(r.state.adaptiveResolution,false);await r.startScreenCapture();assert.equal(r.hasShareAdaptation(),false);
+  r.state.adaptiveResolution=true;assert.equal(r.hasShareAdaptation(),false);
+  await r.stopSharing();r.state.selectedSourceId=0;await r.startScreenCapture();assert.equal(r.hasShareAdaptation(),true);
+  r.state.adaptiveResolution=false;assert.equal(r.hasShareAdaptation(),true);
+  await r.stopSharing();r.state.selectedSourceId=0;await r.startScreenCapture();assert.equal(r.hasShareAdaptation(),false);
+  await r.stopSharing();
+});
+
+test('stopping during a quality change never restarts sharing after cleanup',async()=>{
+  const gate=deferred();let starts=0;
+  const r=renderer({stopSharing:()=>gate.promise,startSharing:async()=>{starts++;}});
+  const adjusting=r.adjustShareQuality(0,{resolution:'854x480'},{});
+  const stopped=r.stopSharing();gate.resolve();await Promise.all([adjusting,stopped]);
+  assert.equal(starts,0);assert.equal(r.state.isSharing,false);assert.equal(r.state.adjustingShare,false);
+});
+
+test('failed quality change restores previous profile without changing FPS or settings',async()=>{
+  const configs=[];
+  const r=renderer({startSharing:async config=>{configs.push(config);if(config.resolution==='854x480')throw Error('new profile failed');}});
+  const previous={resolution:'1280x720',frameRate:60};
+  assert.equal(await r.adjustShareQuality(0,{resolution:'854x480',frameRate:60},previous),false);
+  assert.equal(configs.length,2);assert.equal(configs[1],previous);assert.equal(r.state.isSharing,true);assert.equal(r.state.adjustingShare,false);
+});
 
 test('renderer disables sharing until stop completes and coalesces repeated clicks', async () => {
   const gate = deferred();

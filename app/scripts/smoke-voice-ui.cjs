@@ -11,9 +11,10 @@ app.whenReady().then(async () => {
   const ips = Object.values(os.networkInterfaces()).flat().filter(i => i.family === 'IPv4' && !i.internal && !i.address.startsWith('169.254.')).map(i => i.address);
   const windows = [], addresses = new Map();
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
-  ipcMain.handle('voice-start', () => 'test-microphone'); ipcMain.handle('voice-stop', () => true);
-  ipcMain.handle('voice-devices', () => [{ id: 'default', name: 'Test signal' }, { id: 'alternate', name: 'Alternate signal' }]);
+  let nativeVoiceCalls = 0;
+  for (const name of ['voice-start', 'voice-stop', 'voice-devices']) ipcMain.handle(name, () => { nativeVoiceCalls++; throw Error('Direct capture must not use OBS voice IPC'); });
   ipcMain.handle('get-hardware-acceleration', () => false);
+  ipcMain.handle('ping-member', (_event, ip) => ({ ip, rttMs: 1 }));
   ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
   ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('stop-sharing', () => {});
   const run = (w, code) => w.webContents.executeJavaScript(code, true);
@@ -28,7 +29,7 @@ app.whenReady().then(async () => {
       const win = new BrowserWindow({ show: false, webPreferences: { partition: 'voice-ui-' + process.pid + '-' + i, preload: path.join(root, 'preload.js'), contextIsolation: true, nodeIntegration: false } });
       windows.push(win); addresses.set(win.webContents.id, '10.144.1.' + (i + 1));
       await win.loadFile(path.join(root, 'renderer/index.html'));
-      await run(win, `(async () => { await import('./renderer.js'); const { WhepSession } = await import('./whep.mjs'); window.toneContext = new AudioContext(); await toneContext.resume(); const osc = toneContext.createOscillator(), gain = toneContext.createGain(), out = toneContext.createMediaStreamDestination(); gain.gain.value = 0.03; osc.connect(gain).connect(out); osc.start(); WhepSession.prototype.start = async function () { this.pc.ontrack({ track: out.stream.getAudioTracks()[0].clone() }); }; WhepSession.prototype.deleteResource = () => {}; window.voicePCs = []; const PC = RTCPeerConnection; window.RTCPeerConnection = class extends PC { constructor(...args) { super(...args); voicePCs.push(this); }
+      await run(win, `(async () => { await import('./renderer.js'); window.toneContext = new AudioContext(); await toneContext.resume(); const osc = toneContext.createOscillator(), gain = toneContext.createGain(), out = toneContext.createMediaStreamDestination(); gain.gain.value = 0.03; osc.connect(gain).connect(out); osc.start(); window.capturedMicrophones=[]; window.captureConstraints=[]; navigator.mediaDevices.getUserMedia=async constraints=>{captureConstraints.push(constraints);const stream=out.stream.clone();capturedMicrophones.push(stream);return stream;};navigator.mediaDevices.enumerateDevices=async()=>[{kind:'audiooutput',deviceId:'default',label:'Test output'},{kind:'audioinput',deviceId:'default',label:'Test signal'},{kind:'audioinput',deviceId:'alternate',label:'Alternate signal'}];window.voicePCs = []; const PC = RTCPeerConnection; window.RTCPeerConnection = class extends PC { constructor(...args) { super(...args); voicePCs.push(this); }
         get localDescription() { const d = super.localDescription; return d && { type: d.type, sdp: d.sdp.split('${ips[0]}').join('10.144.1.${i+1}') }; }
         set onicecandidate(fn) { super.onicecandidate = fn && (e => { if (!e.candidate) return fn(e); const c = e.candidate.toJSON(); c.candidate = c.candidate.split('${ips[0]}').join('10.144.1.${i+1}'); fn({candidate:{...c,toJSON:()=>c}}); }); }
         async setRemoteDescription(d) { return super.setRemoteDescription({type:d.type,sdp:d.sdp.replace(/10\\.144\\.1\\.[12]/g,'${ips[0]}')}); }
@@ -38,6 +39,7 @@ app.whenReady().then(async () => {
     }
     for (const win of windows) {
       await wait(win, `voicePCs.filter(pc => pc.connectionState === 'connected').length === 1`);
+      await wait(win, `(async()=>{for(const pc of voicePCs.filter(p=>p.connectionState==='connected')){const stats=await pc.getStats();if([...stats.values()].some(s=>s.type==='inbound-rtp'&&s.kind==='audio'&&s.packetsReceived>0))return true;}return false;})()`);
       const stats = await run(win, `(async () => { const result = []; for (const pc of voicePCs) { const stats = await pc.getStats(); for (const s of stats.values()) if (s.type === 'inbound-rtp' && s.kind === 'audio') result.push(s.packetsReceived); } return result; })()`);
       assert.equal(stats.length, 1); assert.ok(stats.every(count => count > 0));
     }
@@ -86,20 +88,44 @@ app.whenReady().then(async () => {
     await run(host, `(async () => { const { requestServer, socket } = await import('./signaling.js'); const { state } = await import('./shared.js'); await requestServer('set-member-mute', { socketId: state.serverUsers.find(u => u.socketId !== socket.id).socketId, muted: true }); })()`);
     await wait(guest, `document.querySelector('[data-voice="mute"]').disabled && document.querySelector('[data-voice="mute"]').title === '已被管理员禁言'`);
     assert.equal(await run(host, `[...document.querySelectorAll('audio:not([data-voice-capture])')].every(a => a.muted)`), true);
-    await run(guest, `document.querySelector('[data-voice="deafen"]').click()`);
-    await wait(guest, `voicePCs.every(pc => pc.connectionState === 'closed')`);
+    const peersBeforeMute = await run(guest,'voicePCs.length');
+    await run(guest, `window.retainedPeer=voicePCs.find(pc=>pc.connectionState==='connected');document.querySelector('[data-voice="deafen"]').click()`);
+    await wait(guest, `retainedPeer.connectionState === 'connected' && document.querySelector('[data-voice="deafen"]').getAttribute('aria-pressed') === 'true'`);
     assert.equal(await run(guest, `localStorage.getItem('voiceMuted') === 'true' && localStorage.getItem('voiceDeafened') === 'true'`), true);
-    await wait(host, `document.querySelectorAll('audio:not([data-voice-capture])').length === 0`);
+    assert.equal(await run(host, `document.querySelectorAll('audio:not([data-voice-capture])').length`), 1);
     await run(guest, `document.querySelector('#btnSettings').click(); document.querySelector('#btnVoiceDevices').click()`);
     await wait(guest, `document.querySelector('#voiceMicrophone').options.length > 1`);
     await wait(guest, `!document.querySelector('#btnMicrophoneTest').disabled`);
     await run(guest, `document.querySelector('#btnMicrophoneTest').click()`);
-    await wait(guest, `document.querySelector('#btnMicrophoneTest').textContent === '停止测试' && !document.querySelector('#btnMicrophoneTest').disabled`);
+    await wait(guest, `document.querySelector('#btnMicrophoneTest').textContent === '停止' && !document.querySelector('#btnMicrophoneTest').disabled`);
     await wait(guest, `document.querySelector('audio[data-microphone-test]') && !document.querySelector('audio[data-microphone-test]').paused`);
-    await run(guest, `document.querySelector('#btnCloseSettings').click()`);
-    await wait(guest, `voicePCs.every(pc => pc.connectionState === 'closed')`);
+    await wait(guest, `Number(document.querySelector('#microphoneLevel').value)>0.001`);
+    const beforeSwitch=await run(guest,'capturedMicrophones.length');
+    await run(guest, `document.querySelector('#voiceMicrophone').value='alternate';document.querySelector('#voiceMicrophone').dispatchEvent(new Event('change'))`);
+    await wait(guest, `capturedMicrophones.length>${beforeSwitch} && !document.querySelector('#voiceMicrophone').disabled && document.querySelector('audio[data-microphone-test]') && !document.querySelector('audio[data-microphone-test]').paused`);
+    assert.equal(await run(guest, `capturedMicrophones[0].getTracks().every(t=>t.readyState==='ended') && captureConstraints.at(-1).audio.deviceId.exact==='alternate' && retainedPeer.connectionState==='connected'`),true);
+    await run(guest, `document.querySelector('#btnCloseSettings').click();document.querySelector('#btnMemberNetwork').click();document.querySelector('#voiceDiagnostics').open=true`);
+    await wait(guest, `document.querySelector('.voice-diagnostics-body').textContent.includes('audio/opus') && !document.querySelector('.voice-diagnostics-body').textContent.includes('RTT—')`);
+    await wait(guest, `['接收丢包率（区间）','接收缓冲延迟（区间）','音频接收码率'].every(label=>[...document.querySelectorAll('.voice-diagnostics-row')].some(row=>row.querySelector('span').textContent===label && row.querySelector('strong').textContent!=='—'))`);
+    const diagnostics=await run(guest, `document.querySelector('.voice-diagnostics-body').textContent`);
+    assert.ok(diagnostics.includes('接收丢包率（区间）') && diagnostics.includes('接收缓冲延迟（区间）'));
+    guest.show();await run(guest, `document.querySelector('#voiceDiagnostics').scrollIntoView({block:'end'})`);await new Promise(r=>setTimeout(r,100));
+    require('node:fs').writeFileSync(path.join(root,'.runtime-probe','voice-diagnostics.png'),(await guest.webContents.capturePage()).toPNG());
+    await run(guest, `document.querySelector('#btnCloseMemberNetwork').click()`);
+    await wait(guest, `!document.querySelector('#voiceDiagnostics').open`);
+    assert.equal(await run(guest, `retainedPeer.connectionState`), 'connected');
     await wait(guest, `document.querySelector('audio[data-microphone-test]') === null`);
-    console.log('VOICE_UI_OK', JSON.stringify({ syntheticCaptureBridge: true, automaticPeerRetry: true, realPeerAudio: true, volume: true, mute: true, deafen: true, moderatorMute: true, microphoneTest: true, cleanup: true, interfaces: ips.slice(0, 2) }));
+    await run(guest, `document.querySelector('[data-voice="deafen"]').click()`);
+    await wait(guest, `[...document.querySelectorAll('audio:not([data-voice-capture])')].every(a=>!a.muted)`);
+    assert.equal(await run(guest,'voicePCs.length'),peersBeforeMute);
+    assert.equal(await run(guest,'retainedPeer.connectionState'),'connected');
+    await run(guest, `document.querySelector('#btnLeave').click()`);
+    await wait(guest, `voicePCs.every(pc=>pc.connectionState==='closed')`);
+    assert.equal(await run(guest, `capturedMicrophones.every(s=>s.getTracks().every(t=>t.readyState==='ended'))`), true);
+    assert.equal(await run(guest, `captureConstraints.every(c=>c.video===false && c.audio.latency.ideal===0.01)`), true);
+    assert.equal(nativeVoiceCalls,0);
+    assert.equal(await run(guest, `document.body.innerText.includes('服务器响应超时')`),false);
+    console.log('VOICE_UI_OK', JSON.stringify({ syntheticDirectCapture: true, noNativeVoiceRuntime: true, diagnostics: true, automaticPeerRetry: true, realPeerAudio: true, volume: true, mute: true, deafen: true, moderatorMute: true, microphoneTest: true, cleanup: true, interfaces: ips.slice(0, 2) }));
   } catch (error) { console.error(error.stack); process.exitCode = 1; }
   finally { windows.forEach(w => w.destroy()); await new Promise(resolve => io.close(resolve)); app.exit(process.exitCode || 0); }
 });

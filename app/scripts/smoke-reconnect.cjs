@@ -24,6 +24,7 @@ app.whenReady().then(async () => {
     await window.loadFile(path.join(root, 'renderer/index.html'));
     await run(`localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true')`);
     await window.loadFile(path.join(root, 'renderer/index.html'));
+    await run(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{}})()`);
     const join = async () => {
       await run(`document.querySelector('#serverUrl').value = 'http://127.0.0.1:${server.address().port}'; document.querySelector('#userName').value = 'Reconnect'; document.querySelector('#btnConnect').click()`);
       await wait(`document.querySelector('#room').classList.contains('active')`);

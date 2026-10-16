@@ -5,7 +5,7 @@ export function requestPassword({ settings = false, enabled = true, connection }
     modal.className = 'modal password-modal';
     modal.innerHTML = `<form class="modal-content" role="dialog" aria-modal="true" aria-labelledby="passwordTitle">
       <div class="modal-header"><h2 id="passwordTitle">${settings ? '服务器密码' : '请输入服务器密码'}</h2><button type="button" class="btn-close" aria-label="取消">×</button></div>
-      ${settings ? '<div class="form-group"><label class="password-toggle"><input id="passwordEnabled" type="checkbox"> 启用服务器密码</label></div>' : ''}
+      ${settings ? '<div class="form-group"><label class="password-toggle"><input id="passwordEnabled" type="checkbox" role="switch"> 启用服务器密码</label></div>' : ''}
       <div class="form-group"><label for="serverPasswordInput">${settings ? '新密码' : '密码'}</label><input id="serverPasswordInput" type="password" maxlength="128" autocomplete="off" /></div>
       ${settings ? '<div class="form-group"><label for="passwordConfirm">确认新密码</label><input id="passwordConfirm" type="password" maxlength="128" autocomplete="off" /></div>' : ''}
       <p class="password-error" role="alert" style="color:var(--danger)"></p>
@@ -29,7 +29,6 @@ export function requestPassword({ settings = false, enabled = true, connection }
     modal.querySelector('.password-cancel').onclick = cancel;
     modal.addEventListener('keydown', event => {
       event.stopPropagation();
-      if (event.key === 'Escape') { event.preventDefault(); cancel(); }
       if (event.key === 'Tab') {
         const nodes = [...modal.querySelectorAll('button,input')].filter(n => !n.disabled);
         if (event.shiftKey && document.activeElement === nodes[0]) { event.preventDefault(); nodes.at(-1).focus(); }

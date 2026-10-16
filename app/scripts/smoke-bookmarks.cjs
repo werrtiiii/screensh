@@ -23,7 +23,7 @@ app.whenReady().then(async () => {
     win=new BrowserWindow({show:false,webPreferences:{preload:path.join(root,'preload.js'),backgroundThrottling:false}});
     await win.loadFile(path.join(root,'renderer/index.html'));
     await run(`localStorage.setItem('voiceMuted','true');localStorage.setItem('voiceDeafened','true')`);
-    await win.reload();
+    await win.reload(); await run(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{}})()`);
     await run(`document.querySelector('#serverUrl').value='${url}/';document.querySelector('#userName').value='Member';document.querySelector('#btnConnect').click()`);
     await wait(`document.querySelector('#room').classList.contains('active') && document.querySelector('#bookmarkList .bookmark-item img')?.src === '${icon}'`);
     assert.deepEqual(await run(`JSON.parse(localStorage.getItem('serverBookmarks')).map(x=>({url:x.url,name:x.name,icon:x.icon}))`),[{url,name:'自动书签服务器',icon:'cached'}]);
@@ -37,7 +37,7 @@ app.whenReady().then(async () => {
     await wait(`!document.querySelector('#bookmarkList .bookmark-item img') && JSON.parse(localStorage.getItem('serverBookmarks'))[0].icon === null`);
     await request('set-server-icon',{icon}); await wait(`document.querySelector('#bookmarkList .bookmark-item img')?.src === '${icon}'`);
     await run(`document.querySelector('#btnLeave').click()`); await wait(`document.querySelector('#lobby').classList.contains('active')`);
-    await win.reload(); await wait(`document.querySelector('#bookmarkList .bookmark-item img')?.src === '${icon}'`);
+    await win.reload(); await run(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{}})()`); await wait(`document.querySelector('#bookmarkList .bookmark-item img')?.src === '${icon}'`);
     await run(`document.querySelector('#serverUrl').value='${url}';document.querySelector('#btnConnect').click()`); await wait(`document.querySelector('#room').classList.contains('active')`);
     assert.equal(await run(`JSON.parse(localStorage.getItem('serverBookmarks')).length`),1);
     await run(`document.querySelector('#btnLeave').click()`); await wait(`document.querySelector('#lobby').classList.contains('active')`);

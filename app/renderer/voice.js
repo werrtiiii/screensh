@@ -1,23 +1,26 @@
 import { state, $ } from './shared.js';
 import { socket, requestServer } from './signaling.js';
-import { WhepSession } from './whep.mjs';
+import { captureMicrophone } from './microphone-capture.mjs';
+import { attachVoiceStats } from './voice-stats.mjs';
 import { toast } from './toast.js';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
 const blockedSpeakers = new Set();
 let announcedSpeaking = null;
-let capturePending, cancelCaptureWait;
+let capturePending, captureController;
 const peerRetries = new Map(), peerRetryCounts = new Map();
 let attemptedChannel = null;
 let microphoneVolume = Math.max(0, Math.min(1, Number(localStorage.getItem('voiceMicVolume') ?? 1) || 0));
 let receiveVolume = Math.max(0, Math.min(1, Number(localStorage.getItem('voiceReceiveVolume') ?? 1) || 0));
-let generation = 0, context, outgoing, rawStream, micGain, source, localMeter, cleanup, bridge, captureAudio, voiceDestination;
+let generation = 0, context, outgoing, rawStream, micGain, source, localMeter, cleanup, voiceDestination;
 let testGeneration = 0, testBusy = false, testAudio, testStream, testMeter, testCleanup, testOwnsCapture = false;
 let changingMicrophone = false, microphoneDevices = [];
 const microphone = () => localStorage.getItem('voiceMicrophone') || 'default';
+// WASAPI endpoint identifiers from the former OBS backend aren't browser IDs.
+if (microphone().startsWith('{')) localStorage.setItem('voiceMicrophone', 'default');
 const speaker = () => localStorage.getItem('voiceSpeaker') || 'default';
-function announce(error) { toast(error.message || String(error), 'error'); }
+function announce(error) { if (error?.code !== 'REQUEST_CANCELLED') toast(error.message || String(error), 'error'); }
 function createVoiceAudioContext() {
   try { return new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 }); }
   catch { return new AudioContext({ latencyHint: 'interactive' }); }
@@ -215,48 +218,21 @@ export function syncVoice() {
   }
   paintControls();
   const key = `${socket?.id}:${state.channelId}`;
-  if (socket?.connected && state.roomId && state.channelId && state.virtualIp && !state.leaving && !state.switchingChannel && !changingMicrophone && !voice.enabled && !voice.busy && !cleanup && (!voice.muted || !voice.deafened) && attemptedChannel !== key) {
+  if (socket?.connected && state.roomId && state.channelId && state.virtualIp && !state.leaving && !state.switchingChannel && !changingMicrophone && !testBusy && !voice.enabled && !voice.busy && !cleanup && attemptedChannel !== key) {
     attemptedChannel = key; void startVoice();
   }
 }
 async function capture() {
   const token = generation;
-  const url = await window.electronAPI.voiceStart(microphone());
-  if (token !== generation) throw new Error('语音启动已取消');
-  context ||= createVoiceAudioContext(); await context.resume();
-  if (token !== generation) throw new Error('语音启动已取消');
-  const stream = new MediaStream();
-  let ready;
-  const trackReady = new Promise((resolve, reject) => { ready = resolve; cancelCaptureWait = () => reject(new Error('麦克风采集已取消')); });
-  // Register the rejection handler before negotiation can fail.
-  trackReady.catch(() => {});
-  // Voice capture is audio-only. The OBS voice publisher still provides the
-  // capture bridge, while peer audio remains direct over EasyTier.
-  bridge = new WhepSession(url, { iceServers: [] }, event => {
-    if (token !== generation) return;
-    if (event.track.kind === 'audio') {
-      const track = event.track;
-      stream.addTrack(track);
-      // WebRTC can deliver the track event while the track is still muted.
-      // Starting the test at that point intermittently creates a silent or
-      // noisy clone, so wait for the first real audio frame.
-      if (track.muted) track.addEventListener('unmute', ready, { once: true });
-      else ready();
-    }
-  }, error => { announce(error); void stopVoice(); }, { audioOnly: true });
-  await bridge.start();
-  let timer;
-  try { await Promise.race([trackReady, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('未收到 OBS 麦克风轨道')), 12000); })]); }
-  finally { clearTimeout(timer); cancelCaptureWait = null; }
-  if (token !== generation) throw new Error('语音启动已取消');
-  // Chromium's remote WebRTC audio source needs an active media-element
-  // consumer even when Web Audio is its only audible/forwarding consumer.
-  // Keep that consumer for the capture lifetime, independent of mic testing.
-  const sink = captureAudio = new Audio();
-  sink.hidden = true; sink.autoplay = true; sink.volume = 0;
-  sink.dataset.voiceCapture = 'true'; sink.srcObject = stream; document.body.append(sink);
-  await sink.play();
-  if (token !== generation) throw new Error('语音启动已取消');
+  const controller = captureController = new AbortController();
+  let stream;
+  try {
+    stream = await captureMicrophone(microphone(), { signal: controller.signal });
+    if (token !== generation) throw new Error('语音启动已取消');
+    context ||= createVoiceAudioContext(); await context.resume();
+    if (token !== generation) throw new Error('语音启动已取消');
+  } catch (error) { stream?.getTracks().forEach(track => track.stop()); throw error; }
+  finally { if (captureController === controller) captureController = null; }
   rawStream = stream; source = context.createMediaStreamSource(stream); micGain = context.createGain();
   const destination = voiceDestination ||= context.createMediaStreamDestination(); source.connect(micGain); micGain.connect(destination); outgoing = destination.stream;
   localMeter?.();
@@ -330,17 +306,17 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   localMeter?.(); localMeter = null;
   if (preserveCapture) {
     testOwnsCapture = true; applyMute(); paintControls();
-    return Promise.all([stoppingAccompaniment, wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]);
+    return Promise.all([stoppingAccompaniment, wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]);
   }
-  cancelCaptureWait?.();
+  captureController?.abort();
   const pendingCapture = capturePending;
-  outgoing?.getTracks().forEach(track => track.stop()); outgoing = null; rawStream = null;
+  outgoing?.getTracks().forEach(track => track.stop()); outgoing = null;
+  rawStream?.getTracks().forEach(track => track.stop()); rawStream = null;
   source?.disconnect(); micGain?.disconnect(); source = micGain = voiceDestination = null;
-  captureAudio?.pause(); if (captureAudio) { captureAudio.srcObject = null; captureAudio.remove(); } captureAudio = null;
-  bridge?.close(); bridge = null; const closing = context?.close(); context = null;
+  const closing = context?.close(); context = null;
   if (!voice.testing && $('#microphoneLevel')) $('#microphoneLevel').value = 0;
   paintControls();
-  cleanup = Promise.allSettled([stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), window.electronAPI.voiceStop(), wasEnabled && socket?.connected ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
+  cleanup = Promise.allSettled([stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
     const failed = results.find(r => r.status === 'rejected'); if (failed) announce(failed.reason);
   }).finally(() => { cleanup = null; });
   return cleanup;
@@ -355,8 +331,7 @@ async function changeVoicePreference(mode) {
   localStorage.setItem('voiceDeafened', String(voice.deafened));
   applyMute(); paintControls();
   if (state.roomId && socket?.connected) void requestServer('set-voice-state', { enabled: voice.enabled, muted: voice.muted, deafened: voice.deafened }).catch(announce);
-  if (voice.muted && voice.deafened && !window.channelAccompaniment?.active()) await stopVoice({ keepTest: true });
-  else { attemptedChannel = null; syncVoice(); }
+  attemptedChannel = null; syncVoice();
 }
 function fillMicrophones(select, devices = microphoneDevices) {
   select.replaceChildren(new Option('系统默认麦克风', 'default'));
@@ -369,13 +344,11 @@ async function changeMicrophone(deviceId) {
   const previous = microphone(), resumeTest = voice.testing, hadCapture = !!rawStream, ownerRoom = state.roomId;
   changingMicrophone = true; paintControls();
   const replaceCapture = async () => {
-    const token = ++generation; cancelCaptureWait?.();
+    const token = ++generation; captureController?.abort();
     if (capturePending) await capturePending.catch(() => {});
     localMeter?.(); localMeter = null;
-    source?.disconnect(); micGain?.disconnect(); source = micGain = null; rawStream = null;
-    captureAudio?.pause(); if (captureAudio) { captureAudio.srcObject = null; captureAudio.remove(); } captureAudio = null;
-    bridge?.close(); bridge = null;
-    await window.electronAPI.voiceStop();
+    source?.disconnect(); micGain?.disconnect(); source = micGain = null;
+    rawStream?.getTracks().forEach(track => track.stop()); rawStream = null;
     if (token !== generation || state.leaving || state.roomId !== ownerRoom) throw new Error('麦克风切换已取消');
     await ensureCapture();
   };
@@ -413,7 +386,7 @@ export function decorateVoiceCard(card, user, isMe) {
     const deviceLabel = document.createElement('label'); deviceLabel.textContent = '麦克风';
     const select = document.createElement('select'); select.dataset.microphoneSelect = 'true'; select.setAttribute('aria-label', '选择麦克风'); fillMicrophones(select); deviceLabel.append(select); panel.append(deviceLabel);
     let loaded = false;
-    const load = async () => { if (loaded) return; loaded = true; try { microphoneDevices = await window.electronAPI.voiceDevices(); fillMicrophones(select); paintControls(); } catch (error) { loaded = false; announce(error); } };
+    const load = async () => { if (loaded) return; loaded = true; try { await refreshVoiceDevices(); } catch (error) { loaded = false; announce(error); } };
     wrap.addEventListener('mouseenter', load); wrap.addEventListener('focusin', load);
     select.onchange = () => void changeMicrophone(select.value);
     const settings = document.createElement('button'); settings.type = 'button'; settings.className = 'microphone-settings-link'; settings.textContent = '语音设置'; settings.onclick = () => { $('#btnSettings').click(); void refreshVoiceDevices(); }; panel.append(settings); wrap.append(panel);
@@ -460,7 +433,7 @@ function paintControls() {
     button.setAttribute('aria-label', button.title);
   }
   for (const status of document.querySelectorAll('.voice-status')) status.textContent = voice.busy ? '连接中…' : state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted ? '已被禁言' : voice.muted ? '麦克风已关闭' : '自由发言';
-  if ($('#btnMicrophoneTest')) { $('#btnMicrophoneTest').textContent = testBusy ? '正在启动…' : voice.testing ? '停止测试' : '测试麦克风'; $('#btnMicrophoneTest').disabled = voice.busy || !!cleanup || testBusy || !!testCleanup || changingMicrophone; }
+  if ($('#btnMicrophoneTest')) { $('#btnMicrophoneTest').textContent = testBusy ? '正在启动…' : voice.testing ? '停止' : '测试'; $('#btnMicrophoneTest').disabled = voice.busy || !!cleanup || testBusy || !!testCleanup || changingMicrophone; }
   for (const select of document.querySelectorAll('[data-microphone-select], #voiceMicrophone')) {
     if (![...select.options].some(option => option.value === microphone())) {
       const device = microphoneDevices.find(d => d.id === microphone());
@@ -473,9 +446,10 @@ function paintControls() {
 export async function refreshVoiceDevices() {
   const mic = $('#voiceMicrophone'), output = $('#voiceSpeaker');
   try {
-    microphoneDevices = await window.electronAPI.voiceDevices();
+    const outputs = await navigator.mediaDevices.enumerateDevices();
+    microphoneDevices = outputs.filter(d => d.kind === 'audioinput').map(d => ({ id: d.deviceId, name: d.label }));
     for (const select of document.querySelectorAll('[data-microphone-select], #voiceMicrophone')) fillMicrophones(select);
-    const outputs = await navigator.mediaDevices.enumerateDevices(); output.replaceChildren(new Option('系统默认扬声器', 'default'));
+    output.replaceChildren(new Option('系统默认扬声器', 'default'));
     for (const [index, d] of outputs.filter(d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default').entries()) output.add(new Option(d.label || `扬声器 ${index + 1}`, d.deviceId));
     if (![...output.options].some(o => o.value === speaker())) output.add(new Option('已保存的扬声器（当前不可用）', speaker()));
     output.value = speaker();
@@ -483,12 +457,13 @@ export async function refreshVoiceDevices() {
   } catch (error) { announce(error); }
 }
 export function initVoice() {
+  attachVoiceStats($('#voiceDiagnostics'), { getPeers: () => [...peers].map(([id, peer]) => ({ id, name: state.serverUsers.find(u => u.socketId === id)?.name || '成员', pc: peer.pc })), getCapture: () => ({ track: rawStream?.getAudioTracks()[0], context, enabled: voice.enabled }) });
   window.channelVoice = { accompanimentState: async active => {
     if (voice.enabled && socket?.connected) {
       await requestServer('set-voice-state', { enabled: true, muted: voice.muted, deafened: voice.deafened, accompaniment: active });
       announcedSpeaking = null;
     }
-  }, sync: syncVoice, stop: stopVoice, receive: receiveVoice, activity: receiveVoiceActivity, decorate: decorateVoiceCard, isEnabled: () => voice.enabled, mix: mixAccompaniment, stopIfIdle: () => voice.muted && voice.deafened ? stopVoice({ keepTest: true }) : Promise.resolve() };
+  }, sync: syncVoice, stop: stopVoice, receive: receiveVoice, activity: receiveVoiceActivity, decorate: decorateVoiceCard, isEnabled: () => voice.enabled, mix: mixAccompaniment };
   $('#btnVoiceDevices').onclick = refreshVoiceDevices;
   $('#voiceMicrophone').onchange = event => void changeMicrophone(event.target.value);
   $('#voiceSpeaker').onchange = event => localStorage.setItem('voiceSpeaker', event.target.value);

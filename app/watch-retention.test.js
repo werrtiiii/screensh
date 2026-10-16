@@ -13,13 +13,14 @@ function fixture() {
   const $ = key => { if (!nodes.has(key)) nodes.set(key, element()); return nodes.get(key); };
   class Stream { constructor() { this.tracks = []; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } }
   class Session {
-    constructor(url, _config, track, fail) { this.url = url; this.track = track; this.fail = fail; this.pc = { connectionState: 'connected', addEventListener() {} }; sessions.push(this); }
+    constructor(url, _config, track, fail) { this.url = url; this.track = track; this.fail = fail; this.pc = { connectionState: 'connected', addEventListener: (event, fn) => { this[event] = fn; } }; sessions.push(this); }
     async start() { this.started = (this.started || 0) + 1; this.mediaTrack = { stopped: false, stop() { this.stopped = true; } }; this.track({ track: this.mediaTrack }); }
-    close() { this.closed = true; }
+    close() { this.closed = true; this.pc.connectionState = 'closed'; }
   }
   const context = { state, roomUsers, $, socket: { id: 'self', emit: (...args) => events.push(args) }, console,
     document: { pictureInPictureElement: null }, MediaStream: Stream, WhepSession: Session,
     getIceServers() {}, toast() {}, attachVideoStats: () => () => {},
+    watchNetwork: () => () => {},
     setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id) };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('./renderer/media.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') + '\nglobalThis.api = { displayRemoteVideo, stopWatch, validateRetainedWatch };', context);
@@ -55,4 +56,34 @@ test('tracks arriving after return stay detached and hidden failures do not reta
   const f = fixture(); await f.displayRemoteVideo('peer'); f.stopWatch({ retain: true });
   f.sessions[0].track({ track: { stop() {} } }); assert.equal(f.$('#videoContainer').video, null);
   f.sessions[0].fail(new Error('Media stopped')); assert.equal(f.sessions[0].closed, true); assert.equal(f.timers.size, 0);
+});
+
+async function fireNext(f) {
+  const [id, timer] = f.timers.entries().next().value; f.timers.delete(id); timer.fn(); await new Promise(setImmediate);
+}
+test('visible watch automatically reconnects after failure and ignores stale callbacks', async () => {
+  const f = fixture(); await f.displayRemoteVideo('peer'); const first = f.sessions[0];
+  first.fail(Error('network')); first.fail(Error('duplicate'));
+  assert.equal(first.closed, true); assert.equal(f.timers.size,1); assert.equal([...f.timers.values()][0].delay,800);
+  assert.equal(f.state.watchingId,'peer'); await fireNext(f);
+  assert.equal(f.sessions.length,2); assert.equal(f.sessions[1].started,1);
+  assert.equal(first.mediaTrack.stopped,true);
+  first.fail(Error('late error')); assert.equal(f.timers.size,0); assert.equal(f.state.watchingId,'peer');
+  f.stopWatch();
+});
+test('brief disconnected state recovers without rebuilding; persistent disconnection retries', async () => {
+  const f=fixture();await f.displayRemoteVideo('peer');const first=f.sessions[0];
+  first.pc.connectionState='disconnected';first.connectionstatechange();
+  assert.equal([...f.timers.values()][0].delay,4000);
+  first.pc.connectionState='connected';first.connectionstatechange();assert.equal(f.timers.size,0);assert.equal(f.sessions.length,1);
+  first.pc.connectionState='disconnected';first.connectionstatechange();await fireNext(f);
+  assert.equal(first.closed,true);assert.equal(f.timers.size,1);await fireNext(f);assert.equal(f.sessions.length,2);f.stopWatch();
+});
+test('retry stops after five attempts, on returning, and when sharing disappears', async () => {
+  const f=fixture();await f.displayRemoteVideo('peer');
+  for(let i=0;i<5;i++){f.sessions.at(-1).fail(Error('offline'));await fireNext(f);}
+  f.sessions.at(-1).fail(Error('offline'));assert.equal(f.state.watchingId,null);assert.equal(f.timers.size,0);assert.equal(f.sessions.length,6);
+  await f.displayRemoteVideo('peer');f.sessions.at(-1).fail(Error('offline'));f.stopWatch({retain:true});assert.equal(f.timers.size,0);
+  await f.displayRemoteVideo('peer');f.sessions.at(-1).fail(Error('offline'));f.roomUsers.get('peer').isSharing=false;await fireNext(f);
+  assert.equal(f.state.watchingId,null);assert.equal(f.timers.size,0);
 });

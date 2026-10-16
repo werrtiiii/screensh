@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.10",
+  "version": "1.4.11",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -46,6 +46,7 @@
       "preload.js",
       "managed-process.js",
       "peer-test.js",
+      "member-ping.cjs",
       "obs-engine.js",
       "obs-host-path.js",
       "voice-runtime.cjs",

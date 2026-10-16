@@ -52,6 +52,7 @@ function runtime() {
     BrowserWindow: class { constructor() { this.webContents = { on() {}, send() {} }; } loadFile() {} },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} },
     screen: {},
+    Menu: { setApplicationMenu() {} },
   };
   const dependencies = {
     './tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },

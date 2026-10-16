@@ -57,7 +57,7 @@
     <!-- ===== Room ===== -->
     <div id="room" class="screen workspace-screen">
       <aside class="workspace-sidebar room-sidebar">
-        <div class="server-current"><span id="roomServerIcon" class="server-icon" aria-hidden="true">S</span><span class="server-dot"></span><div><strong id="roomServerName">0091 Server</strong><small id="roomServerAddress"></small></div><button id="btnLeave" class="icon-btn" title="断开连接">×</button></div>
+        <div class="server-current"><span id="roomServerIcon" class="server-icon" aria-hidden="true">S</span><div><strong id="roomServerName">0091 Server</strong><small id="roomServerAddress"></small></div><button id="btnLeave" class="icon-btn" title="断开连接">×</button></div>
         <div class="room-bookmarks">
           <div class="nav-section-title"><span>书签</span><div class="section-actions"><button id="btnRoomBookmark" class="icon-btn" title="保存当前服务器">☆</button><button id="btnCollapseRoomBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
           <form id="roomBookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="roomBookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
@@ -74,7 +74,7 @@
       </aside>
       <div class="room-topbar">
         <div class="room-info" style="display: flex; align-items: center; gap: 8px;">
-          <span class="room-label">当前频道：</span><span id="channelNameDisplay"></span>
+          <span id="currentChannelIcon" aria-hidden="true"></span><span id="channelNameDisplay"></span>
         </div>
         <div class="room-actions">
           <button id="btnServerSettings" class="btn btn-outline btn-sm hidden">服务器设置</button>
@@ -85,6 +85,7 @@
       </div>
 
       <div class="room-main">
+        <button id="btnMemberNetwork" class="member-network-button" type="button" title="成员 IP 和网络延迟" aria-label="成员 IP 和网络延迟">?</button>
         <div id="mainContent" class="main-content">
           <!-- 大厅卡片网格 -->
           <div id="userCardsView" class="cards-grid"></div>
@@ -106,16 +107,24 @@
           </div>
           <!-- Users list -->
           <div class="side-panel">
-            <h3>服务器成员 (<span id="userCount">0</span>)</h3>
+            <h3>服务器成员</h3>
             <ul id="userList" class="user-list"></ul>
           </div>
         </div>
+      </div>
+    </div>
+    <div id="memberNetworkDialog" class="modal hidden">
+      <div class="modal-content member-network-panel" role="dialog" aria-modal="true" aria-label="成员 IP 和网络延迟">
+        <div class="modal-header" style="justify-content:flex-end"><button id="btnCloseMemberNetwork" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <table class="member-network-table"><thead><tr><th>成员</th><th>虚拟 IP</th><th>延迟（Ping）</th></tr></thead><tbody id="memberNetworkRows"></tbody></table>
+        <details id="voiceDiagnostics" class="voice-diagnostics"><summary>语音连接统计</summary><div class="voice-diagnostics-body"></div></details>
       </div>
     </div>
     <div id="channelDialog" class="modal hidden">
       <form id="createChannelForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="channelDialogTitle">
         <div class="modal-header"><h2 id="channelDialogTitle">创建频道</h2><button id="btnCancelChannel" type="button" class="btn-close" aria-label="关闭">×</button></div>
         <div class="form-group"><label for="channelNameInput">频道名称</label><input type="text" id="channelNameInput" placeholder="新频道名称" maxlength="30" required /></div>
+        <div class="channel-icon-setting"><span id="channelIconPreview" class="channel-icon-preview" aria-label="频道图标"></span><div><button id="btnChooseChannelIcon" type="button" class="btn btn-outline btn-sm">选择图标</button><button id="btnResetChannelIcon" type="button" class="btn btn-outline btn-sm">恢复默认</button><small>PNG/JPEG/WebP/GIF，最大2MB</small></div><input id="channelIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="dialog-actions"><button id="btnCreateChannel" class="btn btn-primary" type="submit">创建频道</button></div>
       </form>
     </div>
@@ -187,7 +196,7 @@
           </div>
           <div class="form-group setting-hardware">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
-              <input type="checkbox" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
+              <input type="checkbox" role="switch" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
               <span>启用硬件加速</span>
               <span class="help-tip" data-tooltip="使用显卡渲染软件界面。修改后需要重启客户端；关闭后使用软件渲染。">?</span>
             </label>
@@ -197,7 +206,7 @@
             <select id="voiceMicrophone" class="form-control"><option value="default">系统默认麦克风</option></select>
             <label for="voiceSpeaker">扬声器</label>
             <select id="voiceSpeaker" class="form-control"><option value="default">系统默认扬声器</option></select>
-            <div class="voice-device-actions"><button id="btnVoiceDevices" class="btn btn-outline btn-sm" type="button">刷新设备</button><button id="btnMicrophoneTest" class="btn btn-outline btn-sm" type="button">测试</button></div>
+            <div class="voice-device-actions"><button id="btnVoiceDevices" class="btn btn-outline btn-sm" type="button">刷新</button><button id="btnMicrophoneTest" class="btn btn-outline btn-sm" type="button">测试</button></div>
             <meter id="microphoneLevel" min="0" max="1" value="0" aria-label="麦克风电平"></meter>
             <small id="voiceTestStatus" class="hidden" role="status"></small>
           </div>
@@ -213,8 +222,13 @@
             </select>
           </div>
           <div class="form-group setting-room">
-            <label><input type="checkbox" id="autoPreviewCheckbox" checked> 自动预览
+            <label><input type="checkbox" role="switch" id="autoPreviewCheckbox" checked> 自动预览
               <span class="help-tip" data-tooltip="共享后自动预览自己的画面。">?</span>
+            </label>
+          </div>
+          <div class="form-group setting-room">
+            <label><input type="checkbox" role="switch" id="adaptiveResolutionCheckbox"> 自动调整分辨率
+              <span class="help-tip" data-tooltip="根据观众网络自动降低或恢复分辨率，但会影响所有观众。下次开始共享生效。">?</span>
             </label>
           </div>
           <div class="form-group setting-room">
@@ -250,7 +264,7 @@
           </div>
           <div class="form-group setting-room">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0;">
-              <input type="checkbox" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
+              <input type="checkbox" role="switch" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
               <span>同时共享音频</span>
               <span class="help-tip" data-tooltip="窗口共享程序声音，全屏共享系统声音。">?</span>
             </label>
@@ -261,7 +275,7 @@
                 <span class="help-tip" data-tooltip="目标视频码率。推荐值在共享开始时按分辨率和帧率计算">?</span>
               </span>
               <label style="font-size: 12px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
-                <input type="checkbox" id="autoBitrateCheckbox"> 推荐
+                <input type="checkbox" role="switch" id="autoBitrateCheckbox"> 推荐
               </label>
             </label>
             <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100" value="1000">

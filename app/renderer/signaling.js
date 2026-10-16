@@ -4,8 +4,8 @@ import { isImageData } from './image-data.mjs';
 import { receiveInteraction, resetInteractions, syncInteractions } from './interactions.js';
 import { state, $ } from './shared.js';
 import { toast } from './toast.js';
-import { updateUserList, leaveRoom } from './room.js';
-import { stopWatch, stopSharing, renderViewerNames, validateRetainedWatch } from './media.js';
+import { updateUserList, leaveRoom, renderCurrentChannel } from './room.js';
+import { stopWatch, stopSharing, renderViewerNames, validateRetainedWatch, receiveShareFeedback } from './media.js';
 
 export let socket = null;
 export const roomUsers = new Map();
@@ -36,12 +36,26 @@ function fetchImage(ref, connection) {
 
 export function requestServer(event, payload = {}, connection = socket, timeout = 10000) {
   return new Promise((resolve, reject) => {
-    if (!connection?.connected) return reject(new Error('服务器连接已断开'));
-    connection.timeout(timeout).emit(event, payload, (error, response) => {
-      if (error) return reject(new Error('服务器响应超时，请确认已部署新版频道服务器'));
-      if (!response?.ok) return reject(new Error(response?.message || '操作失败'));
-      resolve(response);
-    });
+    let settled = false;
+    const finish = (error, response) => {
+      if (settled) return; settled = true; connection?.off('disconnect', disconnected);
+      error ? reject(error) : resolve(response);
+    };
+    const disconnected = () => {
+      const cancelled = state.leaving || connection !== socket;
+      const error = new Error(cancelled ? '操作已取消' : '服务器连接已断开');
+      error.code = cancelled ? 'REQUEST_CANCELLED' : 'CONNECTION_LOST'; finish(error);
+    };
+    if (!connection?.connected) return disconnected();
+    connection.once('disconnect', disconnected);
+    try {
+      connection.timeout(timeout).emit(event, payload, (error, response) => {
+        if (state.leaving || connection !== socket || !connection.connected) return disconnected();
+        if (error) { const failure = new Error('服务器响应超时，请稍后重试'); failure.code = 'SERVER_TIMEOUT'; return finish(failure); }
+        if (!response?.ok) return finish(new Error(response?.message || '操作失败'));
+        finish(null, response);
+      });
+    } catch (error) { finish(error); }
   });
 }
 export function applyServerState(data, restoring = false) {
@@ -52,10 +66,10 @@ export function applyServerState(data, restoring = false) {
   syncChannelSounds(data, socket.id, restoring);
   const revision = ++imageRevision, connection = socket;
   const raw = data;
-  const refs = new Set([data.serverIcon, ...data.users.map(u => u.avatar)].filter(isImageRef));
+  const refs = new Set([data.serverIcon, ...data.channels.map(channel => channel.icon), ...data.users.map(u => u.avatar)].filter(isImageRef));
   for (const ref of imageCache.keys()) if (!refs.has(ref)) imageCache.delete(ref);
   const loading = [...refs].filter(ref => !imageCache.has(ref) || imageCache.get(ref) instanceof Promise);
-  data = { ...data, serverIcon: cachedImage(data.serverIcon), users: data.users.map(u => ({ ...u, avatar: cachedImage(u.avatar) })) };
+  data = { ...data, serverIcon: cachedImage(data.serverIcon), channels: data.channels.map(channel => ({ ...channel, icon: cachedImage(channel.icon) })), users: data.users.map(u => ({ ...u, avatar: cachedImage(u.avatar) })) };
   if (loading.length) Promise.all(loading.map(ref => fetchImage(ref, connection))).then(() => {
     if (revision === imageRevision && socket === connection) applyServerState(raw);
   });
@@ -87,7 +101,7 @@ export function applyServerState(data, restoring = false) {
   validateRetainedWatch();
   syncInteractions();
   if (state.watchingId && (!roomUsers.has(state.watchingId) || !roomUsers.get(state.watchingId).isSharing)) stopWatch();
-  $('#channelNameDisplay').textContent = data.channels.find(c => c.id === state.channelId)?.name || '主频道';
+  renderCurrentChannel(data.channels.find(c => c.id === state.channelId));
   updateUserList(data.users);
   window.channelVoice?.sync();
   if (state.watchingId) renderViewerNames();
@@ -104,6 +118,7 @@ export function connectServer() {
     if (state.roomId && !state.leaving && !kickedOut && reason !== 'io client disconnect') startReconnect();
   });
   socket.on('server-update', applyServerState);
+  socket.on('watch-feedback', receiveShareFeedback);
   socket.on('voice-signal', data => window.channelVoice?.receive(data));
   socket.on('voice-activity', data => window.channelVoice?.activity(data));
   socket.on('interaction', receiveInteraction);
@@ -128,7 +143,7 @@ function waitForConnect(connection, timeout) {
       reject(new Error('连接服务器超时'));
     }, timeout);
     const ready = () => { clearTimeout(timer); connection.off('connect_error', failed); resolve(); };
-    const failed = error => { clearTimeout(timer); connection.off('connect', ready); reject(new Error(error.message || '连接失败')); };
+    const failed = () => { clearTimeout(timer); connection.off('connect', ready); reject(new Error('无法连接到服务器，请检查服务器地址、网络连接及服务器是否已启动')); };
     connection.once('connect', ready); connection.once('connect_error', failed);
   });
 }

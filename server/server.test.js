@@ -6,6 +6,103 @@ const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('./server');
 const identity = () => randomBytes(32).toString('hex');
 
+test('all channels can be renamed by managers, persist names, and main remains undeletable',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-channel-names-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const stateFile=path.join(dir,'state.json'),f=await fixture(t,{stateFile}),host=await f.client(),admin=await f.client(),member=await f.client();
+  for(const[i,client]of[host,admin,member].entries())await request(client,'join-server',{userName:'Rename'+i,virtualIp:'10.144.16.'+(i+1),identity:identity()});
+  await request(host,'set-admin',{socketId:admin.id,enabled:true});
+  const channel=(await request(host,'create-channel',{name:'游戏'})).channel;
+  assert.equal((await request(member,'rename-channel',{channelId:'main',name:'越权'})).ok,false);
+  for(const payload of [{channelId:'missing',name:'新频道'},...['',' '.repeat(2),'a'.repeat(31),'换\n行','游戏'].map(name=>({channelId:'main',name}))])assert.equal((await request(host,'rename-channel',payload)).ok,false);
+  await request(host,'start-sharing');await request(host,'set-voice-state',{enabled:true});
+  assert.equal((await request(admin,'rename-channel',{channelId:'main',name:' 大厅 '})).ok,true);
+  assert.equal((await request(host,'rename-channel',{channelId:channel.id,name:'娱乐'})).ok,true);
+  const snapshot=await request(host,'switch-channel',{channelId:'main'}),self=snapshot.users.find(u=>u.socketId===host.id);
+  assert.equal(snapshot.channels[0].name,'大厅');assert.equal(self.channelId,'main');assert.equal(self.isSharing,true);assert.equal(self.voiceEnabled,true);
+  assert.equal((await request(host,'rename-channel',{channelId:'main',name:'大厅'})).ok,true);
+  assert.equal((await request(host,'delete-channel',{channelId:'main'})).ok,false);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile)).channels.find(c=>c.id===channel.id).name,'娱乐');
+  await f.close();const g=await fixture(t,{stateFile}),returning=await g.client();
+  const restored=await request(returning,'join-server',{userName:'Reader',virtualIp:'10.144.16.4',identity:identity()});
+  assert.equal(restored.channels[0].name,'大厅');assert.equal(restored.channels.find(c=>c.id===channel.id).name,'娱乐');
+});
+
+test('screen network feedback only reaches the active same-channel sharer and is validated/throttled', async t => {
+  const f=await fixture(t),host=await f.client(),viewer=await f.client(),outside=await f.client();
+  for(const [i,client]of[host,viewer,outside].entries())await request(client,'join-server',{userName:'Feedback'+i,virtualIp:'10.144.15.'+(i+1),identity:identity()});
+  await request(host,'start-sharing');
+  const channel=(await request(host,'create-channel',{name:'Other'})).channel;await request(outside,'switch-channel',{channelId:channel.id});
+  const received=[];host.on('watch-feedback',data=>received.push(data));
+  const payload={target:host.id,metrics:{loss:8,rtt:200,buffer:250,jitter:35}};
+  viewer.emit('watch-feedback',payload);outside.emit('watch-feedback',payload);host.emit('watch-feedback',payload);
+  await request(viewer,'request-view',{target:host.id});
+  viewer.emit('watch-feedback',{...payload,metrics:{...payload.metrics,loss:101}});
+  viewer.emit('watch-feedback',{...payload,metrics:{...payload.metrics,buffer:-1}});
+  // A following acknowledged operation drains prior events on this socket.
+  await request(viewer,'switch-channel',{channelId:'main'});assert.equal(received.length,0);
+  const forwarded=new Promise(resolve=>host.once('watch-feedback',resolve));viewer.emit('watch-feedback',payload);
+  assert.deepEqual(await forwarded,{from:viewer.id,metrics:payload.metrics});
+  viewer.emit('watch-feedback',payload);await request(viewer,'stop-viewing',{target:host.id});viewer.emit('watch-feedback',payload);
+  await request(viewer,'switch-channel',{channelId:'main'});assert.equal(received.length,1);
+});
+
+test('channel entry order changes only on entry and survives short reconnect', async t => {
+  const f = await fixture(t, { disconnectGraceMs: 1000 });
+  const host = await f.client(), a = await f.client(), b = await f.client();
+  const aPayload = { userName: 'First', virtualIp: '10.144.12.2', identity: identity() };
+  await request(host, 'join-server', { userName: 'Owner', virtualIp: '10.144.12.1', identity: identity() });
+  await request(a, 'join-server', aPayload);
+  let snapshot = await request(b, 'join-server', { userName: 'Second', virtualIp: '10.144.12.3', identity: identity() });
+  const names = (data, channelId = 'main') => data.users.filter(u => u.channelId === channelId).sort((a,b) => a.channelJoinedOrder-b.channelJoinedOrder).map(u=>u.name);
+  assert.deepEqual(names(snapshot), ['Owner', 'First', 'Second']);
+  const channel = (await request(host, 'create-channel', { name: 'Other' })).channel;
+  await request(a, 'switch-channel', { channelId: channel.id });
+  snapshot = await request(a, 'switch-channel', { channelId: 'main' });
+  assert.deepEqual(names(snapshot), ['Owner', 'Second', 'First']);
+  const order = snapshot.users.find(u=>u.socketId===a.id).channelJoinedOrder;
+  await request(host, 'set-admin', { socketId: a.id, enabled: true });
+  snapshot = await request(a, 'switch-channel', { channelId: 'main' });
+  assert.equal(snapshot.users.find(u=>u.socketId===a.id).channelJoinedOrder, order);
+  const dropped = new Promise(resolve=>host.once('server-update',resolve)); a.io.engine.close(); await dropped;
+  const returning = await f.client(); snapshot = await request(returning, 'join-server', aPayload);
+  assert.equal(snapshot.users.find(u=>u.socketId===returning.id).channelJoinedOrder, order);
+  assert.deepEqual(names(snapshot), ['Owner', 'Second', 'First']);
+  await request(b, 'switch-channel', { channelId: channel.id });
+  await request(returning, 'switch-channel', { channelId: channel.id });
+  const moved = new Promise(resolve=>host.once('server-update',resolve));
+  await request(host, 'delete-channel', { channelId: channel.id });
+  assert.deepEqual(names(await moved), ['Owner', 'Second', 'First']);
+});
+
+test('channel icons are owner/admin-controlled, size limited, cached, persisted and removable', async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-channel-icons-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const stateFile=path.join(dir,'state.json'),f=await fixture(t,{stateFile}),host=await f.client(),admin=await f.client(),member=await f.client();
+  for(const [i,client] of [host,admin,member].entries()) await request(client,'join-server',{userName:'Icon'+i,virtualIp:'10.144.10.'+(i+1),identity:identity()});
+  await request(host,'set-admin',{socketId:admin.id,enabled:true});
+  const icon='data:image/png;base64,'+Buffer.alloc(2*1024*1024,7).toString('base64');
+  const oversized='data:image/png;base64,'+Buffer.alloc(2*1024*1024+1,7).toString('base64');
+  assert.equal((await request(member,'set-channel-icon',{channelId:'main',icon})).ok,false);
+  assert.equal((await request(host,'create-channel',{name:'Large',icon:oversized})).ok,false);
+  assert.equal((await request(admin,'set-channel-icon',{channelId:'missing',icon})).ok,false);
+  assert.equal((await request(admin,'set-channel-icon',{channelId:'main',icon:'bad'})).ok,false);
+  const created=(await request(host,'create-channel',{name:'With icon',icon})).channel;
+  assert.match(created.icon,/^image:/); assert.equal((await request(member,'get-image',{ref:created.icon})).data,icon);
+  await request(admin,'set-channel-icon',{channelId:'main',icon});
+  assert.equal(JSON.parse(fs.readFileSync(stateFile)).channels[0].icon.startsWith('media/'),true);
+  await f.close(); const g=await fixture(t,{stateFile}),returning=await g.client();
+  const joined=await request(returning,'join-server',{userName:'Reader',virtualIp:'10.144.10.4',identity:identity()});
+  assert.equal(joined.channels.find(c=>c.id===created.id).icon,created.icon);
+  assert.equal(joined.channels[0].icon,created.icon);assert.equal((await request(returning,'get-image',{ref:created.icon})).data,icon);
+  // Reset/delete on a fresh server owned by the test client.
+  const h=await fixture(t),owner=await h.client();await request(owner,'join-server',{userName:'Owner',virtualIp:'10.144.10.5',identity:identity()});
+  const channel=(await request(owner,'create-channel',{name:'Temporary',icon})).channel;
+  await request(owner,'set-channel-icon',{channelId:channel.id,icon:null});
+  assert.equal((await request(owner,'switch-channel',{channelId:'main'})).channels.find(c=>c.id===channel.id).icon,null);
+  assert.equal((await request(owner,'get-image',{ref:channel.icon})).ok,false);
+  await request(owner,'set-channel-icon',{channelId:channel.id,icon});await request(owner,'delete-channel',{channelId:channel.id});
+  assert.equal((await request(owner,'get-image',{ref:channel.icon})).ok,false);
+});
+
 test('short network disconnect suppresses channel cues and restores original channel with stable public presence', async t => {
   const { ChannelSoundTracker } = await import('../app/renderer/channel-sound-tracker.mjs');
   const f = await fixture(t, { disconnectGraceMs: 800 }), host = await f.client(), member = await f.client();
@@ -304,7 +401,7 @@ test('single server: required names, role enforcement, channels and isolation', 
   const owner = identity(), admin = identity();
   const joined = await request(a, 'join-server', { userName: 'A', virtualIp: '10.144.1.1', identity: owner });
   assert.equal(joined.users[0].role, 'host');
-  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道' }]);
+  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道', icon: null }]);
   assert.equal((await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.1', identity: admin })).ok, false);
   await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.2', identity: admin });
   assert.equal((await request(c, 'join-server', { userName: ' a ', virtualIp: '10.144.1.3', identity: identity() })).ok, false);

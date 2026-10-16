@@ -35,6 +35,8 @@ export const state = {
   maxBitrate: 1500,
   audioBitrate: 128,
   shareAudio: false,
+  adjustingShare: false,
+  adaptiveResolution: false,
   // EasyTier or the explicitly selected LAN address supplies the reachable route.
   stunServer: '',
   turnServer: ''

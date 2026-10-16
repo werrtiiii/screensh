@@ -29,7 +29,7 @@ const obs = new SyntheticEngine(temporary, message => console.error('OUTPUT FAIL
       env: { ...process.env, MTX_WEBRTCADDRESS: '127.0.0.1:8889', MTX_WEBRTCLOCALUDPADDRESS: '127.0.0.1:8189', MTX_WEBRTCADDITIONALHOSTS: '127.0.0.1' },
     });
     for (let i = 0; i < 2; i++) {
-      const result = await obs.start({ sourceId: 'Auto', videoEncoder: process.env.SCREENSH_TEST_ENCODER || 'x264', resolution: '1280x720', frameRate: 30, maxBitrate: 1500, audioBitrate: 128, shareAudio: false });
+      const result = await obs.start({ sourceId: 'Auto', videoEncoder: process.env.SCREENSH_TEST_ENCODER || 'x264', resolution: i ? '854x480' : '1280x720', frameRate: 30, maxBitrate: i ? 700 : 1500, audioBitrate: 128, shareAudio: false });
       console.log('NATIVE_STREAM_STARTED', i + 1, JSON.stringify(result));
       await new Promise(resolve => setTimeout(resolve, 1000));
       obs.stop();

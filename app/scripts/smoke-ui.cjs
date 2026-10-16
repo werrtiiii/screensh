@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
     window.webContents.on('console-message', (_event, level, message) => { if (level >= 2) console.log('RENDERER', message); });
     await window.loadFile(path.join(root, 'renderer/index.html'));
     const saved = await window.webContents.executeJavaScript(`(async () => {
-      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js');
+      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js'); window.channelVoice.sync=()=>{};
       document.querySelector('#btnSettings').click();
       if ([...document.querySelectorAll('.profile-avatar')].some(n => n.textContent !== '👤' || n.classList.contains('has-image'))) throw new Error('Default profile avatar missing');
       if (document.querySelector('.setting-avatar') || document.querySelector('.panel-kicker')) throw new Error('Removed settings/header remain visible');
@@ -62,6 +62,9 @@ app.whenReady().then(async () => {
       captureMethod.dispatchEvent(new Event('change', { bubbles: true }));
       const encoder = document.querySelector('#videoEncoderSelect');
       encoder.value = 'amf'; encoder.dispatchEvent(new Event('change', { bubbles: true }));
+      if(document.querySelector('#lowBandwidthCheckbox')) throw Error('Removed low bandwidth mode still visible');
+      const adaptive=document.querySelector('#adaptiveResolutionCheckbox');if(adaptive.checked)throw Error('Adaptive resolution must default off');adaptive.click();
+      if(getComputedStyle(hardware).borderRadius!=='999px' || hardware.getAttribute('role')!=='switch') throw Error('Settings switch style missing');
       return true;
     })()`);
     assert.equal(saved, true);
@@ -69,22 +72,33 @@ app.whenReady().then(async () => {
     window = new BrowserWindow({ show: false, webPreferences: { preload: path.join(root, 'preload.js'), contextIsolation: true, nodeIntegration: false } });
     await window.loadFile(path.join(root, 'renderer/index.html'));
     const result = await window.webContents.executeJavaScript(`(async () => {
-      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js');
+      localStorage.setItem('voiceMuted', 'true'); localStorage.setItem('voiceDeafened', 'true'); await import('./renderer.js'); window.channelVoice.sync=()=>{};
       const $ = s => document.querySelector(s);
       const { state } = await import('./shared.js');
       const peersRestored = !$('#easytierPeers') && !$('#peerTestInput');
       if ($('#captureMethodSelect').value !== 'wgc') throw new Error('Capture method not restored');
       if ($('#videoEncoderSelect').value !== 'amf') throw new Error('Encoder not restored');
+      if (!$('#adaptiveResolutionCheckbox').checked) throw new Error('Adaptive resolution switch preference not restored');
       async function until(fn) { for(let i=0;i<100;i++){if(fn())return;await new Promise(r=>setTimeout(r,50))}throw new Error('UI timeout: ' + fn.toString() + '\\n' + document.body.innerText.slice(-1000)) }
+      $('#userName').value = 'Smoke';
+      $('#serverUrl').value = 'http://127.0.0.1:1';
+      const enter = new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true});
+      $('#serverUrl').dispatchEvent(enter);
+      await new Promise(r=>setTimeout(r,50));
+      if (!enter.defaultPrevented || state.joining) throw new Error('Enter still starts a connection');
+      $('#btnConnect').click();
+      await until(()=>[...document.querySelectorAll('.toast-msg')].some(n=>n.textContent.includes('无法连接到服务器，请检查服务器地址')));
+      await until(()=>!state.joining && !state.leaving);
+      if ([...document.querySelectorAll('.toast-msg')].some(n=>n.textContent.includes('websocket error'))) throw new Error('Raw transport error shown');
       $('#serverUrl').value = 'http://127.0.0.1:${server.address().port}';
       $('#userName').value = ''; $('#btnConnect').click();
       await new Promise(r => setTimeout(r, 100));
       if (!$('#lobby').classList.contains('active')) throw new Error('Name must be required');
       $('#userName').value = 'Smoke'; $('#btnConnect').click();
       await until(() => $('#room').classList.contains('active'));
-      await until(() => $('#userCount').textContent === '1');
+      await until(() => document.querySelectorAll('#userList li').length === 1);
       await until(() => $('.member-avatar img')?.src.startsWith('data:image/'));
-      if (!localStorage.getItem('userAvatar')?.startsWith('data:image/')) throw new Error('Avatar cache reference overwrote local image');
+      if (!state.userAvatar?.startsWith('data:image/')) throw new Error('Avatar cache reference overwrote local image');
       if ($('#channelNameDisplay').textContent !== '主频道') throw new Error('Missing main channel');
       $('#btnServerSettings').click();
       if ($('#serverSettingsDialog').classList.contains('hidden')) throw new Error('Missing server settings');
@@ -112,11 +126,11 @@ app.whenReady().then(async () => {
         return new Promise((resolve, reject) => peer.timeout(2000).emit(event, payload, (e, result) => e ? reject(e) : resolve(result)));
       };
       await peerRequest('join-server', { userName: 'Other', virtualIp: '10.144.1.2', identity: 'b'.repeat(64) });
-      await until(() => $('#userCount').textContent === '2');
+      await until(() => document.querySelectorAll('#userList li').length === 2);
       if (document.querySelectorAll('.user-card').length !== 1) throw new Error('Other channel leaked into cards');
       if ((await peerRequest('create-channel', { name: 'denied' })).ok) throw new Error('Member created a channel');
       $('#userList li:last-child').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
-      $('.context-menu button').click();
+      [...document.querySelectorAll('.context-menu button')].find(b => b.textContent === '设为管理员').click();
       await until(() => state.serverUsers.some(u => u.name === 'Other' && u.role === 'admin'));
       if (!(await peerRequest('create-channel', { name: '管理员频道' })).ok) throw new Error('Admin creation failed');
       await until(() => document.querySelectorAll('.channel-button').length === 3);
@@ -124,7 +138,7 @@ app.whenReady().then(async () => {
       $('.context-menu button').click();
       await until(() => state.serverUsers.some(u => u.name === 'Other' && u.role === 'member'));
       if ((await peerRequest('create-channel', { name: 'denied-again' })).ok) throw new Error('Revoked admin created channel');
-      peer.disconnect(); await until(() => $('#userCount').textContent === '1');
+      peer.disconnect(); await until(() => document.querySelectorAll('#userList li').length === 1);
       $('#btnShare').click(); await until(() => $('.screen-item')); $('.screen-item').click(); $('#btnConfirmShare').click();
       await until(() => !$('#btnConfirmShare').disabled);
       const failedCleanly = $('#btnStopShare').classList.contains('hidden');
@@ -133,7 +147,7 @@ app.whenReady().then(async () => {
       WhepSession.prototype.start = async function () { previewUrl = this.url; Object.defineProperty(this.pc, 'connectionState', { value: 'connected' }); };
       $('#btnConfirmShare').click();
       await until(() => $('#videoContainer video'));
-      const autoPreview = $('#watchingUserName').textContent === '我的共享预览'
+      const autoPreview = state.watchingId === (await import('./signaling.js')).socket.id
         && $('#videoContainer video').muted && previewUrl === 'http://127.0.0.1:8889/live/whep';
       peer.connect(); await new Promise(resolve => peer.once('connect', resolve));
       const peerJoined = await peerRequest('join-server', { userName: 'Other', virtualIp: '10.144.1.2', identity: 'b'.repeat(64) });
@@ -186,14 +200,14 @@ app.whenReady().then(async () => {
       document.querySelectorAll('.channel-button')[1].click();
       await until(() => $('#channelNameDisplay').textContent === '测试频道');
       document.querySelectorAll('.channel-button')[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
-      $('.context-menu button').click();
+      [...document.querySelectorAll('.context-menu button')].find(b => b.textContent === '删除').click();
       await until(() => document.querySelectorAll('.channel-button').length === 2 && $('#channelNameDisplay').textContent === '主频道');
       peer.connect(); await new Promise(resolve => peer.once('connect', resolve));
       await peerRequest('join-server', { userName: 'Other', virtualIp: '10.144.1.2', identity: 'b'.repeat(64) });
-      await until(() => $('#userCount').textContent === '2');
+      await until(() => document.querySelectorAll('#userList li').length === 2);
       $('#userList li:last-child').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
       [...document.querySelectorAll('.context-menu button')].find(b => b.textContent === '踢出服务器').click();
-      await until(() => $('#userCount').textContent === '1' && !peer.connected);
+      await until(() => document.querySelectorAll('#userList li').length === 1 && !peer.connected);
       $('#btnServerPassword').click(); await until(() => $('#serverPasswordInput'));
       $('#serverPasswordInput').value = 'smoke-secret'; $('#passwordConfirm').value = 'mismatch';
       $('.password-modal form').requestSubmit();
@@ -230,7 +244,7 @@ app.whenReady().then(async () => {
       if (document.querySelector('img[src=""]')) throw new Error('Empty image source in default UI');
       if (!$('#btnResetServerIcon').disabled) throw new Error('Reset control remains enabled with default icon');
       $('#btnLeave').click(); await until(() => $('#lobby').classList.contains('active') && !$('#btnConnect').disabled);
-      $('#btnConnect').click(); await until(() => $('#room').classList.contains('active') && $('#userCount').textContent === '1');
+      $('#btnConnect').click(); await until(() => $('#room').classList.contains('active') && document.querySelectorAll('#userList li').length === 1);
       if ($('.member-avatar img') || $('#roomServerIcon').classList.contains('has-image')) throw new Error('Removed images returned after reconnect');
       if (document.querySelectorAll('.user-card [data-voice]').length !== 2) throw new Error('Missing card voice controls');
       if (![...document.styleSheets[0].cssRules].every(r => r.selectorText !== '.user-card:hover')) throw new Error('Hover animation remains');
@@ -247,6 +261,7 @@ app.whenReady().then(async () => {
     assert.equal(captureConfig.captureMethod, 'wgc');
     assert.equal(captureConfig.videoEncoder, 'amf');
     assert.equal(captureConfig.sourceId, 'window-test');
+    assert.equal(captureConfig.resolution,'1280x720');assert.equal(captureConfig.frameRate,30);assert.equal(captureConfig.maxBitrate,1500);
     await window.webContents.executeJavaScript(`document.querySelectorAll('.toast').forEach(n => n.remove())`);
     window.setSize(1000, 640);
     window.showInactive();

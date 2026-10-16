@@ -33,13 +33,15 @@ app.whenReady().then(async () => {
       window.toneContext = new AudioContext(); await toneContext.resume();
       const tone = gain => { const oscillator = toneContext.createOscillator(), level = toneContext.createGain(), output = toneContext.createMediaStreamDestination(); level.gain.value = gain; oscillator.connect(level).connect(output); oscillator.start(); return output.stream.getAudioTracks()[0]; };
       window.musicTrack = tone(0.3); window.micTrack = tone(0.03);
+      navigator.mediaDevices.getUserMedia=async()=>new MediaStream([micTrack.clone()]);
       WhepSession.prototype.start = async function () { this.pc.ontrack({ track: this.url.endsWith('/music') ? musicTrack.clone() : micTrack.clone() }); }; WhepSession.prototype.deleteResource = () => {};
       const destination = AudioContext.prototype.createMediaStreamDestination;
-      AudioContext.prototype.createMediaStreamDestination = function () { const output = destination.call(this); window.sentOutput = { output, context: this }; return output; };
+      AudioContext.prototype.createMediaStreamDestination = function () { const output = destination.call(this); window.sentOutput ||= { output, context: this }; return output; };
       window.mixRms = async () => { const { output, context } = sentOutput; const input = context.createMediaStreamSource(output.stream), analyser = context.createAnalyser(), silent = context.createGain(); silent.gain.value = 0; input.connect(analyser); analyser.connect(silent); silent.connect(context.destination); await new Promise(r => setTimeout(r, 80)); const samples = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(samples); input.disconnect(); analyser.disconnect(); silent.disconnect(); return Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length); };
       document.querySelector('#serverUrl').value = 'http://127.0.0.1:${server.address().port}'; document.querySelector('#userName').value = '伴奏测试'; document.querySelector('#btnConnect').click();
     })()`);
     await wait(`document.querySelector('.accompaniment-trigger') !== null`);
+    await wait(`window.channelVoice.isEnabled()`);
     await run(`document.querySelector('.accompaniment-trigger').click()`);
     await wait(`document.querySelector('.accompaniment-more-list button') !== null`);
     await run(`document.querySelector('.accompaniment-more').click()`);
@@ -63,7 +65,7 @@ app.whenReady().then(async () => {
     assert.equal(await run(`localStorage.getItem('accompanimentVolume')`), '0.5');
     await run(`document.querySelector('.accompaniment-stop').click()`);
     await wait(`document.querySelector('audio[data-accompaniment-capture]') === null && !window.channelAccompaniment.active()`);
-    await wait(`sentOutput.context.state === 'closed'`);
+    assert.equal(await run(`sentOutput.context.state !== 'closed' && window.channelVoice.isEnabled()`),true,'stopping accompaniment preserves channel voice');
     assert.ok(stops > 0);
     await run(`document.querySelector('.accompaniment-trigger').click()`);
     await wait(`document.querySelector('.accompaniment-more-list button') !== null`);
