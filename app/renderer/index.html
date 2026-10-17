@@ -138,15 +138,26 @@
     <div id="serverSettingsDialog" class="modal hidden">
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverSettingsTitle">
         <div class="modal-header"><h2 id="serverSettingsTitle">服务器设置</h2><button id="btnCloseServerSettings" class="btn-close" aria-label="关闭">×</button></div>
-        <form id="serverNameForm" class="server-name-form">
+        <div class="server-setting-row"><label for="autoJoinChannelCheckbox">自动进入频道</label><input id="autoJoinChannelCheckbox" type="checkbox" role="switch" checked /></div>
+        <div class="server-setting-row"><div><label for="lolPingEnabled">启用 lolPing</label><small id="lolPingStatus">仅保存在本机，开启后与同频道成员同步</small></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div>
+        <form id="serverNameForm" class="server-name-form server-owner-setting">
           <label for="serverNameInput">服务器名称</label>
           <div class="server-name-controls"><input id="serverNameInput" class="form-control" type="text" maxlength="40" required placeholder="0091 Server" /><button id="btnSaveServerName" type="submit" class="btn btn-primary btn-sm">保存</button></div>
           <p id="serverNameError" class="dialog-error" role="alert"></p>
         </form>
-        <div class="server-setting-row"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
-        <div class="server-setting-row"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
-        <div class="server-setting-row"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
+        <div class="server-setting-row server-owner-setting"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
+        <div class="server-setting-row server-owner-setting"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
+        <div class="server-setting-row server-owner-setting"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
       </div>
+    </div>
+    <div id="lolPingDialog" class="modal hidden">
+      <form id="lolPingForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="lolPingTitle">
+        <div class="modal-header"><h2 id="lolPingTitle">lolPing 配置</h2><button id="btnCloseLolPing" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <p class="lolping-note">按住触发键拖动鼠标，松开选择标记或表情。同频道内已启用 lolPing 的成员会收到。</p>
+        <div id="lolPingFields"></div>
+        <p id="lolPingError" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions"><button id="btnSaveLolPing" type="submit" class="btn btn-primary">保存</button></div>
+      </form>
     </div>
     <div id="serverPeersDialog" class="modal hidden">
       <form id="serverPeersForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverPeersTitle">
@@ -191,6 +202,10 @@
               <option value="dark">深色</option>
               <option value="light" selected>浅色</option>
             </select>
+          </div>
+          <div class="form-group setting-startup">
+            <label><input id="autoConnectCheckbox" type="checkbox" role="switch" checked /> 启动后自动连接服务器</label>
+            <label><input id="loginStartupCheckbox" type="checkbox" role="switch" /> 开机自启</label>
           </div>
           <div class="form-group setting-sounds">
             <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>

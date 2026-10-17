@@ -1,4 +1,4 @@
-// Passwords remain in memory for this operation and are never stored locally.
+// The caller saves a successful join's password through main-process encryption.
 export function requestPassword({ settings = false, enabled = true, connection } = {}) {
   return new Promise(resolve => {
     const modal = document.createElement('div');

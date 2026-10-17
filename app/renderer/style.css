@@ -278,6 +278,7 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .user-list li .user-dot.viewer { background: var(--text2); }
 .user-list li.me { font-weight: 600; background: rgba(88,101,242,0.08); }
 .member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-offline .member-avatar { filter: grayscale(1); opacity: .55; }
 .member-role { margin-left: auto; flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border-radius: 7px; border: 1px solid currentColor; font-size: 10px; font-weight: 600; white-space: nowrap; line-height: 1.2; }
 .member-role svg { width: 13px; height: 13px; }
 .role-host { color: #b77914; background: #f0b13d18; border-color: #d69a3238; }
@@ -742,6 +743,11 @@ input.sound-volume-slider {
 .remote-headphones-off { display: grid; place-items: center; width: 28px; height: 28px; color: var(--text2); }
 .remote-headphones-off svg { width: 22px; height: 22px; }
 .receive-volume-control { margin-left: auto; }
+.card-exit-channel { display: inline-grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 8px; background: transparent; color: #ff647e; cursor: pointer; }
+.card-exit-channel svg { width: 20px; height: 20px; }
+.card-exit-channel:hover { background: #ff647e18; color: #ff4163; }
+.card-exit-channel:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.card-exit-channel:disabled { opacity: .4; cursor: default; }
 .image-setting-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
 .default-avatar, .user-card .avatar { position: relative; }
 .default-avatar { display: grid; place-items: center; font-size: 14px; overflow: hidden; }
@@ -774,3 +780,23 @@ input.sound-volume-slider {
 .microphone-popover select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); color: var(--text); }
 .microphone-popover input { width: 100%; accent-color: var(--primary); }
 .microphone-settings-link { padding: 8px 0 0; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+/* lolPing settings share the existing scrollable modal layout. */
+.lolping-actions { display: flex; align-items: center; gap: 14px; }
+#lolPingStatus { display: block; color: var(--text-muted, #959ba5); font-size: 12px; margin-top: 5px; }
+#lolPingDialog .modal-content { width: min(540px, calc(100vw - 32px)); }
+.lolping-note { color: var(--text-muted, #959ba5); font-size: 13px; line-height: 1.6; }
+.lolping-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid rgba(140,145,160,.13); font-size: 13px; }
+.lolping-field input[type="range"] { width: 100%; grid-column: 1 / -1; margin: 0; }
+.lolping-field select { min-width: 110px; max-width: 235px; padding: 6px; }
+.lolping-field output { color: var(--text-muted, #959ba5); font-variant-numeric: tabular-nums; }
+#lolPingFields details { margin-top: 16px; }
+#lolPingFields summary { cursor: pointer; font-size: 13px; padding: 8px 0; }
+.lolping-wheel-layout{position:relative;width:300px;height:300px;max-width:100%;margin:auto;border-radius:50%;background:radial-gradient(circle,var(--bg-card,#282b38),transparent 70%)}
+.lolping-wheel-layout button{position:absolute;transform:translate(-50%,-50%);width:80px;min-height:46px;padding:5px;border:1px solid #6671a366;border-radius:12px;font-size:12px;white-space:normal}
+.lolping-palette{display:flex;flex-wrap:wrap;gap:6px;max-height:180px;overflow:auto;margin:12px 0}
+.lolping-palette button{padding:6px 10px;border-radius:9px;font-size:12px}
+.lolping-wheel-editor button,.lolping-field button{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:9px;cursor:pointer;padding:7px 10px}
+.lolping-wheel-editor button:hover,.lolping-field button:hover{border-color:var(--primary)}
+.lolping-palette img{width:28px;height:28px;object-fit:contain;vertical-align:middle;margin-right:5px}
+.lolping-wheel-layout img{display:block;width:32px;height:32px;object-fit:contain;margin:0 auto 3px}
+.lolping-field[hidden],#lolPingFields details[hidden]{display:none}

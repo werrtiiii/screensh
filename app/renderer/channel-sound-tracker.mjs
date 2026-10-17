@@ -7,6 +7,7 @@ export class ChannelSoundTracker {
         && (user.memberId || user.socketId) !== (me.memberId || selfId)).map(user => user.memberId || user.socketId)) };
     const previous = this.current; this.current = current;
     if (silent) return { sounds: [], replace: true };
+    if (!current.channel) return { sounds: [], replace: true };
     if (!previous) return { sounds: ['enter_voice'], replace: true };
     if (previous.server !== current.server || previous.channel !== current.channel) return { sounds: ['enter_voice'], replace: true };
     const sounds = [];

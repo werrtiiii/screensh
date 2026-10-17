@@ -48,6 +48,7 @@ export function buildScreenConfig() {
 export async function startScreenCapture() {
   if (state.startingShare || state.stoppingShare || state.shareCleanupFailed || state.isSharing || state.leaving || state.switchingChannel) return;
   if (!socket?.connected || !state.roomId) return toast('请先连接服务器', 'error');
+  if (!state.channelId) return toast('请先加入频道', 'error');
   if (state.selectedSourceId == null) return toast('请选择显示器或窗口', 'error');
   const current = ++sharingGeneration;
   state.startingShare = true; updateSharingUI(false);
@@ -109,7 +110,7 @@ export function updateSharingUI(sharing) {
   const showStop = sharing || state.stoppingShare || state.shareCleanupFailed;
   const busy = state.startingShare || state.stoppingShare || state.leaving || state.switchingChannel || state.adjustingShare;
   $('#btnShare').classList.toggle('hidden', showStop);
-  $('#btnShare').disabled = busy;
+  $('#btnShare').disabled = busy || !state.channelId;
   $('#btnConfirmShare').disabled = busy || state.shareCleanupFailed;
   $('#btnStopShare').classList.toggle('hidden', !showStop);
   $('#btnStopShare').disabled = state.stoppingShare || state.leaving;

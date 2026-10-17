@@ -82,4 +82,4 @@ jobs:
             app/dist/ScreenSh-*-Setup.exe
             app/dist/ScreenSh-*-Setup.exe.blockmap
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body_path: ${{ format('release-notes/{0}.md', env.RELEASE_TAG) }}

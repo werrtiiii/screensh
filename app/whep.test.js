@@ -1,6 +1,30 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+test('accompaniment WHEP negotiates stereo before local decoding and sends the same offer', async t => {
+  const { WhepSession } = await import('./renderer/whep.mjs');
+  const sdp='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n';
+  class Peer {
+    addTransceiver() {}
+    async createOffer() { return {type:'offer',sdp}; }
+    async setLocalDescription(offer) { this.localDescription=offer; }
+    async setRemoteDescription() {}
+    close() {}
+  }
+  const original=globalThis.RTCPeerConnection;
+  globalThis.RTCPeerConnection=Peer;
+  t.after(()=>{if(original)globalThis.RTCPeerConnection=original;else delete globalThis.RTCPeerConnection;});
+  let posted;
+  t.mock.method(globalThis,'fetch',async (_url,init)=>{
+    if(init.method==='POST')posted=init.body;
+    return {ok:true,headers:new Headers({Location:'/session'}),text:async()=>'answer'};
+  });
+  const session=new WhepSession('http://127.0.0.1:8891/live/whep',{},()=>{},()=>{},{audioOnly:true,stereo:true});
+  t.after(()=>session.close());await session.start();
+  assert.match(session.pc.localDescription.sdp,/;stereo=1;sprop-stereo=1;maxaveragebitrate=128000/);
+  assert.equal(posted,session.pc.localDescription.sdp);
+});
+
 test('WHEP sends queued ICE using PATCH, deletes session and cancels pending starts', async t => {
   const { WhepSession } = await import('./renderer/whep.mjs');
   class Peer extends EventTarget {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, safeStorage } = require('electron');
 const { listCaptureSources } = require('./capture-sources');
 const path = require('path');
 const os = require('os');
@@ -38,6 +38,21 @@ let mainWindow, obs, virtualIp, generation = 0, quitting = false;
 let trayController, quitReady = false, quitPromise;
 let shareStart = null, shareStop = null, shareCleanup = null, runtimeLeave = null;
 const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'res'), name);
+let lolping;
+function getLolPing() {
+  if (!lolping) {
+    const { LolPingRuntime } = require('./lolping-runtime.cjs');
+    lolping = new LolPingRuntime({ file: path.join(app.getPath('userData'), 'lolping.json'), helper: resource('lolping-hook-helper.exe'),
+      send: (channel, data) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data); } });
+  }
+  return lolping;
+}
+function requireMainWindow(event) { if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('无效的窗口'); }
+ipcMain.handle('lolping-get', (event, serverId) => { requireMainWindow(event); return getLolPing().get(serverId); });
+ipcMain.handle('lolping-save', (event, serverId, config) => { requireMainWindow(event); return getLolPing().save(serverId, config); });
+ipcMain.handle('lolping-sync', (event, context) => { requireMainWindow(event); return context ? getLolPing().sync({ ...context, virtualIp }) : lolping?.stop(); });
+ipcMain.handle('lolping-preview', (event, kind, id) => { requireMainWindow(event); return getLolPing().preview(kind,id); });
+ipcMain.handle('lolping-input-suspend', (event, on) => { requireMainWindow(event); getLolPing().suspendInput(on); });
 function failure(message) {
   console.error(message);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('runtime-error', message);
@@ -47,6 +62,12 @@ const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./member-ping.cjs').createMemberPinger();
 ipcMain.handle('ping-member', (_event, ip) => memberPinger.ping(ip));
+const savedPasswords = require('./saved-passwords.cjs').createSavedPasswords(path.join(app.getPath('userData'), 'server-passwords.json'), safeStorage);
+const loginStartup = require('./login-startup.cjs').createLoginStartup({ exe: process.execPath, appPath: __dirname, packaged: app.isPackaged });
+ipcMain.handle('get-saved-server-password', (_event, url, id) => savedPasswords.get(url, id));
+ipcMain.handle('save-server-password', (_event, url, id, password) => savedPasswords.set(url, id, password));
+ipcMain.handle('get-login-startup', () => loginStartup.get());
+ipcMain.handle('set-login-startup', (_event, enabled) => loginStartup.set(enabled));
 ipcMain.handle('get-hardware-acceleration', () => hardwareAccelerationEnabled);
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
   if (typeof enabled !== 'boolean') throw new Error('无效的硬件加速设置');
@@ -123,6 +144,10 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   trayController?.attach(mainWindow);
+  mainWindow.webContents.on('render-process-gone', () => { void lolping?.stop().catch(failure); });
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) void lolping?.stop().catch(failure);
+  });
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const key = input.key.toLowerCase();
     const modifier = input.control || input.meta;
@@ -254,11 +279,12 @@ function leaveRuntime() {
   // Invalidate room access before any asynchronous cleanup can fail.
   virtualIp = null;
   runtimeLeave = Promise.allSettled([
+    Promise.resolve().then(() => lolping?.stop()),
     stopShare(),
     Promise.resolve().then(() => voiceRuntime?.stop()),
     Promise.resolve().then(() => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()])),
     Promise.resolve().then(() => easytier.stop()),
-  ]).then(results => checkCleanup(results, ['媒体', '语音', '伴奏', '虚拟网络']))
+  ]).then(results => checkCleanup(results, ['lolPing', '媒体', '语音', '伴奏', '虚拟网络']))
     .finally(() => { virtualIp = null; runtimeLeave = null; });
   return runtimeLeave;
 }

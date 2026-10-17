@@ -73,7 +73,7 @@ async function start(source) {
         if (token !== generation || event.track.kind !== 'audio') return;
         stream.addTrack(event.track);
         if (event.track.muted) event.track.addEventListener('unmute', ready, { once: true }); else ready();
-      }, error => { if (token === generation) { toast(error.message, 'error'); void stop(); } }, { audioOnly: true });
+      }, error => { if (token === generation) { toast(error.message, 'error'); void stop(); } }, { audioOnly: true, stereo: true });
       await bridge.start(); check();
       try { await Promise.race([trackReady, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('未收到伴奏音频，请确认音源程序正在播放')), 12000); })]); }
       finally { clearTimeout(timer); }

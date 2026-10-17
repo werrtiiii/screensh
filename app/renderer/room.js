@@ -9,6 +9,9 @@ import { showContextMenu, closeContextMenu } from './context-menu.js';
 import { normalizePeers } from './easytier-peers.mjs';
 import { decorateInteractionCard } from './interactions.js';
 import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
+import { readChannelPreferences, saveChannelPreference } from './server-channel-preferences.mjs';
+import { applyAvatarThumbnails } from './avatar-thumbnail.mjs';
+import { syncLolPing, stopLolPing } from './lolping.js';
 import {
   escapeHtml,
   displayRemoteVideo,
@@ -19,8 +22,8 @@ import {
 // --- 成员列表 + 卡片网格 ---
 const channelIconMarkup = icon => `<span class="channel-icon" aria-hidden="true"><span class="channel-default"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M16.5 7.5a6.36 6.36 0 1 0 0 9"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg></span>${icon ? `<img src="${escapeHtml(icon)}" alt="" onerror="this.remove()" />` : ''}</span>`;
 export function renderCurrentChannel(channel) {
-  $('#currentChannelIcon').innerHTML = channelIconMarkup(channel?.icon);
-  $('#channelNameDisplay').textContent = channel?.name || '主频道';
+  $('#currentChannelIcon').innerHTML = channel ? channelIconMarkup(channel.icon) : '';
+  $('#channelNameDisplay').textContent = channel?.name || '';
 }
 const roleBadges = {
   host: { label: '服主', path: '<path d="m3 6 4 4 5-6 5 6 4-4-2 12H5L3 6Z"/><path d="M6 21h12"/>' },
@@ -32,45 +35,47 @@ function roleBadge(role) {
   return `<span class="member-role role-${roleBadges[role] ? role : 'member'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${item.path}</svg>${item.label}</span>`;
 }
 const memberRank = { host: 2, admin: 1, member: 0 };
-function memberActions(user, users) {
+function memberActions(user, users, allowDelete = false) {
   const myRole = users.find(u => u.socketId === socket?.id)?.role;
   const actions = [];
-  if (myRole === 'host' && user.role !== 'host') actions.push({
+  if (user.socketId && myRole === 'host' && user.role !== 'host') actions.push({
     label: user.role === 'admin' ? '移除管理员' : '设为管理员',
     run: () => perform('set-admin', { socketId: user.socketId, enabled: user.role !== 'admin' })
   });
   if (memberRank[myRole] > memberRank[user.role]) {
-    actions.push({ label: '踢出服务器', run: () => perform('kick-member', { socketId: user.socketId }) });
-    if (user.channelId === state.channelId) actions.push({ label: user.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: user.socketId, muted: !user.voiceMuted }) });
+    if (user.socketId) actions.push({ label: '踢出服务器', run: () => perform('kick-member', { socketId: user.socketId }) });
+    if (user.socketId && state.channelId && user.channelId === state.channelId) actions.push({ label: user.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: user.socketId, muted: !user.voiceMuted }) });
+    if (allowDelete && user.memberId) actions.push({ label: '删除成员配置', run: () => perform('delete-member-config', { memberId: user.memberId }) });
   }
   return actions;
 }
 
-export function updateUserList(users) {
+export function updateUserList(users, allMembers = users) {
   const rank = { host: 2, admin: 1, member: 0 };
-  const orderedMembers = [...users].sort((a, b) => (rank[b.role] ?? 0) - (rank[a.role] ?? 0));
+  const orderedMembers = [...allMembers].sort((a, b) => (rank[b.role] ?? 0) - (rank[a.role] ?? 0) || Number(b.online !== false) - Number(a.online !== false));
   // 侧边栏列表
   const list = $('#userList');
   list.innerHTML = orderedMembers
     .map((u) => {
       const isMe = u.socketId === socket?.id;
       return `
-        <li class="${isMe ? 'me' : ''}">
-          <span class="member-avatar default-avatar" aria-hidden="true">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</span>
+        <li class="${isMe ? 'me' : ''}${u.online === false ? ' member-offline' : ''}" data-member-id="${escapeHtml(u.memberId || '')}">
+          <span class="member-avatar default-avatar" aria-hidden="true">👤${u.avatar ? `<img data-avatar-source="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</span>
           <span class="member-name">${escapeHtml(u.name)}</span>
           ${roleBadge(u.role)}
         </li>
       `;
     })
     .join('');
+  applyAvatarThumbnails(list);
 
   const myRole = users.find(u => u.socketId === socket?.id)?.role;
   [...list.children].forEach((row, index) => {
     const user = orderedMembers[index];
-    row.oncontextmenu = event => showContextMenu(event, memberActions(user, users));
+    row.oncontextmenu = event => showContextMenu(event, memberActions(user, users, true));
   });
   renderChannels(users);
-  users = users.filter(u => u.channelId === state.channelId).sort((a, b) => Number(b.socketId === socket?.id) - Number(a.socketId === socket?.id));
+  users = users.filter(u => state.channelId && u.channelId === state.channelId).sort((a, b) => Number(b.socketId === socket?.id) - Number(a.socketId === socket?.id));
   // 同步共享者状态
   const sharer = users.find((u) => u.isSharing);
   state.activeSharerId = sharer ? sharer.socketId : null;
@@ -115,6 +120,15 @@ export function updateUserList(users) {
 
     cardsView.appendChild(card);
     window.channelVoice?.decorate(card, u, isMe);
+    if (isMe) {
+      const exit = document.createElement('button'); exit.type = 'button'; exit.id = 'btnLeaveChannel'; exit.className = 'card-exit-channel';
+      exit.title = '退出'; exit.setAttribute('aria-label', '退出频道'); exit.disabled = state.switchingChannel || state.leaving;
+      exit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 7l5 5-5 5M9 12h11"/></svg>';
+      exit.onclick = () => void switchChannel(null);
+      let row = card.querySelector('.card-voice-row');
+      if (!row) { row = document.createElement('div'); row.className = 'card-voice-row'; card.append(row); }
+      row.append(exit);
+    }
     decorateInteractionCard(card, u, isMe);
     if (rank[myRole] > rank[u.role]) card.oncontextmenu = event => showContextMenu(event, [{ label: u.voiceMuted ? '解除禁言' : '禁言', run: () => perform('set-member-mute', { socketId: u.socketId, muted: !u.voiceMuted }) }]);
   });
@@ -122,9 +136,11 @@ export function updateUserList(users) {
 
 // --- 房间进出 ---
 function renderChannels(users) {
+  const exit = $('#btnLeaveChannel');
+  if (exit) exit.disabled = state.switchingChannel || state.leaving;
   const me = users.find(u => u.socketId === socket?.id);
-  $('#btnServerSettings').classList.toggle('hidden', me?.role !== 'host');
-  if (me?.role !== 'host') $('#serverSettingsDialog').classList.add('hidden');
+  $('#btnServerSettings').classList.remove('hidden');
+  document.querySelectorAll('.server-owner-setting').forEach(node => node.classList.toggle('hidden', me?.role !== 'host'));
   $('#btnServerPassword').classList.toggle('hidden', me?.role !== 'host');
   $('#btnServerPeers').classList.toggle('hidden', me?.role !== 'host');
   $('#btnServerPassword').textContent = state.passwordRequired ? '服务器密码 · 已设置' : '服务器密码';
@@ -157,7 +173,7 @@ function renderChannels(users) {
         const row = document.createElement('li');
         row.className = 'channel-member' + (user.socketId === socket?.id ? ' me' : '');
         row.dataset.userId = user.socketId;
-        row.innerHTML = `<span class="member-avatar default-avatar" aria-hidden="true">👤${user.avatar ? `<img src="${escapeHtml(user.avatar)}" alt="" onerror="this.remove()" />` : ''}</span><span class="channel-member-name">${escapeHtml(user.name)}</span>`;
+        row.innerHTML = `<span class="member-avatar default-avatar" aria-hidden="true">👤${user.avatar ? `<img data-avatar-source="${escapeHtml(user.avatar)}" alt="" onerror="this.remove()" />` : ''}</span><span class="channel-member-name">${escapeHtml(user.name)}</span>`;
         row.oncontextmenu = event => showContextMenu(event, memberActions(user, users));
         memberList.append(row);
       }
@@ -165,18 +181,20 @@ function renderChannels(users) {
     }
     list.append(section);
   }
+  applyAvatarThumbnails(list);
 }
 
 export async function switchChannel(channelId) {
   if (state.switchingChannel || state.leaving || channelId === state.channelId || !state.roomId) return;
   state.switchingChannel = true; renderChannels(state.serverUsers); updateSharingUI(state.isSharing);
+  stopLolPing();
   try {
     if (!await stopSharing()) throw new Error('当前共享未能停止，请重试后再切换频道');
     await window.channelVoice?.stop();
     $('#screenPicker').classList.add('hidden');
     applyServerState(await requestServer('switch-channel', { channelId }));
   } catch (error) { toast(error.message, 'error'); }
-  finally { state.switchingChannel = false; window.channelVoice?.sync(); renderChannels(state.serverUsers); updateSharingUI(state.isSharing); }
+  finally { state.switchingChannel = false; window.channelVoice?.sync(); syncLolPing(); renderChannels(state.serverUsers); updateSharingUI(state.isSharing); }
 }
 
 async function perform(event, payload) {
@@ -205,11 +223,15 @@ $('#channelBitrateForm').onsubmit = async event => {
   finally { $('#btnSaveChannelBitrate').disabled = false; }
 };
 $('#btnServerSettings').addEventListener('click', () => {
-  if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
+  if (!state.roomId) return;
+  $('#autoJoinChannelCheckbox').checked = readChannelPreferences(state.roomId).autoJoin;
   $('#serverNameInput').value = state.serverName || '0091 Server';
   $('#serverNameError').textContent = '';
   $('#serverSettingsDialog').classList.remove('hidden'); $('#btnCloseServerSettings').focus();
 });
+$('#autoJoinChannelCheckbox').onchange = event => {
+  if (state.roomId) saveChannelPreference(state.roomId, { autoJoin: event.target.checked });
+};
 $('#serverNameForm').addEventListener('submit', async event => {
   event.preventDefault(); $('#btnSaveServerName').disabled = true; $('#serverNameError').textContent = '';
   try {
@@ -319,6 +341,7 @@ export async function leaveRoom() {
   state.leaving = true;
   closeContextMenu(); $('#channelDialog').classList.add('hidden'); $('#channelBitrateDialog').classList.add('hidden');
   $('#serverSettingsDialog').classList.add('hidden');
+  $('#lolPingDialog')?.classList.add('hidden');
   $('#serverPeersDialog').classList.add('hidden');
   $('#btnLeave').disabled = true;
   $('#btnLeave').title = '正在清理…';

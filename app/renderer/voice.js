@@ -4,6 +4,7 @@ import { captureMicrophone } from './microphone-capture.mjs';
 import { attachVoiceStats } from './voice-stats.mjs';
 import { toast } from './toast.js';
 import { channelVoiceBitrate, allowOpusStereo, setVoiceBitrate } from './voice-encoding.mjs';
+import { preferVoicePacketTime, preferVoiceReceiveLatency } from './voice-latency.mjs';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
@@ -154,6 +155,7 @@ function ensurePeer(user) {
   };
   pc.ontrack = async event => {
     if (event.track.kind !== 'audio' || peers.get(user.socketId) !== peer) return;
+    preferVoiceReceiveLatency(event.receiver);
     const stream = new MediaStream([event.track]); audio.srcObject = stream;
     // Read the received WebRTC audio level directly. A second Web Audio
     // consumer of a remote track can remain silent while playback is audible.
@@ -200,7 +202,7 @@ async function applyPeerBitrate(peer) {
 }
 async function offer(user) {
   const peer = ensurePeer(user);
-  try { const description = await peer.pc.createOffer(); description.sdp = allowOpusStereo(description.sdp); await peer.pc.setLocalDescription(description); await signal(user.socketId, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) }); }
+  try { const description = await peer.pc.createOffer(); description.sdp = preferVoicePacketTime(allowOpusStereo(description.sdp)); await peer.pc.setLocalDescription(description); await signal(user.socketId, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) }); }
   catch (error) { if (peers.get(user.socketId) === peer) { closePeer(user.socketId); announce(error); schedulePeerRetry(user); } }
 }
 export function receiveVoice({ from, data }) {
@@ -214,7 +216,7 @@ export function receiveVoice({ from, data }) {
       await peer.pc.setRemoteDescription(onlyVirtualSDP(data.description, user.virtualIp));
       for (const candidate of peer.queued.splice(0)) await peer.pc.addIceCandidate(candidate);
       if (data.description.type === 'offer') {
-        const description = await peer.pc.createAnswer(); description.sdp = allowOpusStereo(description.sdp);
+        const description = await peer.pc.createAnswer(); description.sdp = preferVoicePacketTime(allowOpusStereo(description.sdp));
         await peer.pc.setLocalDescription(description);
         await signal(from, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) });
       }
@@ -265,7 +267,7 @@ function ensureCapture() {
 async function startVoice() {
   if (voice.busy || voice.enabled || testBusy) return;
   if (cleanup) await cleanup;
-  if (voice.busy || voice.enabled || testBusy || !state.roomId || state.leaving || state.switchingChannel) return;
+  if (voice.busy || voice.enabled || testBusy || !state.roomId || !state.channelId || state.leaving || state.switchingChannel) return;
   const token = ++generation; voice.busy = true; voice.channel = state.channelId; paintControls();
   try {
     if (voice.testing && testOwnsCapture && outgoing) {

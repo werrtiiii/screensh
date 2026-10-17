@@ -46,11 +46,16 @@ function renderer(ipc = {}) {
   }
   vm.runInContext('globalThis.testApi = { state, startScreenCapture, stopSharing, leaveRoom, updateSharingUI, buildScreenConfig, adjustShareQuality, hasShareAdaptation:()=>!!shareAdaptation };', context);
   const { state } = context.testApi;
-  Object.assign(state, { roomId: 'test', virtualIp: '10.144.1.1', isSharing: true, autoPreview: false });
+  Object.assign(state, { roomId: 'test', channelId: 'main', virtualIp: '10.144.1.1', isSharing: true, autoPreview: false });
   context.testApi.updateSharingUI(true);
   return { ...context.testApi, $, ipc: api, notifications };
 }
 
+test('a server member outside channels cannot start screen capture', async()=>{
+  let starts=0;const r=renderer({startSharing:async()=>{starts++;}});
+  Object.assign(r.state,{channelId:null,isSharing:false,selectedSourceId:0});r.updateSharingUI(false);
+  assert.equal(r.$('#btnShare').disabled,true);await r.startScreenCapture();assert.equal(starts,0);assert.ok(r.notifications.includes('请先加入频道'));
+});
 test('sharing starts at original quality and frame rate without a low-bandwidth override', async () => {
   const r=renderer();Object.assign(r.state,{resolution:'1920x1080',frameRate:60,maxBitrate:5000,audioBitrate:128});
   const config=r.buildScreenConfig();assert.equal(config.resolution,'1920x1080');assert.equal(config.frameRate,60);assert.equal(config.maxBitrate,5000);assert.equal(config.audioBitrate,128);

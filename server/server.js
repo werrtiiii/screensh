@@ -8,6 +8,7 @@ const { isIPv4 } = require('net');
 const { Server } = require('socket.io');
 const proxyaddr = require('proxy-addr');
 const { normalizePeers } = require('./easytier-peers.cjs');
+const { cleanLolPingEndpoint } = require('./lolping-protocol.cjs');
 
 function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000 } = {}) {
   const dataDir = stateFile ? path.dirname(stateFile) : null;
@@ -27,6 +28,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       || (saved.password && (!/^[a-f0-9]{32}$/.test(saved.password.salt) || !/^[a-f0-9]{64}$/.test(saved.password.hash)))) throw new Error('服务器状态文件无效，请从备份恢复');
   }
   if (!saved.userProfiles || typeof saved.userProfiles !== 'object' || Array.isArray(saved.userProfiles)) saved.userProfiles = {};
+  if (!saved.memberHistory || typeof saved.memberHistory !== 'object' || Array.isArray(saved.memberHistory)) saved.memberHistory = {};
   if (typeof saved.serverName !== 'string' || !saved.serverName.trim()) saved.serverName = '0091 Server';
   if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
   saved.channels = saved.channels.map(channel => ({ ...channel, voiceBitrate: [24, 32, 64, 96].includes(channel.voiceBitrate) ? channel.voiceBitrate : 32, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
@@ -132,10 +134,20 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     if ([...members.values()].some(u => nameKey(u.name) === nameKey(name.trim()) && u.key !== key)) throw new Error('名称已被使用，请换一个');
   }
   const role = key => key === saved.owner ? 'host' : saved.admins.includes(key) ? 'admin' : 'member';
-  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, channels: saved.channels.map(channel => ({ ...channel, icon: imageRef(channel.icon) })), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
+  function historicalMembers() {
+    const online = new Map([...members].map(([socketId, user]) => [user.key, { socketId, user }]));
+    return Object.entries(saved.memberHistory).map(([key, record]) => {
+      const current = online.get(key);
+      return { memberId: record.id, name: current?.user.name || record.name, socketId: current?.socketId || null,
+        online: !!current, role: role(key), avatar: imageRef(saved.userProfiles[key]?.avatar),
+        channelId: current?.user.channelId ?? null, voiceMuted: !!current?.user.voiceMuted };
+    });
+  }
+  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, lolping: 'easytier-udp-v1', channels: saved.channels.map(channel => ({ ...channel, icon: imageRef(channel.icon) })), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
     soundMembers: [...members.values(), ...[...disconnectedMembers.values()].map(record => record.user)].map(u => ({ memberId: u.memberId, channelId: u.channelId })),
+    memberHistory: historicalMembers(),
     users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, name: u.name, virtualIp: u.virtualIp,
-      channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
+      channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, lolpingEndpoint: u.lolpingEndpoint || null, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
@@ -154,6 +166,21 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       }
     });
     const requireMember = () => { const u = members.get(socket.id); if (!u) throw new Error('请先进入服务器'); return u; };
+    let endpointTokens = 10, lastEndpointRefill = Date.now();
+    handle('lolping-enable', payload => {
+      const u = requireMember();
+      if (typeof payload?.enabled !== 'boolean') throw new Error('无效的 lolPing 设置');
+      const endpoint = payload.enabled ? cleanLolPingEndpoint(payload.endpoint) : null;
+      if (payload.enabled && (!u.channelId || payload.channelId !== u.channelId || !endpoint || !/^10\.144\./.test(u.virtualIp) && !/^127\./.test(u.virtualIp))) throw new Error('无效的 lolPing 频道或虚拟网络地址');
+      if (JSON.stringify(u.lolpingEndpoint || null) === JSON.stringify(endpoint)) return {};
+      if (payload.enabled) {
+        const now = Date.now(); endpointTokens = Math.min(10, endpointTokens + Math.max(0, now - lastEndpointRefill) / 200); lastEndpointRefill = now;
+        if (endpointTokens < 1) throw new Error('lolPing 配置更新过于频繁，请稍后重试');
+        endpointTokens--;
+      }
+      u.lolpingEndpoint = endpoint; publish();
+      return {};
+    });
     handle('server-info', () => ({ protocol: 2, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password }));
     handle('check-access', async payload => { await checkAccess(socket, payload); return { easytierPeers: saved.easytierPeers }; });
     handle('join-server', async payload => {
@@ -168,11 +195,13 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         || typeof payload.identity !== 'string' || !/^[a-f0-9]{64}$/.test(payload.identity)) throw new Error('请填写有效名称和连接信息');
       if (members.size >= 100) throw new Error('服务器已满（最多100人）');
       if (payload.voiceDeafened !== undefined && typeof payload.voiceDeafened !== 'boolean') throw new Error('无效的听筒状态');
+      if (Object.hasOwn(payload, 'channelId') && payload.channelId !== null && typeof payload.channelId !== 'string') throw new Error('无效的频道状态');
       const key = createHash('sha256').update(payload.identity).digest('hex');
       let channelId = 'main';
       const previous = [...members.entries()].find(([, u]) => u.key === key);
       const returning = previous?.[1] || disconnectedMembers.get(key)?.user;
-      if (returning && saved.channels.some(channel => channel.id === returning.channelId)) channelId = returning.channelId;
+      if (returning && (returning.channelId === null || saved.channels.some(channel => channel.id === returning.channelId))) channelId = returning.channelId;
+      if (Object.hasOwn(payload, 'channelId')) channelId = payload.channelId === null ? null : saved.channels.some(channel => channel.id === payload.channelId) ? payload.channelId : 'main';
       if (previous) {
         members.delete(previous[0]);
         const stale = io.sockets.sockets.get(previous[0]);
@@ -181,21 +210,23 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if ([...members.values()].some(u => u.virtualIp === payload.virtualIp)) throw new Error('虚拟 IP 冲突，请重新连接');
       if ([...members.values()].some(u => nameKey(u.name) === nameKey(payload.userName.trim()))) throw new Error('名称已被使用，请换一个');
       const avatar = validateImage(Object.hasOwn(payload, 'avatar') ? payload.avatar : saved.userProfiles[key]?.avatar ?? null, '用户头像');
-      if (!saved.owner || avatar !== (saved.userProfiles[key]?.avatar || null)) {
+      const history = saved.memberHistory[key] || { id: returning?.memberId || randomUUID() };
+      if (!saved.owner || avatar !== (saved.userProfiles[key]?.avatar || null) || history.name !== payload.userName.trim()) {
         const userProfiles = { ...saved.userProfiles };
         if (avatar) userProfiles[key] = { avatar }; else delete userProfiles[key];
-        persist({ ...saved, owner: saved.owner || key, userProfiles });
+        persist({ ...saved, owner: saved.owner || key, userProfiles,
+          memberHistory: { ...saved.memberHistory, [key]: { ...history, name: payload.userName.trim() } } });
       }
       forgetDisconnected(key);
       const channelJoinedOrder = returning?.channelId === channelId ? returning.channelJoinedOrder : ++channelEntrySequence;
       members.set(socket.id, { key, memberId: returning?.memberId || randomUUID(), name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, channelJoinedOrder, isSharing: false, voiceEnabled: false, voiceDeafened: !!payload.voiceDeafened, voiceMuted: mutedIdentities.has(key) });
-      socket.join('members'); socket.join(group(channelId)); publish();
+      socket.join('members'); if (channelId) socket.join(group(channelId)); publish();
       return snapshot();
     });
     handle('get-image', payload => {
       requireMember();
       const ref = payload?.ref;
-      const visible = ref && (ref === imageRef(saved.serverIcon) || saved.channels.some(channel => ref === imageRef(channel.icon)) || [...members.values()].some(u => ref === imageRef(saved.userProfiles[u.key]?.avatar)));
+      const visible = ref && (ref === imageRef(saved.serverIcon) || saved.channels.some(channel => ref === imageRef(channel.icon)) || Object.keys(saved.memberHistory).some(key => ref === imageRef(saved.userProfiles[key]?.avatar)));
       if (!visible || !images.has(ref)) throw new Error('图片不可用');
       return { ref, data: images.get(ref) };
     });
@@ -210,7 +241,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     handle('interact', payload => {
       const actor = requireMember(), target = members.get(payload?.target);
       if (!interactionIds.has(payload?.sticker)) throw new Error('无效的互动');
-      if (!target || target === actor || target.channelId !== actor.channelId) throw new Error('只能与当前频道的其他成员互动');
+      if (!actor.channelId || !target || target === actor || target.channelId !== actor.channelId) throw new Error('只能与当前频道的其他成员互动');
       const now = performance.now();
       for (const [key, time] of interactionTimes) if (now - time >= 1000) interactionTimes.delete(key);
       if (interactionTimes.has(actor.key)) throw new Error('互动间隔至少一秒，请稍后再试');
@@ -221,6 +252,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     handle('set-voice-state', payload => {
       const u = requireMember();
       if (typeof payload?.enabled !== 'boolean') throw new Error('无效的语音状态');
+      if (payload.enabled && !u.channelId) throw new Error('请先加入频道');
       if (payload.muted !== undefined && typeof payload.muted !== 'boolean') throw new Error('无效的麦克风状态');
       if (payload.accompaniment !== undefined && typeof payload.accompaniment !== 'boolean') throw new Error('无效的伴奏状态');
       if (payload.deafened !== undefined && typeof payload.deafened !== 'boolean') throw new Error('无效的听筒状态');
@@ -245,7 +277,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     handle('set-member-mute', payload => {
       const actor = requireMember(), target = members.get(payload?.socketId);
       const rank = { host: 2, admin: 1, member: 0 };
-      if (!target || rank[role(actor.key)] <= rank[role(target.key)] || actor.channelId !== target.channelId) throw new Error('只能禁言同频道中权限更低的成员');
+      if (!actor.channelId || !target || rank[role(actor.key)] <= rank[role(target.key)] || actor.channelId !== target.channelId) throw new Error('只能禁言同频道中权限更低的成员');
       if (typeof payload?.muted !== 'boolean') throw new Error('无效的禁言状态');
       target.voiceMuted = payload.muted;
       if (payload.muted) target.voiceSpeaking = false;
@@ -328,8 +360,23 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       for (const [sid, member] of [...members].filter(([, u]) => u.channelId === id).sort((a, b) => a[1].channelJoinedOrder - b[1].channelJoinedOrder)) {
         const client = io.sockets.sockets.get(sid);
         client?.leave(group(id)); client?.join(group('main'));
-        member.channelId = 'main'; member.channelJoinedOrder = ++channelEntrySequence; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
+        member.channelId = 'main'; member.channelJoinedOrder = ++channelEntrySequence; member.lolpingEndpoint = null; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
         client?.emit('channel-deleted');
+      }
+      publish(); return {};
+    });
+    handle('delete-member-config', payload => {
+      const actor = requireMember();
+      const entry = Object.entries(saved.memberHistory).find(([, record]) => record.id === payload?.memberId);
+      const rank = { host: 2, admin: 1, member: 0 };
+      if (!entry || rank[role(actor.key)] <= rank[role(entry[0])]) throw new Error('只能删除权限低于自己的成员配置');
+      const [key] = entry, memberHistory = { ...saved.memberHistory }, userProfiles = { ...saved.userProfiles };
+      delete memberHistory[key]; delete userProfiles[key];
+      persist({ ...saved, memberHistory, userProfiles, admins: saved.admins.filter(id => id !== key) });
+      forgetDisconnected(key); mutedIdentities.delete(key); interactionTimes.delete(key);
+      for (const [id, user] of members) if (user.key === key) {
+        const client = io.sockets.sockets.get(id);
+        client?.emit('kicked'); client?.disconnect(true);
       }
       publish(); return {};
     });
@@ -351,15 +398,15 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     });
     handle('switch-channel', payload => {
       const u = requireMember();
-      if (!saved.channels.some(c => c.id === payload?.channelId)) throw new Error('频道不存在');
+      if (payload?.channelId !== null && !saved.channels.some(c => c.id === payload?.channelId)) throw new Error('频道不存在');
       if (u.channelId !== payload.channelId) {
-        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.channelJoinedOrder = ++channelEntrySequence; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
-        socket.join(group(u.channelId)); publish();
+        socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.channelJoinedOrder = ++channelEntrySequence; u.lolpingEndpoint = null; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
+        if (u.channelId) socket.join(group(u.channelId)); publish();
       }
       return snapshot();
     });
     for (const sharing of [true, false]) handle(sharing ? 'start-sharing' : 'stop-sharing', () => {
-      const u = requireMember(); u.isSharing = sharing; publish(); return {};
+      const u = requireMember(); if (sharing && !u.channelId) throw new Error('请先加入频道'); u.isSharing = sharing; publish(); return {};
     });
     function leave(unexpected = false) {
       const u = members.get(socket.id); if (!u) return;
@@ -405,7 +452,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     for (const [name, field, outgoing] of [['signal', 'to', 'signal']]) {
       handle(name, payload => {
         const u = requireMember(), target = members.get(payload?.[field]);
-        if (!target || target === u || target.channelId !== u.channelId) throw new Error('目标用户不在当前频道');
+        if (!u.channelId || !target || target === u || target.channelId !== u.channelId) throw new Error('目标用户不在当前频道');
         io.to(payload[field]).emit(outgoing, name === 'signal' ? { from: socket.id, data: payload.data } : { from: socket.id }); return {};
       });
     }

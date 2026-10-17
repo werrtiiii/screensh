@@ -1,12 +1,12 @@
 {
   "name": "screensh",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
-    "pack:win": "npm run build:process-audio && electron-builder --win nsis --publish never",
-    "publish:win": "npm run build:process-audio && electron-builder --win nsis --publish always",
-    "pack:portable": "npm run build:process-audio && node scripts/package-win.cjs",
+    "pack:win": "npm run build:lolping && npm run build:process-audio && electron-builder --win nsis --publish never",
+    "publish:win": "npm run build:lolping && npm run build:process-audio && electron-builder --win nsis --publish always",
+    "pack:portable": "npm run build:lolping && npm run build:process-audio && node scripts/package-win.cjs",
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test",
@@ -17,7 +17,12 @@
     "test:mic-meter": "node scripts/run-electron.cjs smoke-mic-meter.cjs",
     "test:speaking": "node scripts/run-electron.cjs smoke-speaking.cjs",
     "test:voice-ui": "node scripts/run-electron.cjs smoke-voice-ui.cjs",
-    "build:process-audio": "node scripts/build-process-audio.cjs"
+    "build:process-audio": "node scripts/build-process-audio.cjs",
+    "build:lolping": "node scripts/build-lolping.cjs",
+    "prestart": "npm run build:lolping",
+    "predev": "npm run build:lolping",
+    "pretest": "node scripts/build-lolping.cjs --js-only",
+    "test:lolping": "node scripts/run-electron.cjs smoke-lolping.cjs"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +31,7 @@
   "devDependencies": {
     "electron": "^29.4.6",
     "electron-builder": "^26.15.3",
+    "esbuild": "0.25.12",
     "rcedit": "4.0.1"
   },
   "dependencies": {
@@ -47,6 +53,8 @@
       "managed-process.js",
       "peer-test.js",
       "member-ping.cjs",
+      "saved-passwords.cjs",
+      "login-startup.cjs",
       "obs-engine.js",
       "obs-host-path.js",
       "voice-runtime.cjs",
@@ -59,7 +67,14 @@
       "package.json",
       "process-audio.cjs",
       "video-encoder.js",
-      "tray-controller.cjs"
+      "tray-controller.cjs",
+      "lolping-runtime.cjs",
+      "lolping/dist/**/*",
+      "lolping/NOTICE.md",
+      "lolping/vendor/LICENSE",
+      "lolping-easytier.cjs",
+      "lolping-room.cjs",
+      "lolping-windows.cjs"
     ],
     "extraResources": [
       {

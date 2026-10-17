@@ -1,11 +1,13 @@
 import { syncChannelSounds, leaveChannelSounds } from './channel-sounds.mjs';
+import { syncLolPing, stopLolPing } from './lolping.js';
 import { saveCachedImage } from './image-cache.mjs';
 import { isImageData } from './image-data.mjs';
 import { receiveInteraction, resetInteractions, syncInteractions } from './interactions.js';
 import { state, $ } from './shared.js';
+import { saveChannelPreference } from './server-channel-preferences.mjs';
 import { toast } from './toast.js';
 import { updateUserList, leaveRoom, renderCurrentChannel } from './room.js';
-import { stopWatch, stopSharing, renderViewerNames, validateRetainedWatch, receiveShareFeedback } from './media.js';
+import { stopWatch, stopSharing, renderViewerNames, validateRetainedWatch, receiveShareFeedback, updateSharingUI } from './media.js';
 
 export let socket = null;
 export const roomUsers = new Map();
@@ -66,15 +68,16 @@ export function applyServerState(data, restoring = false) {
   syncChannelSounds(data, socket.id, restoring);
   const revision = ++imageRevision, connection = socket;
   const raw = data;
-  const refs = new Set([data.serverIcon, ...data.channels.map(channel => channel.icon), ...data.users.map(u => u.avatar)].filter(isImageRef));
+  const refs = new Set([data.serverIcon, ...data.channels.map(channel => channel.icon), ...data.users.map(u => u.avatar), ...(data.memberHistory || []).map(u => u.avatar)].filter(isImageRef));
   for (const ref of imageCache.keys()) if (!refs.has(ref)) imageCache.delete(ref);
   const loading = [...refs].filter(ref => !imageCache.has(ref) || imageCache.get(ref) instanceof Promise);
-  data = { ...data, serverIcon: cachedImage(data.serverIcon), channels: data.channels.map(channel => ({ ...channel, icon: cachedImage(channel.icon) })), users: data.users.map(u => ({ ...u, avatar: cachedImage(u.avatar) })) };
+  data = { ...data, serverIcon: cachedImage(data.serverIcon), channels: data.channels.map(channel => ({ ...channel, icon: cachedImage(channel.icon) })), users: data.users.map(u => ({ ...u, avatar: cachedImage(u.avatar) })), memberHistory: data.memberHistory?.map(u => ({ ...u, avatar: cachedImage(u.avatar) })) };
   if (loading.length) Promise.all(loading.map(ref => fetchImage(ref, connection))).then(() => {
     if (revision === imageRevision && socket === connection) applyServerState(raw);
   });
   if (state.channelId && me.channelId !== state.channelId) stopWatch();
   state.channelId = me.channelId;
+  saveChannelPreference(data.serverId, { lastChannel: me.channelId });
   state.channels = data.channels;
   state.passwordRequired = !!data.passwordRequired;
   state.serverIcon = data.serverIcon || null;
@@ -97,13 +100,15 @@ export function applyServerState(data, restoring = false) {
   state.easytierPeers = data.easytierPeers || [];
   state.serverUsers = data.users;
   roomUsers.clear();
-  data.users.filter(u => u.channelId === state.channelId).forEach(u => roomUsers.set(u.socketId, u));
+  data.users.filter(u => state.channelId && u.channelId === state.channelId).forEach(u => roomUsers.set(u.socketId, u));
   validateRetainedWatch();
   syncInteractions();
   if (state.watchingId && (!roomUsers.has(state.watchingId) || !roomUsers.get(state.watchingId).isSharing)) stopWatch();
   renderCurrentChannel(data.channels.find(c => c.id === state.channelId));
-  updateUserList(data.users);
+  updateSharingUI(state.isSharing);
+  updateUserList(data.users, data.memberHistory || data.users);
   window.channelVoice?.sync();
+  syncLolPing(data.lolping);
   if (state.watchingId) renderViewerNames();
 }
 export function connectServer() {
@@ -113,6 +118,7 @@ export function connectServer() {
   socket = io(connectedServerUrl, { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
   socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
   socket.on('disconnect', reason => {
+    stopLolPing();
     resetInteractions();
     $('#serverStatus').className = 'status-dot disconnected';
     if (state.roomId && !state.leaving && !kickedOut && reason !== 'io client disconnect') startReconnect();
@@ -164,10 +170,10 @@ async function reconnectJoin(deadline, previousChannel) {
   if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
   let joined = await request('join-server', {
     userName: credentials.userName, identity: credentials.identity, password: credentials.password,
-    easytierPeers: access.easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true',
+    easytierPeers: access.easytierPeers, channelId: previousChannel, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true',
   });
   if (generation !== reconnectGeneration || !connection.connected) throw new Error('连接已断开');
-  if (previousChannel !== 'main' && joined.channels.some(c => c.id === previousChannel)) joined = await request('switch-channel', { channelId: previousChannel });
+  if (previousChannel === null || previousChannel !== 'main' && joined.channels.some(c => c.id === previousChannel)) joined = await request('switch-channel', { channelId: previousChannel });
   if (state.isSharing) {
     if (joined.users.find(u => u.socketId === connection.id)?.channelId !== previousChannel) await stopSharing();
     else { await request('start-sharing'); joined = await request('switch-channel', { channelId: previousChannel }); }
@@ -212,6 +218,7 @@ function startReconnect() {
   })();
 }
 export function disconnectSignaling() {
+  stopLolPing();
   connectedServerUrl = null; bookmarkSocketId = null;
   resetInteractions();
   leaveChannelSounds();

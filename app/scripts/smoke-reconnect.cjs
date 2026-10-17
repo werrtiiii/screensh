@@ -34,6 +34,11 @@ app.whenReady().then(async () => {
     const old = [...io.sockets.sockets.values()][0].id;
     [...io.sockets.sockets.values()][0].conn.close();
     await wait(`(async () => { const { socket } = await import('./signaling.js'); const { state } = await import('./shared.js'); return socket?.connected && socket.id !== '${old}' && state.channelId === '${channel}' && state.serverUsers.some(u => u.name === 'Reconnect' && u.role === 'host'); })()`, 5000);
+    await run(`document.querySelector('#btnLeaveChannel').click()`);
+    await wait(`(async()=>{const {state}=await import('./shared.js');return state.channelId===null && document.querySelector('#channelNameDisplay').textContent==='未加入频道';})()`);
+    const outsideSocket=[...io.sockets.sockets.values()][0].id;
+    [...io.sockets.sockets.values()][0].conn.close();
+    await wait(`(async()=>{const {socket}=await import('./signaling.js'),{state}=await import('./shared.js');return socket?.connected && socket.id!=='${outsideSocket}' && state.channelId===null && document.querySelector('#btnShare').disabled;})()`,5000);
     blocked = true; const started = Date.now();
     [...io.sockets.sockets.values()][0].conn.close();
     await wait(`document.querySelector('#lobby').classList.contains('active')`);

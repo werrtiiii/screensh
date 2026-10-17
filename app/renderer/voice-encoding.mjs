@@ -4,13 +4,13 @@ export function channelVoiceBitrate(channels, channelId) {
 }
 // Negotiate stereo reception in advance so accompaniment can start without
 // reconnecting. The mono microphone is upmixed only when music is attached.
-export function allowOpusStereo(sdp) {
+export function allowOpusStereo(sdp, maxAverageBitrate = 96000) {
   const opus = [...sdp.matchAll(/^a=rtpmap:(\d+) opus\/48000\/2\r?$/gmi)].map(match => match[1]);
   for (const payload of opus) {
     const pattern = new RegExp(`^a=fmtp:${payload} (.*)\\r?$`, 'm');
     const match = sdp.match(pattern);
     const parameters = (match?.[1] || '').trim().split(';').map(value => value.trim()).filter(value => value && !/^(stereo|sprop-stereo|maxaveragebitrate)=/i.test(value));
-    parameters.push('stereo=1', 'sprop-stereo=1', 'maxaveragebitrate=96000');
+    parameters.push('stereo=1', 'sprop-stereo=1', `maxaveragebitrate=${maxAverageBitrate}`);
     const line = `a=fmtp:${payload} ${parameters.join(';')}`;
     sdp = match ? sdp.replace(pattern, line + (match[0].endsWith('\r') ? '\r' : '')) : sdp.replace(new RegExp(`(a=rtpmap:${payload} [^\\r\\n]+)`), `$1\r\n${line}`);
   }

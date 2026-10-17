@@ -1,5 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+
+test('remaining outside channels is silent and joining a channel restores entry cues', async()=>{
+  const {ChannelSoundTracker}=await import('./renderer/channel-sound-tracker.mjs');
+  const tracker=new ChannelSoundTracker();
+  const outside={serverId:'server',users:[{socketId:'self',channelId:null},{socketId:'other',channelId:null}]};
+  assert.deepEqual(tracker.update(outside,'self').sounds,[]);
+  assert.deepEqual(tracker.update({...outside,users:[...outside.users,{socketId:'new',channelId:null}]},'self').sounds,[]);
+  assert.deepEqual(tracker.update({...outside,users:[{socketId:'self',channelId:'main'}]},'self').sounds,['enter_voice']);
+  assert.deepEqual(tracker.update(outside,'self').sounds,[]);
+});
 const fs = require('node:fs'), path = require('node:path');
 const snapshot = (channel = 'main', others = []) => ({ serverId: 'server', users: [{ socketId: 'self', channelId: channel }, ...others] });
 test('own exit cue only plays when leaving the server, not when switching channels', async () => {

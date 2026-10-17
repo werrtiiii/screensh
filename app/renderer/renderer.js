@@ -16,10 +16,14 @@ import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
 import { initMemberNetwork } from './member-network.js';
 import { initSoundVolume } from './sound-volume.mjs';
+import { initStartupSettings, lastConnectedServer } from './startup-settings.mjs';
+import { joinPreferredChannel } from './server-channel-preferences.mjs';
+import { avatarThumbnail } from './avatar-thumbnail.mjs';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
 initSoundVolume();
+initStartupSettings(window.electronAPI, toast);
 const avatarReady = readCachedImage('avatar').then(avatar => {
   if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
 }).catch(error => console.error('Avatar cache:', error));
@@ -76,13 +80,26 @@ async function joinServer() {
     });
     const info = await requestServer('server-info', {}, connection);
     if (info.protocol !== 2 || !/^[a-f0-9-]{36}$/.test(info.serverId)) throw new Error('请升级为支持频道的服务器');
-    let password = '';
+    let password = '', access;
     if (info.passwordRequired) {
-      const answer = await requestPassword({ connection });
-      if (!answer) { await leaveRoom(); return; }
-      password = answer.password;
+      try { password = await window.electronAPI.getSavedServerPassword(serverUrl, info.serverId); }
+      catch { /* A storage failure must not prevent a manual connection. */ }
+      if (password) {
+        try { access = await requestServer('check-access', { userName, password }, connection); }
+        catch (error) {
+          if (!['服务器密码错误', '请输入服务器密码'].includes(error.message)) throw error;
+          password = '';
+          await window.electronAPI.saveServerPassword(serverUrl, info.serverId, '').catch(() => {});
+          toast('保存的服务器密码已失效，请重新输入');
+        }
+      }
+      if (!password) {
+        const answer = await requestPassword({ connection });
+        if (!answer) { await leaveRoom(); return; }
+        password = answer.password;
+      }
     }
-    const access = await requestServer('check-access', { userName, password }, connection);
+    access ||= await requestServer('check-access', { userName, password }, connection);
     if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
     const easytierPeers = normalizePeers(access.easytierPeers);
     const identityKey = 'serverIdentity:' + serverUrl + ':' + info.serverId;
@@ -94,10 +111,13 @@ async function joinServer() {
     rememberJoinCredentials({ userName, identity, password });
     toast('正在准备网络连接…');
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
-    const joined = await requestServer('join-server', { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, connection);
+    const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;
     enterRoom(info.serverId); applyServerState(joined);
+    localStorage.setItem('lastConnectedServer', JSON.stringify({ url: serverUrl, userName }));
+    try { await window.electronAPI.saveServerPassword(serverUrl, info.serverId, password); }
+    catch { if (password) toast('连接成功，但服务器密码未能保存', 'error'); }
   } catch (error) { toast(error.message, 'error'); await leaveRoom(); }
   finally { state.joining = false; $('#btnConnect').disabled = state.leaving || state.runtimeCleanupFailed; $('#btnConnect').textContent = '连接服务器'; }
 }
@@ -113,8 +133,12 @@ function readImage(file) {
     }; reader.onerror = () => reject(new Error('图片读取失败')); reader.readAsDataURL(file);
   });
 }
+let profileAvatarRevision = 0;
 function applyAvatarImage(data) {
-  document.querySelectorAll('.profile-avatar').forEach(node => { node.textContent = data ? '' : '👤'; node.style.backgroundImage = data ? `url("${data}")` : ''; node.classList.toggle('has-image', !!data); });
+  const revision = ++profileAvatarRevision;
+  const paint = thumbnail => document.querySelectorAll('.profile-avatar').forEach(node => { node.textContent = thumbnail ? '' : '👤'; node.style.backgroundImage = thumbnail ? `url("${thumbnail}")` : ''; node.classList.toggle('has-image', !!thumbnail); });
+  paint(null);
+  if (data) avatarThumbnail(data).then(thumbnail => { if (revision === profileAvatarRevision) paint(thumbnail); }).catch(() => {});
 }
 let avatarBusy = false, serverIconBusy = false;
 async function saveAvatar(avatar) {
@@ -484,8 +508,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds').forEach(el => el.style.display = '');
-      $$('.setting-server').forEach(el => el.style.display = '');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
       $$('.setting-room').forEach(el => el.style.display = 'none');
@@ -495,8 +518,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds').forEach(el => el.style.display = 'none');
-      $$('.setting-server').forEach(el => el.style.display = 'none');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');
       $$('.setting-room').forEach(el => el.style.display = '');
@@ -655,3 +677,10 @@ $('#bookmarkEditForm')?.addEventListener('submit', event => {
     saveBookmarks(next); renderBookmarks(); $('#bookmarkEditDialog').classList.add('hidden'); toast('书签已更新', 'success');
   } catch { $('#bookmarkEditError').textContent = '请输入有效的 HTTP 或 HTTPS 地址，不要附加路径'; }
 });
+
+const startupServer = lastConnectedServer();
+if (startupServer) {
+  $('#serverUrl').value = startupServer.url;
+  $('#userName').value = localStorage.getItem('userName') || startupServer.userName;
+  void joinServer();
+}

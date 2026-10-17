@@ -1,7 +1,9 @@
+import { allowOpusStereo } from './voice-encoding.mjs';
 export class WhepSession {
   constructor(url, configuration, onTrack, onFailure, options = {}) {
     this.url = url; this.controller = new AbortController(); this.closed = false;
     this.audioOnly = options.audioOnly === true;
+    this.stereo = options.stereo === true;
     this.candidates = []; this.patchChain = Promise.resolve();
     this.pc = new RTCPeerConnection({ ...configuration, bundlePolicy: 'max-bundle' });
     this.pc.ontrack = onTrack;
@@ -24,6 +26,7 @@ export class WhepSession {
     if (!this.audioOnly) pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
     const offer = await pc.createOffer();
+    if (this.stereo) offer.sdp = allowOpusStereo(offer.sdp, 128000);
     await pc.setLocalDescription(offer);
     if (signal.aborted) throw new Error('观看已取消');
     this.offer = offer.sdp;

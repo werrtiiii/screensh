@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../dist/win-unpacked');
 const resources = path.join(root, 'resources');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe',
-  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/wintun.dll', 'resources/Packet.dll',
+  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node']) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
 }
@@ -16,9 +16,26 @@ for (const protocol of ['rtsp', 'rtmp', 'hls', 'srt']) {
 }
 
 const manifest = path.join(resources, 'app.asar', 'package.json');
+const helper = spawnSync(path.join(resources,'lolping-hook-helper.exe'), ['--simulate'], {
+  input: '{"type":"shutdown"}\n', windowsHide: true, encoding: 'utf8', timeout: 10000,
+});
+if(helper.error || helper.status!==0 || !helper.stdout.includes('"type":"ready"'))throw helper.error || new Error('Packaged lolPing input helper failed: '+helper.stderr);
+console.log('PACKAGED_LOLPING_HELPER_OK');
 const probe = `
   const { createRequire } = require('node:module');
   const load = createRequire(${JSON.stringify(manifest)});
+  const fs = require('node:fs'), path = require('node:path'), root = path.dirname(${JSON.stringify(manifest)});
+  for (const file of ['saved-passwords.cjs','login-startup.cjs','lolping-runtime.cjs','lolping-room.cjs','lolping-easytier.cjs','lolping-windows.cjs',
+    'lolping/dist/main/core.cjs','lolping/dist/preload/overlay.cjs','lolping/dist/ui/preload.cjs','lolping/dist/settings-tools.mjs',
+    'lolping/dist/renderer/overlay/index.html','lolping/dist/renderer/overlay/main.js','lolping/dist/renderer/overlay/main.css',
+    'lolping/dist/renderer/panel/index.html','lolping/dist/renderer/panel/main.js','lolping/dist/renderer/panel/panel.css',
+    'lolping/dist/renderer/text/index.html','lolping/dist/renderer/text/main.js','lolping/dist/renderer/text/text.css',
+    'lolping/dist/renderer/ui/ready-countdown.webm','lolping/dist/renderer/ui/ready-accepted-intro.webm','lolping/dist/renderer/ui/ready-accepted-idle.webm','lolping/dist/renderer/ui/ready-declined.webm',
+    'lolping/dist/renderer/ui/ready-intro.ogg','lolping/dist/renderer/ui/ready-countdown.ogg','lolping/dist/renderer/ui/ready-accepted-loop.ogg',
+    'lolping/dist/renderer/ui/surrender-frame.png','lolping/NOTICE.md','lolping/vendor/LICENSE']) {
+    if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
+  }
+  console.log('PACKAGED_LOLPING_ASSETS_OK');
   const { ObsEngine } = load('./obs-engine.js');
   const engine = new ObsEngine(process.env.TEMP || process.cwd());
   try {

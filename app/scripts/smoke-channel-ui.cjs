@@ -18,6 +18,11 @@ app.whenReady().then(async()=>{
   assert.equal(await run(`document.querySelectorAll('.server-dot,#userCount,.user-channel').length`),0);
   assert.equal(await run(`document.querySelector('.member-role').textContent`),'服主');
   assert.equal(await run(`!!document.querySelector('.member-role svg') && !!document.querySelector('.channel-default svg path') && getComputedStyle(document.querySelector('.channel-icon')).backgroundColor==='rgb(255, 255, 255)' && !document.querySelector('.room-label')`),true);
+  await run(`(async()=>{const canvas=document.createElement('canvas');canvas.width=512;canvas.height=384;const ctx=canvas.getContext('2d');ctx.fillStyle='#5865f2';ctx.fillRect(0,0,512,384);window.avatarOriginal=canvas.toDataURL('image/png');const {requestServer}=await import('./signaling.js');await requestServer('set-avatar',{avatar:avatarOriginal});})()`);
+  await wait(`document.querySelector('#userList .me img')?.naturalWidth===96 && document.querySelector('.channel-member.me img')?.naturalWidth===96 && document.querySelector('.user-card .avatar img')?.naturalWidth===512 && !!document.querySelector('.profile-avatar.has-image')`);
+  assert.equal(await run(`document.querySelector('.user-card .avatar img').src===avatarOriginal && !document.querySelector('.profile-avatar').style.backgroundImage.includes(avatarOriginal)`),true,'small avatars use thumbnails and the card keeps the original');
+  await run(`(async()=>{const {requestServer}=await import('./signaling.js');await requestServer('set-avatar',{avatar:null});})()`);
+  await wait(`!document.querySelector('#userList .me img') && !document.querySelector('.profile-avatar.has-image')`);
   await run(`document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
   assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),3,'main channel offers rename, icon and voice bitrate settings');
   assert.equal(await run(`document.querySelector('.context-menu').textContent.includes('删除')`),false);
@@ -87,8 +92,8 @@ app.whenReady().then(async()=>{
   // Modal bounds and bottom controls remain reachable at minimum window size.
   for(const id of ['settingsModal','serverSettingsDialog','serverPeersDialog','bookmarkEditDialog','channelDialog','channelBitrateDialog','screenPicker','memberNetworkDialog']){
    await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));document.querySelector('#${id}').classList.remove('hidden');document.querySelectorAll('#${id} .form-group').forEach(n=>n.style.display='')`);
-   const check=await run(`(()=>{const panel=document.querySelector('#${id} .modal-content'),scroll=panel.querySelector('.modal-body')||panel;scroll.scrollTop=scroll.scrollHeight;const r=panel.getBoundingClientRect(),header=panel.querySelector('.modal-header').getBoundingClientRect();return {top:r.top,bottom:r.bottom,viewport:innerHeight,headerTop:header.top,headerBottom:header.bottom,reachable:scroll.scrollTop+scroll.clientHeight>=scroll.scrollHeight-1}})()`);
-   assert.ok(check.top>=38 && check.bottom<=check.viewport,id+' panel is within viewport');assert.ok(check.headerTop>=check.top && check.headerBottom<=check.bottom,id+' close header stays visible');assert.equal(check.reachable,true);
+   const check=await run(`(()=>{const panel=document.querySelector('#${id} .modal-content'),scroll=panel.querySelector('.modal-body')||panel;scroll.scrollTop=scroll.scrollHeight;const r=panel.getBoundingClientRect(),header=panel.querySelector('.modal-header').getBoundingClientRect();return {top:r.top,bottom:r.bottom,scrollTop:scroll.scrollTop,scrollHeight:scroll.scrollHeight,clientHeight:scroll.clientHeight,viewport:innerHeight,headerTop:header.top,headerBottom:header.bottom,reachable:scroll.scrollTop+scroll.clientHeight>=scroll.scrollHeight-2}})()`);
+   assert.ok(check.top>=38 && check.bottom<=check.viewport,id+' panel is within viewport');assert.ok(check.headerTop>=check.top && check.headerBottom<=check.bottom,id+' close header stays visible');assert.equal(check.reachable,true,id+' bottom controls remain reachable: '+JSON.stringify(check));
   }
   await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'))`);
   await run(`document.querySelector('#btnRoomSettingsToolbar').click()`);
@@ -112,6 +117,16 @@ app.whenReady().then(async()=>{
   fs.writeFileSync(path.join(root,'.runtime-probe','sound-volume-settings.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.querySelector('#btnCloseSettings').click();document.querySelector('#btnRoomSettingsToolbar').click()`);
   assert.equal(await run(`getComputedStyle(document.querySelector('.setting-sounds')).display`),'none','share settings do not show sound volume');
+  await run(`document.querySelectorAll('.modal').forEach(node=>node.classList.add('hidden'))`);
+  await request(clients[0],'leave-server');
+  await wait(`[...document.querySelectorAll('#userList .member-offline')].some(row=>row.querySelector('.member-name').textContent==='First')`);
+  assert.equal(await run(`[...document.querySelectorAll('.channel-member-name')].some(node=>node.textContent==='First')`),false,'offline history does not become a channel member');
+  await run(`[...document.querySelectorAll('#userList .member-offline')].find(row=>row.querySelector('.member-name').textContent==='First').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:700,clientY:220}))`);
+  assert.deepEqual(await run(`[...document.querySelectorAll('.context-menu button')].map(node=>node.textContent)`),['删除成员配置']);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  fs.writeFileSync(path.join(root,'.runtime-probe','member-history-delete.png'),(await win.webContents.capturePage()).toPNG());
+  await run(`document.querySelector('.context-menu button').click()`);
+  await wait(`![...document.querySelectorAll('#userList .member-name')].some(node=>node.textContent==='First')`);
   console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true,soundVolume:true}));
  }catch(error){console.error(error.stack);process.exitCode=1;}
  finally{clients.forEach(client=>client.disconnect());win?.destroy();await new Promise(r=>io.close(r));app.exit(process.exitCode||0)}
