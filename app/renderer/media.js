@@ -9,30 +9,52 @@ let session = null, sharingGeneration = 0;
 let stoppingPromise = null;
 let shareAdaptation = null;
 let disposeStats = null, watchContext = null, retainWatchTimer = null;
+let sourceInventory = [], sourceTab = 'window', sourceRequest = 0;
 export function escapeHtml(str) {
   const div = document.createElement('div'); div.textContent = str; return div.innerHTML;
 }
 export async function loadScreenSources() {
+  const request=++sourceRequest;
   const list = $('#screenList');
+  sourceInventory=[];
   state.selectedSourceId = null;
   $('#btnConfirmShare').classList.add('hidden');
   list.textContent = '获取显示器和窗口中...';
   try {
     const screens = await window.electronAPI.getScreens();
-    list.innerHTML = '';
+    if(request!==sourceRequest||$('#screenPicker').classList.contains('hidden'))return;
+    sourceInventory=screens;
+    if(!screens.some(s=>s.type===sourceTab)&&screens.length)sourceTab=screens[0].type||'screen';
+    selectScreenSourceTab(sourceTab);
+  } catch (error) { if(request===sourceRequest)list.textContent = `读取共享源失败：${error.message}`; }
+}
+export function selectScreenSourceTab(type) {
+    sourceTab=type;
+    if(state.selectedSourceType!==type){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}
+    for(const button of document.querySelectorAll('[data-source-tab]')) {const active=button.dataset.sourceTab===type;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));}
+    const list=$('#screenList');list.replaceChildren();list.scrollTop=0;
+    const screens=sourceInventory.filter(s=>(s.type||'screen')===type);
     for (const screen of screens) {
-      const item = document.createElement('div'); item.className = 'screen-item';
-      item.textContent = `${screen.type === 'window' ? '窗口' : '显示器'} · ${screen.name}`;
+      const item = document.createElement('button'); item.type='button';item.className = 'screen-item';item.setAttribute('aria-pressed',String(state.selectedSourceId===screen.id&&state.selectedSourceType===screen.type));
+      item.classList.toggle('selected',state.selectedSourceId===screen.id&&state.selectedSourceType===screen.type);
+      const preview=document.createElement('span');preview.className='screen-preview';
+      if(typeof screen.thumbnail==='string'&&screen.thumbnail.startsWith('data:image/')){const image=document.createElement('img');image.src=screen.thumbnail;image.alt='';image.draggable=false;image.onerror=()=>{image.remove();preview.classList.add('unavailable');preview.textContent='暂无预览';};preview.append(image);}
+      else {preview.classList.add('unavailable');preview.textContent='暂无预览';}
+      const label=document.createElement('span');label.className='screen-source-name';label.textContent=screen.name;item.title=screen.name;item.append(preview,label);
       item.onclick = () => {
-        $$('.screen-item').forEach(el => el.classList.remove('selected'));
-        item.classList.add('selected'); state.selectedSourceId = screen.id;
+        $$('.screen-item').forEach(el => {el.classList.remove('selected');el.setAttribute('aria-pressed','false');});
+        item.classList.add('selected');item.setAttribute('aria-pressed','true');state.selectedSourceId = screen.id;
         state.selectedSourceType = screen.type || 'screen';
         $('#btnConfirmShare').classList.remove('hidden');
       };
       list.appendChild(item);
     }
-    if (!screens.length) list.textContent = '没有可共享的显示器或窗口';
-  } catch (error) { list.textContent = `读取共享源失败：${error.message}`; }
+    if (!screens.length) list.textContent = type==='window'?'没有可共享的程序窗口':'没有可共享的屏幕';
+}
+export function openScreenPicker() {
+  if(!state.channelId)return toast('请先加入频道后再共享屏幕');
+  if(state.startingShare||state.stoppingShare||state.leaving||state.switchingChannel||state.isSharing||state.shareCleanupFailed)return;
+  $('#screenPicker').classList.remove('hidden');$('#btnCancelPicker').focus();void loadScreenSources();
 }
 export function buildScreenConfig() {
   return {
@@ -63,7 +85,7 @@ export async function startScreenCapture() {
     shareAdaptation = adaptiveResolution ? createShareAdaptation({ base: config, width: result?.width || fallbackWidth, height: result?.height || fallbackHeight,
       bitrate: result?.bitrate || config.maxBitrate || 1500, change: (next, previous) => adjustShareQuality(current, next, previous) }) : null;
     $('#screenPicker').classList.add('hidden');
-    socket.emit('start-sharing'); toast('屏幕共享已开始', 'success');
+    socket.emit('start-sharing');
     if (state.autoPreview) void displayRemoteVideo(socket.id);
   } catch (error) {
     if (current === sharingGeneration) { state.isSharing = false; updateSharingUI(false); toast(error.message, 'error'); }
@@ -109,7 +131,9 @@ export function stopSharing({ reportErrors = true } = {}) {
 export function updateSharingUI(sharing) {
   const showStop = sharing || state.stoppingShare || state.shareCleanupFailed;
   const busy = state.startingShare || state.stoppingShare || state.leaving || state.switchingChannel || state.adjustingShare;
-  $('#btnShare').classList.toggle('hidden', showStop);
+  $('#btnShare').classList.toggle('hidden', showStop || !state.channelId);
+  $('#btnRoomSettingsToolbar').classList.toggle('hidden',!state.channelId);
+  document.querySelectorAll('.card-share-button').forEach(button=>{button.disabled=busy||showStop;});
   $('#btnShare').disabled = busy || !state.channelId;
   $('#btnConfirmShare').disabled = busy || state.shareCleanupFailed;
   $('#btnStopShare').classList.toggle('hidden', !showStop);

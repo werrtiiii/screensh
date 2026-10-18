@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server.js easytier-peers.cjs ./
+COPY server.js easytier-peers.cjs lolping-protocol.cjs ./
 RUN mkdir -p /app/data \
   && chown -R node:node /app \
   && chmod -R u+rwX,go+rX /app

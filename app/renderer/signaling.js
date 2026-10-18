@@ -200,7 +200,6 @@ function startReconnect() {
     while (Date.now() < deadline && state.roomId && !state.leaving && !kickedOut) {
       try {
         await reconnectJoin(deadline, previousChannel);
-        toast('已重新连接到服务器', 'success');
         $('#serverStatus').className = 'status-dot connected';
         reconnectPromise = null;
         window.channelVoice?.sync();

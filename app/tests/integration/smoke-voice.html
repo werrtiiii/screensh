@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>Voice probe</title>
+<script type="module">
+import { WhepSession } from '../../renderer/whep.mjs';
+window.voiceProbe = async () => {
+  let audio = false, failure;
+  const session = new WhepSession('http://127.0.0.1:8890/live/whep', {}, event => { if (event.track.kind === 'audio') audio = true; }, error => { failure = error; }, { audioOnly: true });
+  try {
+    await session.start();
+    for (let i = 0; i < 120; i++) {
+      if (failure) throw failure;
+      const stats = await session.pc.getStats();
+      const received = [...stats.values()].find(s => s.type === 'inbound-rtp' && s.kind === 'audio');
+      if (audio && received?.packetsReceived > 30) return { audio, packets: received.packetsReceived, energy: received.totalAudioEnergy ?? null, connection: session.pc.connectionState };
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('OBS 麦克风 WebRTC 音频包未到达');
+  } finally { session.close(); }
+};
+</script>

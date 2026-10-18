@@ -7,6 +7,7 @@
         content="default-src 'self' 'unsafe-inline' ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; connect-src 'self' ws: wss: http: https:;" />
   <title>ScreenSh 屏幕共享</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="ui.css" />
 </head>
 <body>
   <div id="app">
@@ -24,7 +25,7 @@
     <!-- ===== Lobby ===== -->
     <div id="lobby" class="screen active workspace-screen">
       <aside class="workspace-sidebar lobby-sidebar">
-        <div class="sidebar-search"><span>⌕</span><input id="serverSearch" type="text" placeholder="搜索服务器" /></div>
+        <div class="sidebar-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="serverSearch" type="text" placeholder="搜索服务器" aria-label="搜索服务器" /></div>
         <div class="nav-section-title"><span>服务器</span><div class="section-actions"><button id="btnAddBookmark" class="icon-btn" title="添加服务器">＋</button><button id="btnCollapseBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
         <form id="bookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="bookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
         <div id="bookmarkList" class="bookmark-list"></div>
@@ -37,10 +38,11 @@
       </aside>
       <main class="empty-workspace">
         <div class="lobby-connect-panel">
+          <span class="connect-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="24" height="17" rx="4"/><path d="M12 27h8m-4-5v5m-5-13 4 3 6-6"/></svg></span>
           <h1>选择一个服务器开始</h1>
           <p>从左侧书签选择服务器，或输入地址连接。</p>
           <div class="connect-inline">
-            <input type="text" id="serverUrl" placeholder="https://你的服务器域名" />
+            <input type="text" id="serverUrl" placeholder="https://你的服务器域名" aria-label="服务器地址" />
             <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
             <span id="serverStatus" class="status-dot disconnected"></span>
           </div>
@@ -130,8 +132,8 @@
     </div>
     <div id="screenPicker" class="modal hidden">
       <div class="modal-content source-dialog" role="dialog" aria-modal="true" aria-labelledby="sourceDialogTitle">
-        <div class="modal-header"><h2 id="sourceDialogTitle">选择共享源</h2><button id="btnCancelPicker" class="btn-close" aria-label="关闭">×</button></div>
-        <div id="screenList" class="screen-list"></div>
+        <div class="modal-header"><h2 id="sourceDialogTitle">屏幕共享</h2><button id="btnCancelPicker" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="source-surface"><div class="source-tabs" role="tablist" aria-label="共享源类型"><button id="btnSourceWindows" type="button" role="tab" data-source-tab="window" aria-selected="true" aria-controls="screenList" class="source-tab active">程序</button><button id="btnSourceScreens" type="button" role="tab" data-source-tab="screen" aria-selected="false" aria-controls="screenList" class="source-tab">屏幕</button></div><div id="screenList" class="screen-list" role="tabpanel" aria-label="可共享的画面"></div></div>
         <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
       </div>
     </div>
@@ -188,12 +190,14 @@
       </form>
     </div>
     <div id="settingsModal" class="modal hidden">
-      <div class="modal-content">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
         <div class="modal-header">
-          <h2>系统设置</h2>
-          <button id="btnCloseSettings" class="btn-close">×</button>
+          <h2 id="settingsHeading">系统设置</h2>
+          <button id="btnCloseSettings" class="btn-close" aria-label="关闭设置">×</button>
         </div>
+        <nav class="settings-navigation" aria-label="设置分组"></nav>
         <div class="modal-body">
+          <p class="setting-room settings-notice">共享参数将在下次开始共享时生效。</p>
           <div class="form-group setting-theme">
             <label for="themeSelect">主题外观
               <span class="help-tip" data-tooltip="切换深色或浅色外观。">?</span>
@@ -206,10 +210,6 @@
           <div class="form-group setting-startup">
             <label><input id="autoConnectCheckbox" type="checkbox" role="switch" checked /> 启动后自动连接服务器</label>
             <label><input id="loginStartupCheckbox" type="checkbox" role="switch" /> 开机自启</label>
-          </div>
-          <div class="form-group setting-sounds">
-            <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
-            <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
           <div class="form-group setting-update">
             <label>软件更新</label>
@@ -228,6 +228,10 @@
               <span class="help-tip" data-tooltip="使用显卡渲染软件界面。修改后需要重启客户端；关闭后使用软件渲染。">?</span>
             </label>
           </div>
+          <div class="form-group setting-sounds">
+            <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
+            <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
+          </div>
           <div class="form-group setting-voice">
             <label for="voiceMicrophone">麦克风</label>
             <select id="voiceMicrophone" class="form-control"><option value="default">系统默认麦克风</option></select>
@@ -236,6 +240,12 @@
             <div class="voice-device-actions"><button id="btnVoiceDevices" class="btn btn-outline btn-sm" type="button">刷新</button><button id="btnMicrophoneTest" class="btn btn-outline btn-sm" type="button">测试</button></div>
             <meter id="microphoneLevel" min="0" max="1" value="0" aria-label="麦克风电平"></meter>
             <small id="voiceTestStatus" class="hidden" role="status"></small>
+            <div class="voice-processing" role="group" aria-label="麦克风音频处理">
+              <label><input type="checkbox" role="switch" data-voice-processing="echoCancellation" />回声消除</label>
+              <label><input type="checkbox" role="switch" data-voice-processing="noiseSuppression" />降噪</label>
+              <label><input type="checkbox" role="switch" data-voice-processing="autoGainControl" />自动增益</label>
+              <small>默认关闭，修改后立即生效。外放时建议开启回声消除；环境嘈杂时可开启降噪。</small>
+            </div>
           </div>
           <div class="form-group setting-room">
             <label for="videoEncoderSelect">视频编码器

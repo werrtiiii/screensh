@@ -18,6 +18,7 @@ import {
   updateSharingUI,
   stopWatch,
   stopSharing,
+  openScreenPicker,
 } from './media.js';
 // --- 成员列表 + 卡片网格 ---
 const channelIconMarkup = icon => `<span class="channel-icon" aria-hidden="true"><span class="channel-default"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M16.5 7.5a6.36 6.36 0 1 0 0 9"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg></span>${icon ? `<img src="${escapeHtml(icon)}" alt="" onerror="this.remove()" />` : ''}</span>`;
@@ -51,6 +52,7 @@ function memberActions(user, users, allowDelete = false) {
 }
 
 export function updateUserList(users, allMembers = users) {
+  const serverUsers = users;
   const rank = { host: 2, admin: 1, member: 0 };
   const orderedMembers = [...allMembers].sort((a, b) => (rank[b.role] ?? 0) - (rank[a.role] ?? 0) || Number(b.online !== false) - Number(a.online !== false));
   // 侧边栏列表
@@ -72,7 +74,7 @@ export function updateUserList(users, allMembers = users) {
   const myRole = users.find(u => u.socketId === socket?.id)?.role;
   [...list.children].forEach((row, index) => {
     const user = orderedMembers[index];
-    row.oncontextmenu = event => showContextMenu(event, memberActions(user, users, true));
+    row.oncontextmenu = event => showContextMenu(event, memberActions(user, serverUsers, true));
   });
   renderChannels(users);
   users = users.filter(u => state.channelId && u.channelId === state.channelId).sort((a, b) => Number(b.socketId === socket?.id) - Number(a.socketId === socket?.id));
@@ -107,7 +109,7 @@ export function updateUserList(users, allMembers = users) {
 
     card.innerHTML = `
       <div class="card-cover"><div class="avatar">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</div>
-      ${isSharing ? btnHtml : ''}</div>
+      ${isSharing ? btnHtml : isMe ? '<button type="button" class="card-share-button" aria-label="屏幕共享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>屏幕共享</span></button>' : ''}</div>
       <div class="name">${displayName}</div>
     `;
 
@@ -119,8 +121,9 @@ export function updateUserList(users, allMembers = users) {
     }
 
     cardsView.appendChild(card);
+    if(isMe&&!isSharing){const share=card.querySelector('.card-share-button');share.disabled=state.startingShare||state.stoppingShare||state.leaving||state.switchingChannel||state.shareCleanupFailed;share.onclick=()=>openScreenPicker();}
     window.channelVoice?.decorate(card, u, isMe);
-    if (isMe) {
+    if (isMe && state.channelId) {
       const exit = document.createElement('button'); exit.type = 'button'; exit.id = 'btnLeaveChannel'; exit.className = 'card-exit-channel';
       exit.title = '退出'; exit.setAttribute('aria-label', '退出频道'); exit.disabled = state.switchingChannel || state.leaving;
       exit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 7l5 5-5 5M9 12h11"/></svg>';
@@ -236,7 +239,7 @@ $('#serverNameForm').addEventListener('submit', async event => {
   event.preventDefault(); $('#btnSaveServerName').disabled = true; $('#serverNameError').textContent = '';
   try {
     const result = await requestServer('set-server-name', { name: $('#serverNameInput').value });
-    $('#serverNameInput').value = result.serverName; toast('服务器名称已保存', 'success');
+    $('#serverNameInput').value = result.serverName;
   } catch (error) { $('#serverNameError').textContent = error.message; }
   finally { $('#btnSaveServerName').disabled = false; }
 });

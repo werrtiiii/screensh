@@ -6,7 +6,7 @@ const { collectResources } = require('./package-resources.cjs');
 if (!process.argv[2]) throw new Error('Usage: node scripts/check-package.cjs <package directory> [--dependencies-only]');
 const output = path.resolve(process.argv[2]);
 const appDir = path.join(output, 'resources', 'app');
-const probes = path.resolve(__dirname, '../.runtime-probe');
+const probes = path.resolve(__dirname, "../.runtime-probe");
 fs.mkdirSync(probes, { recursive: true });
 const temporary = fs.mkdtempSync(path.join(probes, 'package-check-'));
 const resources = path.join(output, 'resources');
@@ -30,7 +30,7 @@ for (const name of ['easytier-core.exe', 'mediamtx.exe']) {
 const probe = `
   const { createRequire } = require('module');
   const load = createRequire(${JSON.stringify(path.join(appDir, 'package.json'))});
-  const { ObsEngine } = load('./obs-engine.js');
+  const { ObsEngine } = load('./main/obs-engine.js');
   const engine = new ObsEngine(${JSON.stringify(temporary)});
   try {
     load('socket.io-client');

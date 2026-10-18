@@ -6,7 +6,7 @@ import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { state, $, $$ } from './shared.js';
 import { toast } from './toast.js';
 import { socket, connectServer, requestServer, applyServerState, rememberJoinCredentials } from './signaling.js';
-import { loadScreenSources, startScreenCapture, stopSharing, stopWatch } from './media.js';
+import { openScreenPicker, selectScreenSourceTab, startScreenCapture, stopSharing, stopWatch } from './media.js';
 import { leaveRoom, enterRoom } from './room.js';
 import { normalizePeers } from './easytier-peers.mjs';
 import { requestPassword } from './password-dialog.js';
@@ -19,11 +19,15 @@ import { initSoundVolume } from './sound-volume.mjs';
 import { initStartupSettings, lastConnectedServer } from './startup-settings.mjs';
 import { joinPreferredChannel } from './server-channel-preferences.mjs';
 import { avatarThumbnail } from './avatar-thumbnail.mjs';
+import { initSettingsNavigation } from './ui.js';
+import { AppPresence } from './app-presence.mjs';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
 initSoundVolume();
 initStartupSettings(window.electronAPI, toast);
+const appPresence = new AppPresence({ storage: localStorage, connect: (url, options) => io(url, options) });
+appPresence.sync();
 const avatarReady = readCachedImage('avatar').then(avatar => {
   if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
 }).catch(error => console.error('Avatar cache:', error));
@@ -47,11 +51,11 @@ $('#themeSelect').addEventListener('change', (e) => {
   const newTheme = e.target.value;
   document.documentElement.setAttribute('data-theme', newTheme);
   localStorage.setItem('app-theme', newTheme);
-  toast(`主题已切换`, 'success');
 });
 
 // 执行初始化
 initTheme();
+initSettingsNavigation();
 
 // A server has one permanent room; its stable ID also names the EasyTier network.
 async function joinServer() {
@@ -109,12 +113,12 @@ async function joinServer() {
       localStorage.setItem(identityKey, identity);
     }
     rememberJoinCredentials({ userName, identity, password });
-    toast('正在准备网络连接…');
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
     const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;
     enterRoom(info.serverId); applyServerState(joined);
+    appPresence.sync({ retryRejected: true });
     localStorage.setItem('lastConnectedServer', JSON.stringify({ url: serverUrl, userName }));
     try { await window.electronAPI.saveServerPassword(serverUrl, info.serverId, password); }
     catch { if (password) toast('连接成功，但服务器密码未能保存', 'error'); }
@@ -153,14 +157,13 @@ async function chooseAvatar(file) {
   try {
     const avatar = await readImage(file);
     await saveAvatar(avatar);
-    toast('头像已保存', 'success');
   } catch (error) { toast(error.message, 'error'); }
   finally { avatarBusy = false; }
 }
 async function resetAvatar() {
   if (avatarBusy) return;
   avatarBusy = true;
-  try { await saveAvatar(null); toast('头像已恢复默认', 'success'); }
+  try { await saveAvatar(null); }
   catch (error) { toast(error.message, 'error'); }
   finally { avatarBusy = false; }
 }
@@ -175,14 +178,14 @@ $('#btnServerIcon')?.addEventListener('click', () => $('#serverIconInput').click
 $('#serverIconInput')?.addEventListener('change', async event => {
   if (serverIconBusy || !event.target.files?.[0]) return;
   serverIconBusy = true;
-  try { const icon = await readImage(event.target.files?.[0]); await requestServer('set-server-icon', { icon }); toast('服务器图标已保存', 'success'); }
+  try { const icon = await readImage(event.target.files?.[0]); await requestServer('set-server-icon', { icon }); }
   catch (error) { toast(error.message, 'error'); }
   finally { serverIconBusy = false; event.target.value = ''; }
 });
 $('#btnResetServerIcon').addEventListener('click', async () => {
   if (serverIconBusy) return;
   serverIconBusy = true;
-  try { await requestServer('set-server-icon', { icon: null }); toast('服务器图标已恢复默认', 'success'); }
+  try { await requestServer('set-server-icon', { icon: null }); }
   catch (error) { toast(error.message, 'error'); }
   finally { serverIconBusy = false; }
 });
@@ -192,11 +195,8 @@ $('#btnLeave').addEventListener('click', leaveRoom);
 $('#btnRetryCleanup').addEventListener('click', leaveRoom);
 
 // --- 共享屏幕：展开屏幕源选择面板 ---
-$('#btnShare').addEventListener('click', () => {
-  $('#screenPicker').classList.remove('hidden');
-  $('#btnCancelPicker').focus();
-  loadScreenSources();
-});
+$('#btnShare').addEventListener('click', openScreenPicker);
+document.querySelectorAll('[data-source-tab]').forEach(button=>button.addEventListener('click',()=>selectScreenSourceTab(button.dataset.sourceTab)));
 
 // --- 收起屏幕源选择面板 ---
 $('#btnCancelPicker').addEventListener('click', () => {
@@ -290,6 +290,7 @@ document.addEventListener('keydown', event => {
 
 // --- 窗口关闭前清理 ---
 window.addEventListener('beforeunload', () => {
+  appPresence.stop();
   leaveRoom();
 });
 
@@ -310,7 +311,6 @@ function initSettings() {
   $('#videoEncoderSelect').addEventListener('change', e => {
     state.videoEncoder = e.target.value;
     localStorage.setItem('videoEncoder', state.videoEncoder);
-    toast('编码器已保存，重新共享后生效');
   });
   state.resolution = localStorage.getItem('resolution') || state.resolution;
   const savedCaptureMethod = localStorage.getItem('captureMethod');
@@ -319,7 +319,6 @@ function initSettings() {
   $('#captureMethodSelect').addEventListener('change', e => {
     state.captureMethod = e.target.value;
     localStorage.setItem('captureMethod', state.captureMethod);
-    toast('整屏采集方式已保存，下次开始共享时生效');
   });
   state.frameRate = parseInt(localStorage.getItem('frameRate')) || state.frameRate;
   state.maxBitrate = localStorage.getItem('maxBitrate') !== null
@@ -332,7 +331,6 @@ function initSettings() {
   $('#adaptiveResolutionCheckbox').addEventListener('change', event => {
     state.adaptiveResolution = event.target.checked;
     localStorage.setItem('adaptiveResolution', String(state.adaptiveResolution));
-    toast('自动调整分辨率设置已保存，下次开始共享时生效');
   });
   state.audioBitrate = parseInt(localStorage.getItem('audioBitrate')) || state.audioBitrate;
   if (!['auto', '1920x1080', '1280x720', '854x480'].includes(state.resolution)) state.resolution = '1280x720';
@@ -364,13 +362,11 @@ function initSettings() {
       bitrateInput.placeholder = '共享时按实际分辨率和帧率计算';
       state.maxBitrate = 0;
       localStorage.setItem('maxBitrate', 0);
-      toast('已开启推荐码率，将按分辨率和帧率计算');
     } else {
       bitrateInput.disabled = false;
       state.maxBitrate = parseInt(bitrateInput.value) || 1500;
       bitrateInput.value = state.maxBitrate;
       localStorage.setItem('maxBitrate', state.maxBitrate);
-      toast(`目标码率已设为 ${state.maxBitrate} kbps`);
     }
   });
 
@@ -383,23 +379,16 @@ function initSettings() {
     e.target.value = val;
     state.maxBitrate = val;
     localStorage.setItem('maxBitrate', state.maxBitrate);
-    toast('目标码率已更新，将在下次共享时生效');
   });
-
-  function autoAdjustBitrate() {
-    toast('分辨率/帧率已更新，重新共享后生效；手动码率保持不变');
-  }
 
   $('#resolutionSelect').addEventListener('change', (e) => {
     state.resolution = e.target.value;
     localStorage.setItem('resolution', state.resolution);
-    autoAdjustBitrate();
   });
 
   $('#frameRateSelect').addEventListener('change', (e) => {
     state.frameRate = parseInt(e.target.value);
     localStorage.setItem('frameRate', state.frameRate);
-    autoAdjustBitrate();
   });
 
   $('#audioBitrateSelect').value = state.audioBitrate;
@@ -408,13 +397,11 @@ function initSettings() {
   $('#shareAudioCheckbox').addEventListener('change', (e) => {
     state.shareAudio = e.target.checked;
     localStorage.setItem('shareAudio', state.shareAudio);
-    toast('音频共享设置已更新，将在下次共享时生效');
   });
 
   $('#audioBitrateSelect').addEventListener('change', (e) => {
     state.audioBitrate = parseInt(e.target.value);
     localStorage.setItem('audioBitrate', state.audioBitrate);
-    toast('音频码率已更新，将在下次共享时生效');
   });
 
 }
@@ -492,6 +479,10 @@ const btnRoomSettings = $('#btnRoomSettingsToolbar');  // 房间内共享设置�
 const btnRoomSystemSettings = $('#btnRoomSettings');
 const settingsModal = $('#settingsModal');      // 弹窗本体
 const btnCloseSettings = $('#btnCloseSettings');// 关闭按钮
+function showSettings() {
+  settingsModal.classList.remove('hidden');
+  settingsModal.querySelector('.modal-body').scrollTo({ top: 0, behavior: 'instant' });
+}
 
 // Help remains accessible by mouse, click, or keyboard without toggling a setting.
 $$('.help-tip').forEach(tip => {
@@ -512,7 +503,7 @@ if (settingsModal && btnCloseSettings) {
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
       $$('.setting-room').forEach(el => el.style.display = 'none');
-      settingsModal.classList.remove('hidden');
+      showSettings();
     });
   }
   if (btnRoomSettings) {
@@ -522,7 +513,7 @@ if (settingsModal && btnCloseSettings) {
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');
       $$('.setting-room').forEach(el => el.style.display = '');
-      settingsModal.classList.remove('hidden');
+      showSettings();
     });
   }
   if (btnRoomSystemSettings) btnRoomSystemSettings.addEventListener('click', () => btnSettings?.click());
@@ -555,6 +546,7 @@ function saveBookmarks(value) {
     return cachedIcon && !record.icon ? { ...record, icon: 'cached' } : record;
   });
   localStorage.setItem('serverBookmarks', JSON.stringify(records));
+  appPresence.sync();
 }
 for (const item of readBookmarks().filter(item => item.cachedIcon)) {
   void readCachedImage('bookmark:' + item.url).then(icon => {
@@ -580,7 +572,7 @@ function renderBookmarks() {
       const item = bookmarks[index];
       showContextMenu(event, [
         { label: '编辑书签', run: () => editBookmark(index, item) },
-        { label: '删除书签', run: () => { const next = readBookmarks(); next.splice(index, 1); saveBookmarks(next); renderBookmarks(); toast('书签已删除', 'success'); } },
+        { label: '删除书签', run: () => { const next = readBookmarks(); next.splice(index, 1); saveBookmarks(next); renderBookmarks(); } },
       ]);
     }));
   };
@@ -594,7 +586,7 @@ function addBookmark(url, name = '') {
   name = name.trim() || new URL(url).hostname;
   const bookmarks = readBookmarks().filter(item => item.url !== url);
   const previous = readBookmarks().find(item => item.url === url);
-  bookmarks.unshift({ ...previous, name, url }); saveBookmarks(bookmarks); renderBookmarks(); toast('服务器已加入书签', 'success');
+  bookmarks.unshift({ ...previous, name, url }); saveBookmarks(bookmarks); renderBookmarks();
 }
 document.addEventListener('server-icon-updated', event => {
   $('#btnResetServerIcon').disabled = !event.detail;
@@ -674,7 +666,7 @@ $('#bookmarkEditForm')?.addEventListener('submit', event => {
     const next = readBookmarks();
     const old = next[editingBookmarkIndex];
     next[editingBookmarkIndex] = { ...(old?.url === parsed.origin ? old : {}), name, url: parsed.origin };
-    saveBookmarks(next); renderBookmarks(); $('#bookmarkEditDialog').classList.add('hidden'); toast('书签已更新', 'success');
+    saveBookmarks(next); renderBookmarks(); $('#bookmarkEditDialog').classList.add('hidden');
   } catch { $('#bookmarkEditError').textContent = '请输入有效的 HTTP 或 HTTPS 地址，不要附加路径'; }
 });
 

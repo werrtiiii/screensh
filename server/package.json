@@ -1,12 +1,12 @@
 {
   "name": "screensh-server",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Signaling server for ScreenSh P2P screen sharing",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "express": "^4.21.0",

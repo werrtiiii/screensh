@@ -10,7 +10,7 @@ const proxyaddr = require('proxy-addr');
 const { normalizePeers } = require('./easytier-peers.cjs');
 const { cleanLolPingEndpoint } = require('./lolping-protocol.cjs');
 
-function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000 } = {}) {
+function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000, presenceTtlMs = 45000, presenceSweepMs = 5000 } = {}) {
   const dataDir = stateFile ? path.dirname(stateFile) : null;
   const mediaDir = dataDir ? path.join(dataDir, 'media') : null;
   const imageIds = new Map(), images = new Map();
@@ -90,6 +90,16 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   app.set('trust proxy', trustedProxies);
   const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 3 * 1024 * 1024 });
   const members = new Map();
+  // Presence-only sockets prove an existing identity without joining any media room.
+  const appPresence = new Map();
+  const appOnline = key => [...appPresence.values()].some(record => record.key === key && record.expires > Date.now());
+  const presenceTimer = setInterval(() => {
+    let changed = false;
+    for (const [id, record] of appPresence) if (record.expires <= Date.now()) { appPresence.delete(id); changed = true; }
+    if (changed) publish();
+  }, presenceSweepMs);
+  presenceTimer.unref();
+  server.on('close', () => { clearInterval(presenceTimer); appPresence.clear(); });
   let channelEntrySequence = 0;
   // Keep sound presence slightly longer than the client's five-second retry window.
   // These records never grant media access or count as connected members.
@@ -136,10 +146,11 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   const role = key => key === saved.owner ? 'host' : saved.admins.includes(key) ? 'admin' : 'member';
   function historicalMembers() {
     const online = new Map([...members].map(([socketId, user]) => [user.key, { socketId, user }]));
+    const softwareOnline = new Set([...appPresence.values()].filter(record => record.expires > Date.now()).map(record => record.key));
     return Object.entries(saved.memberHistory).map(([key, record]) => {
       const current = online.get(key);
       return { memberId: record.id, name: current?.user.name || record.name, socketId: current?.socketId || null,
-        online: !!current, role: role(key), avatar: imageRef(saved.userProfiles[key]?.avatar),
+        online: !!current || softwareOnline.has(key), inServer: !!current, role: role(key), avatar: imageRef(saved.userProfiles[key]?.avatar),
         channelId: current?.user.channelId ?? null, voiceMuted: !!current?.user.voiceMuted };
     });
   }
@@ -181,7 +192,25 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       u.lolpingEndpoint = endpoint; publish();
       return {};
     });
-    handle('server-info', () => ({ protocol: 2, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password }));
+    handle('server-info', () => ({ protocol: 2, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password, appPresence: true }));
+    handle('app-presence', payload => {
+      if (payload?.serverId !== saved.serverId || typeof payload.identity !== 'string' || !/^[a-f0-9]{64}$/.test(payload.identity)) throw new Error('无效的在线状态');
+      const key = createHash('sha256').update(payload.identity).digest('hex');
+      if (!saved.memberHistory[key]) throw new Error('成员配置不存在');
+      const previous = appPresence.get(socket.id);
+      if (previous && previous.key !== key) throw new Error('在线身份不可变更');
+      if (!previous && appPresence.size >= 1000) throw new Error('在线状态连接已满');
+      const wasOnline = appOnline(key);
+      appPresence.set(socket.id, { key, expires: Date.now() + presenceTtlMs });
+      if (!wasOnline) publish();
+      return {};
+    });
+    socket.on('disconnect', () => {
+      const record = appPresence.get(socket.id);
+      if (!record) return;
+      if (!disconnectGraceMs) { appPresence.delete(socket.id); publish(); }
+      else record.expires = Math.min(record.expires, Date.now() + disconnectGraceMs);
+    });
     handle('check-access', async payload => { await checkAccess(socket, payload); return { easytierPeers: saved.easytierPeers }; });
     handle('join-server', async payload => {
       const accessPassword = saved.password;
@@ -373,6 +402,9 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const [key] = entry, memberHistory = { ...saved.memberHistory }, userProfiles = { ...saved.userProfiles };
       delete memberHistory[key]; delete userProfiles[key];
       persist({ ...saved, memberHistory, userProfiles, admins: saved.admins.filter(id => id !== key) });
+      for (const [id, record] of appPresence) if (record.key === key) {
+        appPresence.delete(id); io.sockets.sockets.get(id)?.emit('app-presence-revoked');
+      }
       forgetDisconnected(key); mutedIdentities.delete(key); interactionTimes.delete(key);
       for (const [id, user] of members) if (user.key === key) {
         const client = io.sockets.sockets.get(id);

@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.13",
+  "version": "1.4.14",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "pack:portable": "npm run build:lolping && npm run build:process-audio && node scripts/package-win.cjs",
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "node --test",
+    "test": "node --test tests/*.test.js",
     "test:native": "node scripts/run-electron.cjs smoke-native.cjs",
     "test:media": "node scripts/run-electron.cjs smoke-electron.cjs",
     "test:ui": "node scripts/run-electron.cjs smoke-ui.cjs",
@@ -50,31 +50,16 @@
     "files": [
       "main.js",
       "preload.js",
-      "managed-process.js",
-      "peer-test.js",
-      "member-ping.cjs",
-      "saved-passwords.cjs",
-      "login-startup.cjs",
-      "obs-engine.js",
-      "obs-host-path.js",
-      "voice-runtime.cjs",
-      "voice-worker.cjs",
-      "obs-constants.js",
-      "capture-sources.js",
+      "main/**/*",
       "mediamtx.yml",
       "renderer/**/*",
       "node_modules/**/*",
       "package.json",
-      "process-audio.cjs",
-      "video-encoder.js",
-      "tray-controller.cjs",
-      "lolping-runtime.cjs",
+      "update-config.json",
+      "lolping/*.cjs",
       "lolping/dist/**/*",
       "lolping/NOTICE.md",
-      "lolping/vendor/LICENSE",
-      "lolping-easytier.cjs",
-      "lolping-room.cjs",
-      "lolping-windows.cjs"
+      "lolping/vendor/LICENSE"
     ],
     "extraResources": [
       {

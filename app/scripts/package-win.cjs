@@ -4,7 +4,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { collectResources } = require('./package-resources.cjs');
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, "..");
 const manifest = require('../package.json');
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('请在 Windows x64 上打包');
 const stamp = new Date().toISOString().replace(/[-:.]/g, '').replace('T', '-').replace('Z', '');
@@ -41,8 +41,11 @@ const executable = path.join(output, 'ScreenSh.exe');
 const resources = path.join(output, 'resources');
 const appDir = path.join(resources, 'app');
 fs.mkdirSync(appDir, { recursive: true });
-for (const file of ['tray-controller.cjs', 'main.js', 'preload.js', 'managed-process.js', 'peer-test.js', 'obs-engine.js', 'video-encoder.js', 'obs-host-path.js', 'process-audio.cjs', 'voice-runtime.cjs', 'voice-worker.cjs', 'obs-constants.js', 'capture-sources.js', 'updater.js', 'update-config.json', 'mediamtx.yml', 'renderer']) {
-  copy(path.join(root, file), path.join(appDir, file));
+// Share NSIS's payload definition so reorganizing a module cannot omit it from the portable package.
+for (const pattern of manifest.build.files.filter(pattern => !pattern.startsWith('node_modules/'))) {
+  for (const file of fs.globSync(pattern,{cwd:root})) {
+    if(fs.statSync(path.join(root,file)).isFile()) copy(path.join(root, file), path.join(appDir, file));
+  }
 }
 fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify({
   name: manifest.name, version: manifest.version, description: manifest.description,
@@ -69,7 +72,7 @@ for (const name of Object.keys(manifest.dependencies)) copyDependency(name, root
 for (const file of nativeResources) copy(path.join(root, 'res', file), path.join(resources, file));
 console.log('Native resources: ' + nativeResources.join(', '));
 // Check the copied Electron before UAC is applied, without substituting the build runtime.
-const check = spawnSync(process.execPath, [path.join(__dirname, 'check-package.cjs'), output], {
+const check = spawnSync(process.execPath, [path.join(__dirname, "./check-package.cjs"), output], {
   stdio: 'inherit', windowsHide: true, timeout: 120000,
 });
 if (check.error || check.status !== 0) throw check.error || new Error('Package validation failed; no ZIP produced');

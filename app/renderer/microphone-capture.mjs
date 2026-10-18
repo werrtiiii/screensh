@@ -1,5 +1,5 @@
 // getUserMedia cannot be aborted. Release late results after cancellation/timeout.
-export function captureMicrophone(deviceId, { signal, timeout = 15000, mediaDevices = navigator.mediaDevices } = {}) {
+export function captureMicrophone(deviceId, { signal, timeout = 15000, mediaDevices = navigator.mediaDevices, processing = {} } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false, timer;
     const finish = (error, stream) => {
@@ -12,7 +12,7 @@ export function captureMicrophone(deviceId, { signal, timeout = 15000, mediaDevi
     if (!mediaDevices?.getUserMedia) return finish(new Error('当前环境不支持麦克风采集'));
     signal?.addEventListener('abort', cancel, { once: true });
     timer = setTimeout(() => finish(new Error('麦克风启动超时，请检查麦克风权限或设备占用')), timeout);
-    const audio = { sampleRate: { ideal: 48000 }, channelCount: { ideal: 1 }, latency: { ideal: 0.01 }, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    const audio = { sampleRate: { ideal: 48000 }, channelCount: { ideal: 1 }, latency: { ideal: 0.01 }, echoCancellation: processing.echoCancellation === true, noiseSuppression: processing.noiseSuppression === true, autoGainControl: processing.autoGainControl === true };
     if (deviceId && deviceId !== 'default') audio.deviceId = { exact: deviceId };
     Promise.resolve().then(() => settled ? null : mediaDevices.getUserMedia({ audio, video: false })).then(stream => {
       if (!stream) return;

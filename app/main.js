@@ -1,12 +1,12 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, safeStorage } = require('electron');
-const { listCaptureSources } = require('./capture-sources');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, safeStorage, desktopCapturer } = require('electron');
+const { listCaptureSources, attachCapturePreviews } = require('./main/capture-sources');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { isIPv4 } = require('net');
 const { randomInt } = require('crypto');
-const { ManagedProcess } = require('./managed-process');
-const { ObsEngine } = require('./obs-engine');
+const { ManagedProcess } = require('./main/managed-process');
+const { ObsEngine } = require('./main/obs-engine');
 const renderingConfigPath = path.join(app.getPath('userData'), 'rendering.json');
 let hardwareAccelerationEnabled = false;
 try {
@@ -37,11 +37,11 @@ function getUpdater() {
 let mainWindow, obs, virtualIp, generation = 0, quitting = false;
 let trayController, quitReady = false, quitPromise;
 let shareStart = null, shareStop = null, shareCleanup = null, runtimeLeave = null;
-const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, 'res'), name);
+const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, "./res"), name);
 let lolping;
 function getLolPing() {
   if (!lolping) {
-    const { LolPingRuntime } = require('./lolping-runtime.cjs');
+    const { LolPingRuntime } = require('./lolping/runtime.cjs');
     lolping = new LolPingRuntime({ file: path.join(app.getPath('userData'), 'lolping.json'), helper: resource('lolping-hook-helper.exe'),
       send: (channel, data) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data); } });
   }
@@ -59,11 +59,11 @@ function failure(message) {
 }
 const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
-const peerTester = require('./peer-test').createPeerTester(resource('easytier-core.exe'));
-const memberPinger = require('./member-ping.cjs').createMemberPinger();
+const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
+const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
 ipcMain.handle('ping-member', (_event, ip) => memberPinger.ping(ip));
-const savedPasswords = require('./saved-passwords.cjs').createSavedPasswords(path.join(app.getPath('userData'), 'server-passwords.json'), safeStorage);
-const loginStartup = require('./login-startup.cjs').createLoginStartup({ exe: process.execPath, appPath: __dirname, packaged: app.isPackaged });
+const savedPasswords = require('./main/saved-passwords.cjs').createSavedPasswords(path.join(app.getPath('userData'), 'server-passwords.json'), safeStorage);
+const loginStartup = require('./main/login-startup.cjs').createLoginStartup({ exe: process.execPath, appPath: __dirname, packaged: app.isPackaged });
 ipcMain.handle('get-saved-server-password', (_event, url, id) => savedPasswords.get(url, id));
 ipcMain.handle('save-server-password', (_event, url, id, password) => savedPasswords.set(url, id, password));
 ipcMain.handle('get-login-startup', () => loginStartup.get());
@@ -103,8 +103,8 @@ const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Bool
 let voiceRuntime;
 function getVoiceRuntime() {
   if (!voiceRuntime) {
-    const { VoiceRuntime } = require('./voice-runtime.cjs');
-    voiceRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'voice-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml'), message => mainWindow?.webContents.send('voice-error', message));
+    const { VoiceRuntime } = require('./main/voice-runtime.cjs');
+    voiceRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'voice-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml"), message => mainWindow?.webContents.send('voice-error', message));
   }
   return voiceRuntime;
 }
@@ -118,7 +118,7 @@ let accompanimentRuntime;
 let processAudio;
 function getProcessAudio() {
   if (!processAudio) {
-    const { ProcessAudio } = require('./process-audio.cjs');
+    const { ProcessAudio } = require('./main/process-audio.cjs');
     processAudio = new ProcessAudio(resource('screensh-process-audio.exe'), message => mainWindow?.webContents.send('accompaniment-pcm', message), message => mainWindow?.webContents.send('accompaniment-error', message));
   }
   return processAudio;
@@ -128,8 +128,8 @@ ipcMain.handle('accompaniment-start', (_event, sourceId) => {
   if (typeof sourceId !== 'string' || !sourceId || sourceId.length > 8192) throw new Error('无效的伴奏音源');
   if (/^process:[1-9]\d{0,9}$/.test(sourceId)) return getProcessAudio().start(Number(sourceId.slice(8)));
   if (!accompanimentRuntime) {
-    const { VoiceRuntime } = require('./voice-runtime.cjs');
-    accompanimentRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'accompaniment-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml'), message => mainWindow?.webContents.send('accompaniment-error', message), { httpPort: 8891, icePort: 8191, sourceType: 'accompaniment' });
+    const { VoiceRuntime } = require('./main/voice-runtime.cjs');
+    accompanimentRuntime = new VoiceRuntime(path.join(app.getPath('userData'), 'accompaniment-obs'), resource('mediamtx.exe'), app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml"), message => mainWindow?.webContents.send('accompaniment-error', message), { httpPort: 8891, icePort: 8191, sourceType: 'accompaniment' });
   }
   return accompanimentRuntime.start(sourceId);
 });
@@ -141,7 +141,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
   mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
+    webPreferences: { preload: path.join(__dirname, "./preload.js"), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   trayController?.attach(mainWindow);
   mainWindow.webContents.on('render-process-gone', () => { void lolping?.stop().catch(failure); });
@@ -156,7 +156,7 @@ function createWindow() {
         (modifier && input.shift && ['i', 'j', 'c'].includes(key)) ||
         (input.alt && ['left', 'right'].includes(key))) event.preventDefault();
   });
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, "./renderer/index.html"));
   if (!app.isPackaged && process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
 }
 
@@ -197,10 +197,13 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   return virtualIp = ip;
 });
 
-ipcMain.handle('get-screens', () => {
+ipcMain.handle('get-screens', async () => {
   obs.init();
-  try { return listCaptureSources(obs.osn, screen.getAllDisplays()); }
+  let sources;
+  try { sources = listCaptureSources(obs.osn, screen.getAllDisplays()); }
   finally { obs.scheduleIdleShutdown(); }
+  try {return attachCapturePreviews(sources, await desktopCapturer.getSources({types:['screen','window'],thumbnailSize:{width:480,height:270},fetchWindowIcons:false}));}
+  catch(error) {console.warn('[Capture previews]',error.message);return sources;}
 });
 
 function validateConfig(config) {
@@ -250,7 +253,7 @@ ipcMain.handle('start-sharing', async (_event, config) => {
   shareStart = (async () => {
     try {
       const exe = resource('mediamtx.exe');
-      await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, 'mediamtx.yml')], {
+      await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml")], {
         cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
         env: { ...process.env, MTX_RTSP: 'false', MTX_RTMP: 'false', MTX_HLS: 'false', MTX_SRT: 'false', MTX_API: 'false', MTX_METRICS: 'false', MTX_PPROF: 'false', MTX_PLAYBACK: 'false', MTX_WEBRTCADDITIONALHOSTS: virtualIp,
           MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${virtualIp}:8189`,
@@ -298,7 +301,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => trayController?.show());
   app.whenReady().then(() => {
-    const { createTrayController } = require('./tray-controller.cjs');
+    const { createTrayController } = require('./main/tray-controller.cjs');
     trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
     createWindow();
   });

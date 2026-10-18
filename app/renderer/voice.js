@@ -19,6 +19,9 @@ let generation = 0, context, outgoing, rawStream, micGain, source, localMeter, c
 let testGeneration = 0, testBusy = false, testAudio, testStream, testMeter, testCleanup, testOwnsCapture = false;
 let changingMicrophone = false, microphoneDevices = [];
 let accompanimentStereo = false;
+let accompanimentInputs = 0, outgoingUpdates = Promise.resolve();
+const processingKeys = ['echoCancellation', 'noiseSuppression', 'autoGainControl'];
+const processingSettings = () => Object.fromEntries(processingKeys.map(key => [key, localStorage.getItem(`voiceProcessing.${key}`) === 'true']));
 const microphone = () => localStorage.getItem('voiceMicrophone') || 'default';
 // WASAPI endpoint identifiers from the former OBS backend aren't browser IDs.
 if (microphone().startsWith('{')) localStorage.setItem('voiceMicrophone', 'default');
@@ -103,12 +106,60 @@ function closePeer(id) {
 }
 function applyMute() {
   const me = state.serverUsers.find(u => u.socketId === socket?.id);
+  rawStream?.getAudioTracks().forEach(track => { track.enabled = !voice.muted && !me?.voiceMuted && microphoneVolume > 0; });
   if (micGain) micGain.gain.value = voice.muted || me?.voiceMuted ? 0 : microphoneVolume;
   for (const [id, peer] of peers) {
     const user = state.serverUsers.find(u => u.socketId === id);
     peer.audio.muted = voice.deafened || blockedSpeakers.has(id) || !!user?.voiceMuted;
     peer.audio.volume = (volumes.get(id) ?? 1) * receiveVolume;
   }
+}
+function ensureVoiceMixer() {
+  if (!voiceDestination) {
+    voiceDestination = context.createMediaStreamDestination();
+    voiceDestination.channelCount = accompanimentStereo ? 2 : 1;
+  }
+  if (!source) {
+    source = context.createMediaStreamSource(rawStream); micGain = context.createGain();
+    applyMute(); source.connect(micGain); micGain.connect(voiceDestination);
+  }
+  return voiceDestination;
+}
+function updateOutgoing() {
+  if (!rawStream) return Promise.resolve();
+  const direct = microphoneVolume === 1 && accompanimentInputs === 0;
+  const next = direct ? rawStream : ensureVoiceMixer().stream;
+  if (direct) {
+    source?.disconnect(); micGain?.disconnect(); source = micGain = null;
+  }
+  if (outgoing === next && localMeter) return outgoingUpdates;
+  outgoing = next;
+  localMeter?.();
+  localMeter = meter(outgoing, socket?.id, () => (!voice.muted || accompanimentInputs > 0) && !state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted);
+  const token = generation, track = next.getAudioTracks()[0];
+  // Serialize slider/music/device changes so an older replacement cannot win.
+  outgoingUpdates = outgoingUpdates.catch(() => {}).then(async () => {
+    if (token !== generation || !rawStream || outgoing !== next) return;
+    await Promise.all([...peers].map(async ([id, peer]) => {
+      const sender = peer.pc.getSenders().find(sender => sender.track?.kind === 'audio');
+      if (!sender || sender.track === track) return;
+      try { await sender.replaceTrack(track); }
+      catch (error) {
+        if (peers.get(id) !== peer || token !== generation) return;
+        // Some engines require a new negotiation when channel counts change.
+        closePeer(id);
+        const user = state.serverUsers.find(user => user.socketId === id);
+        if (user) schedulePeerRetry(user);
+        announce(error);
+      }
+    }));
+    // Keep the old mixed track alive until senders finish replacing it. A new
+    // music/volume change may have reactivated the mixer while we awaited them.
+    if (token === generation && outgoing === rawStream && microphoneVolume === 1 && accompanimentInputs === 0) {
+      voiceDestination?.stream.getTracks().forEach(track => track.stop()); voiceDestination = null;
+    }
+  });
+  return outgoingUpdates;
 }
 async function signal(id, data) { await requestServer('voice-signal', { to: id, data }); }
 function remoteMeter(peer, id) {
@@ -247,17 +298,14 @@ async function capture() {
   const controller = captureController = new AbortController();
   let stream;
   try {
-    stream = await captureMicrophone(microphone(), { signal: controller.signal });
+    stream = await captureMicrophone(microphone(), { signal: controller.signal, processing: processingSettings() });
     if (token !== generation) throw new Error('语音启动已取消');
     context ||= createVoiceAudioContext(); await context.resume();
     if (token !== generation) throw new Error('语音启动已取消');
   } catch (error) { stream?.getTracks().forEach(track => track.stop()); throw error; }
   finally { if (captureController === controller) captureController = null; }
-  rawStream = stream; source = context.createMediaStreamSource(stream); micGain = context.createGain();
-  const destination = voiceDestination ||= context.createMediaStreamDestination(); destination.channelCount = accompanimentStereo ? 2 : 1; source.connect(micGain); micGain.connect(destination); outgoing = destination.stream;
-  localMeter?.();
-  localMeter = meter(outgoing, socket?.id, () => (!voice.muted || window.channelAccompaniment?.active()) && !state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted);
-  applyMute(); return outgoing;
+  rawStream = stream;
+  applyMute(); await updateOutgoing(); return outgoing;
 }
 function ensureCapture() {
   if (rawStream && context?.state !== 'closed') return Promise.resolve(outgoing);
@@ -330,7 +378,7 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   }
   captureController?.abort();
   const pendingCapture = capturePending;
-  outgoing?.getTracks().forEach(track => track.stop()); outgoing = null;
+  voiceDestination?.stream.getTracks().forEach(track => track.stop()); outgoing = null;
   rawStream?.getTracks().forEach(track => track.stop()); rawStream = null;
   source?.disconnect(); micGain?.disconnect(); source = micGain = voiceDestination = null;
   const closing = context?.close(); context = null;
@@ -359,9 +407,10 @@ function fillMicrophones(select, devices = microphoneDevices) {
   if (![...select.options].some(option => option.value === microphone())) select.add(new Option('已保存的麦克风（当前不可用）', microphone()));
   select.value = microphone();
 }
-async function changeMicrophone(deviceId) {
-  if (changingMicrophone || voice.busy || testBusy || !deviceId || deviceId === microphone()) { paintControls(); return; }
-  const previous = microphone(), resumeTest = voice.testing, hadCapture = !!rawStream, ownerRoom = state.roomId;
+async function changeMicrophone(deviceId, setting = null) {
+  if (changingMicrophone || voice.busy || testBusy || cleanup || testCleanup || !deviceId || (!setting && deviceId === microphone())) { paintControls(); return; }
+  const storageKey = setting ? `voiceProcessing.${setting.key}` : 'voiceMicrophone';
+  const previous = setting ? String(processingSettings()[setting.key]) : microphone(), resumeTest = voice.testing, hadCapture = !!rawStream, ownerRoom = state.roomId;
   changingMicrophone = true; paintControls();
   const replaceCapture = async () => {
     const token = ++generation; captureController?.abort();
@@ -374,11 +423,11 @@ async function changeMicrophone(deviceId) {
   };
   try {
     if (resumeTest) await stopMicrophoneTest({ keepCapture: true });
-    localStorage.setItem('voiceMicrophone', deviceId);
+    localStorage.setItem(storageKey, setting ? String(setting.value) : deviceId);
     if (hadCapture) await replaceCapture();
     if (resumeTest && !$('#settingsModal').classList.contains('hidden')) await startMicrophoneTest();
   } catch (error) {
-    localStorage.setItem('voiceMicrophone', previous);
+    localStorage.setItem(storageKey, previous);
     if (state.leaving || state.roomId !== ownerRoom) return;
     announce(error);
     try { if (hadCapture) await replaceCapture(); if (resumeTest) await startMicrophoneTest(); }
@@ -402,7 +451,7 @@ export function decorateVoiceCard(card, user, isMe) {
     const panel = document.createElement('div'); panel.className = 'microphone-popover'; panel.setAttribute('aria-label', '麦克风设置');
     const label = document.createElement('label'); label.textContent = '麦克风音量';
     const gain = document.createElement('input'); gain.type = 'range'; gain.min = 0; gain.max = 100; gain.value = microphoneVolume * 100; gain.setAttribute('aria-label', '麦克风音量');
-    gain.oninput = () => { microphoneVolume = Number(gain.value) / 100; localStorage.setItem('voiceMicVolume', String(microphoneVolume)); applyMute(); }; label.append(gain); panel.append(label);
+    gain.oninput = () => { microphoneVolume = Number(gain.value) / 100; localStorage.setItem('voiceMicVolume', String(microphoneVolume)); applyMute(); void updateOutgoing().catch(announce); }; label.append(gain); panel.append(label);
     const deviceLabel = document.createElement('label'); deviceLabel.textContent = '麦克风';
     const select = document.createElement('select'); select.dataset.microphoneSelect = 'true'; select.setAttribute('aria-label', '选择麦克风'); fillMicrophones(select); deviceLabel.append(select); panel.append(deviceLabel);
     let loaded = false;
@@ -443,6 +492,10 @@ export function decorateVoiceCard(card, user, isMe) {
   paintControls();
 }
 function paintControls() {
+  for (const input of document.querySelectorAll('[data-voice-processing]')) {
+    input.checked = processingSettings()[input.dataset.voiceProcessing];
+    input.disabled = changingMicrophone || voice.busy || testBusy || !!cleanup || !!testCleanup;
+  }
   for (const button of document.querySelectorAll('[data-voice]')) {
     const mode = button.dataset.voice, me = state.serverUsers.find(u => u.socketId === socket?.id);
     const active = mode === 'join' ? voice.enabled : mode === 'mute' ? voice.muted || me?.voiceMuted : voice.deafened;
@@ -452,7 +505,7 @@ function paintControls() {
     button.title = mode === 'join' ? voice.busy ? '正在连接语音' : voice.enabled ? '退出频道语音' : '加入频道语音' : mode === 'mute' ? me?.voiceMuted ? '已被管理员禁言' : voice.muted ? '取消麦克风静音' : '麦克风静音' : voice.deafened ? '恢复收听' : '关闭收听';
     button.setAttribute('aria-label', button.title);
   }
-  for (const status of document.querySelectorAll('.voice-status')) status.textContent = voice.busy ? '连接中…' : state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted ? '已被禁言' : voice.muted ? '麦克风已关闭' : '自由发言';
+  for (const status of document.querySelectorAll('.voice-status')) status.textContent = voice.busy ? '连接中…' : state.serverUsers.find(u => u.socketId === socket?.id)?.voiceMuted ? '已被禁言' : voice.muted ? '' : '自由发言';
   if ($('#btnMicrophoneTest')) { $('#btnMicrophoneTest').textContent = testBusy ? '正在启动…' : voice.testing ? '停止' : '测试'; $('#btnMicrophoneTest').disabled = voice.busy || !!cleanup || testBusy || !!testCleanup || changingMicrophone; }
   for (const select of document.querySelectorAll('[data-microphone-select], #voiceMicrophone')) {
     if (![...select.options].some(option => option.value === microphone())) {
@@ -477,6 +530,10 @@ export async function refreshVoiceDevices() {
   } catch (error) { announce(error); }
 }
 export function initVoice() {
+  for (const input of document.querySelectorAll('[data-voice-processing]')) {
+    input.checked = processingSettings()[input.dataset.voiceProcessing];
+    input.onchange = () => void changeMicrophone(microphone(), { key: input.dataset.voiceProcessing, value: input.checked });
+  }
   attachVoiceStats($('#voiceDiagnostics'), { getPeers: () => [...peers].map(([id, peer]) => ({ id, name: state.serverUsers.find(u => u.socketId === id)?.name || '成员', pc: peer.pc })), getCapture: () => ({ track: rawStream?.getAudioTracks()[0], context, enabled: voice.enabled }) });
   window.channelVoice = { accompanimentState: async active => {
     accompanimentStereo = !!active;
@@ -496,8 +553,16 @@ export function initVoice() {
 async function mixAccompaniment(stream, volume) {
   for (let i = 0; voice.busy && i < 300; i++) await new Promise(resolve => setTimeout(resolve, 100));
   if (!voice.enabled) await startVoice();
-  if (!voice.enabled || !context || !voiceDestination || state.leaving) throw new Error('请先连接频道语音');
+  if (!voice.enabled || !context || !rawStream || state.leaving) throw new Error('请先连接频道语音');
+  const destination = ensureVoiceMixer();
   const input = context.createMediaStreamSource(stream), gain = context.createGain();
-  gain.gain.value = volume; input.connect(gain); gain.connect(voiceDestination);
-  return { volume: value => { gain.gain.value = value; }, dispose: () => { input.disconnect(); gain.disconnect(); } };
+  gain.gain.value = volume; input.connect(gain); gain.connect(destination);
+  accompanimentInputs++;
+  await updateOutgoing();
+  let disposed = false;
+  return { volume: value => { gain.gain.value = value; }, dispose: () => {
+    if (disposed) return;
+    disposed = true; input.disconnect(); gain.disconnect(); accompanimentInputs--;
+    void updateOutgoing().catch(announce);
+  } };
 }
