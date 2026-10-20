@@ -12,6 +12,7 @@ import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { readChannelPreferences, saveChannelPreference } from './server-channel-preferences.mjs';
 import { applyAvatarThumbnails } from './avatar-thumbnail.mjs';
 import { syncLolPing, stopLolPing } from './lolping.js';
+import { voiceIcon } from './voice-icons.mjs';
 import {
   escapeHtml,
   displayRemoteVideo,
@@ -33,15 +34,16 @@ const roleBadges = {
 };
 function roleBadge(role) {
   const item = roleBadges[role] || roleBadges.member;
-  return `<span class="member-role role-${roleBadges[role] ? role : 'member'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${item.path}</svg>${item.label}</span>`;
+  return `<span class="member-role role-${roleBadges[role] ? role : 'member'}" title="${item.label}" aria-label="${item.label}" role="img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${item.path}</svg></span>`;
 }
 const memberRank = { host: 2, admin: 1, member: 0 };
+const sharingIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>';
 function memberActions(user, users, allowDelete = false) {
   const myRole = users.find(u => u.socketId === socket?.id)?.role;
   const actions = [];
-  if (user.socketId && myRole === 'host' && user.role !== 'host') actions.push({
+  if ((user.memberId || user.socketId) && myRole === 'host' && user.role !== 'host') actions.push({
     label: user.role === 'admin' ? '移除管理员' : '设为管理员',
-    run: () => perform('set-admin', { socketId: user.socketId, enabled: user.role !== 'admin' })
+    run: () => perform('set-admin', { ...(user.socketId ? { socketId: user.socketId } : { memberId: user.memberId }), enabled: user.role !== 'admin' })
   });
   if (memberRank[myRole] > memberRank[user.role]) {
     if (user.socketId) actions.push({ label: '踢出服务器', run: () => perform('kick-member', { socketId: user.socketId }) });
@@ -94,22 +96,13 @@ export function updateUserList(users, allMembers = users) {
     const card = document.createElement('div');
     card.className = 'user-card';
 
-    let btnHtml = '';
-    if (isMe && isSharing) {
-      btnHtml = `<button class="btn btn-primary btn-sm btn-watch">▶ 观看共享</button>`;
-    } else if (isMe) {
-      btnHtml = `<button class="btn btn-outline btn-sm btn-watch" disabled>未共享</button>`;
-    } else if (isSharing) {
-      btnHtml = `<button class="btn btn-primary btn-sm btn-watch">▶ 观看共享</button>`;
-    } else {
-      btnHtml = `<button class="btn btn-outline btn-sm btn-watch" disabled>未共享</button>`;
-    }
+    const btnHtml = `<button type="button" class="card-media-button btn-watch" aria-label="观看共享">${sharingIcon}<span>观看共享</span></button>`;
 
     const displayName = escapeHtml(u.name);
 
     card.innerHTML = `
       <div class="card-cover"><div class="avatar">👤${u.avatar ? `<img src="${escapeHtml(u.avatar)}" alt="" onerror="this.remove()" />` : ''}</div>
-      ${isSharing ? btnHtml : isMe ? '<button type="button" class="card-share-button" aria-label="屏幕共享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>屏幕共享</span></button>' : ''}</div>
+      ${isSharing ? btnHtml : isMe ? `<button type="button" class="card-media-button card-share-button" aria-label="屏幕共享">${sharingIcon}<span>屏幕共享</span></button>` : ''}</div>
       <div class="name">${displayName}</div>
     `;
 
@@ -148,50 +141,79 @@ function renderChannels(users) {
   $('#btnServerPeers').classList.toggle('hidden', me?.role !== 'host');
   $('#btnServerPassword').textContent = state.passwordRequired ? '服务器密码 · 已设置' : '服务器密码';
   const canManage = ['host', 'admin'].includes(me?.role);
-  $('#btnAddChannel').classList.toggle('hidden', !canManage);
-  if (!canManage) $('#channelDialog').classList.add('hidden');
+  $('#btnAddChannel').classList.toggle('hidden', !me);
+  $('#channelTypeInput').disabled = !canManage;
+  if (!canManage) $('#channelTypeInput').checked = true;
+  if (!canManage && editingChannelId) $('#channelDialog').classList.add('hidden');
   if (!canManage || !state.channels.some(channel => channel.id === bitrateChannelId)) $('#channelBitrateDialog').classList.add('hidden');
-  const list = $('#channelList'); list.innerHTML = '';
+  const list = $('#channelList'),scrollTop=list.scrollTop;
+  const memberScroll=new Map([...list.querySelectorAll('.channel-section')].map(section=>[section.dataset.channelId,section.querySelector('.channel-members')?.scrollTop||0]));
+  list.innerHTML = '';
   for (const channel of state.channels) {
     const section = document.createElement('div');
     section.className = 'channel-section'; section.dataset.channelId = channel.id;
     const button = document.createElement('button');
     button.className = 'btn btn-outline btn-sm channel-button' + (channel.id === state.channelId ? ' active' : '');
-    button.innerHTML = `${channelIconMarkup(channel.icon)}<span class="channel-name">${escapeHtml(channel.name)}</span>`;
+    button.innerHTML = `${channelIconMarkup(channel.icon)}<span class="channel-name">${escapeHtml(channel.name)}</span>${channel.passwordRequired ? '<span class="channel-lock" title="需要频道密码" aria-label="频道已设置密码"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg></span>' : ''}`;
+    if (channel.temporary) {
+      const marker = document.createElement('span'); marker.className = 'channel-temporary'; marker.setAttribute('aria-label', '临时频道');
+      marker.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10v4l-5 5 5 5v4H7v-4l5-5-5-5V3zM10 6h4M10 18h4"/></svg>';
+      button.insertBefore(marker, button.querySelector('.channel-lock'));
+    }
     button.disabled = state.switchingChannel || state.leaving;
     button.onclick = () => switchChannel(channel.id);
-    button.oncontextmenu = event => showContextMenu(event, canManage ? [
+    const canManagePassword = me?.role === 'host' || !!me?.profileId && channel.creatorId === me.profileId;
+    button.oncontextmenu = event => showContextMenu(event, [...(canManage ? [
       { label: '重命名', run: () => { const current = state.channels.find(item => item.id === channel.id); if (current) openChannelDialog(current, 'rename'); } },
       { label: '设置图标', run: () => openChannelDialog(state.channels.find(item => item.id === channel.id)) },
       { label: '语音码率', run: () => openChannelBitrate(channel.id) },
       ...(channel.id === 'main' ? [] : [{ label: '删除', run: () => perform('delete-channel', { channelId: channel.id }) }]),
-    ] : []);
+    ] : []), ...(canManagePassword ? [{ label: channel.passwordRequired ? '修改或取消密码' : '设置频道密码', run: () => editChannelPassword(channel.id) }] : [])]);
     section.append(button);
     const members = users.filter(u => u.channelId === channel.id)
       .sort((a, b) => (a.channelJoinedOrder ?? 0) - (b.channelJoinedOrder ?? 0));
     if (members.length) {
       const memberList = document.createElement('ul');
       memberList.className = 'channel-members'; memberList.setAttribute('aria-label', `${channel.name}成员`);
+      if(members.length>10){memberList.classList.add('channel-members-scrollable');memberList.tabIndex=0;}
       for (const user of members) {
         const row = document.createElement('li');
         row.className = 'channel-member' + (user.socketId === socket?.id ? ' me' : '');
         row.dataset.userId = user.socketId;
         row.innerHTML = `<span class="member-avatar default-avatar" aria-hidden="true">👤${user.avatar ? `<img data-avatar-source="${escapeHtml(user.avatar)}" alt="" onerror="this.remove()" />` : ''}</span><span class="channel-member-name">${escapeHtml(user.name)}</span>`;
+        const indicators = document.createElement('span'); indicators.className = 'channel-member-status';
+        if (user.voiceMuted || user.microphoneMuted || !user.voiceEnabled) indicators.innerHTML += `<span class="remote-mic-muted" title="${user.voiceMuted ? '已被禁言' : '麦克风已关闭'}" aria-label="${user.voiceMuted ? '已被禁言' : '麦克风已关闭'}">${voiceIcon('mute', true)}</span>`;
+        if (user.voiceDeafened) indicators.innerHTML += `<span class="remote-headphones-off" title="已关闭听筒" aria-label="已关闭听筒">${voiceIcon('deafen', true)}</span>`;
+        row.append(indicators);
         row.oncontextmenu = event => showContextMenu(event, memberActions(user, users));
         memberList.append(row);
       }
       section.append(memberList);
     }
     list.append(section);
+    const memberList=section.querySelector('.channel-members');if(memberList)memberList.scrollTop=memberScroll.get(channel.id)||0;
   }
+  list.scrollTop=scrollTop;
   applyAvatarThumbnails(list);
 }
 
 export async function switchChannel(channelId) {
   if (state.switchingChannel || state.leaving || channelId === state.channelId || !state.roomId) return;
   state.switchingChannel = true; renderChannels(state.serverUsers); updateSharingUI(state.isSharing);
-  stopLolPing();
   try {
+    if (channelId !== null) {
+      let password;
+      while (true) {
+        try { await requestServer('check-channel-access', { channelId, password }); break; }
+        catch (error) {
+          if (!['请输入频道密码', '频道密码错误'].includes(error.message)) throw error;
+          const answer = await requestPassword({ channel: true, connection: socket, error: password === undefined ? '' : error.message });
+          if (!answer) return;
+          password = answer.password;
+        }
+      }
+    }
+    stopLolPing();
     if (!await stopSharing()) throw new Error('当前共享未能停止，请重试后再切换频道');
     await window.channelVoice?.stop();
     $('#screenPicker').classList.add('hidden');
@@ -261,10 +283,29 @@ $('#serverPeersForm').addEventListener('submit', async event => {
   finally { $('#btnSaveServerPeers').disabled = false; }
 });
 let editingChannelId = null, channelEditMode = 'icon', draftChannelIcon = null, channelIconRevision = 0, channelIconBusy = false;
+async function editChannelPassword(channelId) {
+  const channel = state.channels.find(item => item.id === channelId);
+  if (!channel) return;
+  const answer = await requestPassword({ channel: true, settings: true, enabled: !!channel.passwordRequired, connection: socket });
+  if (!answer) return;
+  try { await requestServer('set-channel-password', { channelId, ...answer }); }
+  catch (error) { toast(error.message, 'error'); }
+}
+function resetChannelPasswordFields() {
+  $('#channelPasswordEnabled').checked = false;
+  $('#channelCreatePassword').value = $('#channelCreatePasswordConfirm').value = '';
+  $('#channelCreatePasswordFields').classList.add('hidden');
+}
+$('#channelPasswordEnabled').onchange = event => {
+  $('#channelCreatePasswordFields').classList.toggle('hidden', !event.target.checked);
+  if (!event.target.checked) $('#channelCreatePassword').value = $('#channelCreatePasswordConfirm').value = '';
+};
 function openChannelDialog(channel = null, mode = 'icon') {
   channelEditMode = mode;
   editingChannelId = channel?.id || null; draftChannelIcon = channel ? undefined : null; channelIconRevision++; channelIconBusy = false;
   const rename = !!channel && mode === 'rename';
+  $('#channelDialog .channel-create-options').classList.toggle('hidden', !!channel);
+  $('#channelTypeInput').checked = true; resetChannelPasswordFields();
   $('#channelDialogTitle').textContent = rename ? '重命名频道' : channel ? '频道图标' : '创建频道';
   $('#channelNameInput').value = channel?.name || ''; $('#channelNameInput').disabled = !!channel && !rename;
   $('#channelDialog .channel-icon-setting').classList.toggle('hidden', rename);
@@ -290,7 +331,7 @@ $('#channelIconInput').addEventListener('change', async event => {
   } catch (error) { if (revision === channelIconRevision) toast(error.message, 'error'); }
   finally { if (revision === channelIconRevision) { channelIconBusy = false; $('#btnCreateChannel').disabled = false; } }
 });
-$('#btnCancelChannel').addEventListener('click', () => { $('#channelDialog').classList.add('hidden'); $('#btnAddChannel').focus(); });
+$('#btnCancelChannel').addEventListener('click', () => { resetChannelPasswordFields(); $('#channelDialog').classList.add('hidden'); $('#btnAddChannel').focus(); });
 
 $('#btnServerPassword').addEventListener('click', async () => {
   if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
@@ -309,11 +350,16 @@ $('#createChannelForm').addEventListener('submit', async event => {
   if (channelIconBusy || $('#btnCreateChannel').disabled) return;
   const name = $('#channelNameInput').value.trim();
   if (!name) return toast('请输入频道名称', 'error');
+  const passwordEnabled = !editingChannelId && $('#channelPasswordEnabled').checked;
+  const password = $('#channelCreatePassword').value;
+  if (passwordEnabled && !password.trim()) return toast('请输入频道密码', 'error');
+  if (passwordEnabled && password !== $('#channelCreatePasswordConfirm').value) return toast('两次输入的密码不一致', 'error');
   $('#btnCreateChannel').disabled = true;
   try {
     if (editingChannelId && channelEditMode === 'rename') await requestServer('rename-channel', { channelId: editingChannelId, name });
     else if (editingChannelId) { if (draftChannelIcon !== undefined) await requestServer('set-channel-icon', { channelId: editingChannelId, icon: draftChannelIcon }); }
-    else await requestServer('create-channel', { name, icon: draftChannelIcon });
+    else await requestServer('create-channel', { name, icon: draftChannelIcon, temporary: $('#channelTypeInput').checked, passwordEnabled, ...(passwordEnabled ? { password } : {}) });
+    resetChannelPasswordFields();
     $('#channelNameInput').value = ''; $('#channelDialog').classList.add('hidden'); $('#btnAddChannel').focus();
   }
   catch (error) { toast(error.message, 'error'); }
@@ -342,7 +388,7 @@ export function enterRoom(roomId) {
 export async function leaveRoom() {
   if (state.leaving) return;
   state.leaving = true;
-  closeContextMenu(); $('#channelDialog').classList.add('hidden'); $('#channelBitrateDialog').classList.add('hidden');
+  closeContextMenu(); resetChannelPasswordFields(); $('#channelDialog').classList.add('hidden'); $('#channelBitrateDialog').classList.add('hidden');
   $('#serverSettingsDialog').classList.add('hidden');
   $('#lolPingDialog')?.classList.add('hidden');
   $('#serverPeersDialog').classList.add('hidden');
@@ -385,6 +431,7 @@ export async function leaveRoom() {
     toast(message, 'error');
   } finally {
     state.leaving = false;
+    syncLolPing();
     $('#btnLeave').disabled = false;
     $('#btnLeave').title = '断开连接';
     $('#btnLeave').textContent = '×';

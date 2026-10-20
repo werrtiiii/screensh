@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' 'unsafe-inline' ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; connect-src 'self' ws: wss: http: https:;" />
+        content="default-src 'self' 'unsafe-inline' ws: wss: http: https:; media-src 'self' blob: mediastream: http: https:; img-src 'self' data: blob: http: https:; connect-src 'self' ws: wss: http: https:;" />
   <title>ScreenSh 屏幕共享</title>
+  <link rel="icon" type="image/png" href="../assets/branding/icon.png" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="ui.css" />
+  <link rel="stylesheet" href="chat.css" />
 </head>
 <body>
   <div id="app">
@@ -42,7 +44,7 @@
           <h1>选择一个服务器开始</h1>
           <p>从左侧书签选择服务器，或输入地址连接。</p>
           <div class="connect-inline">
-            <input type="text" id="serverUrl" placeholder="https://你的服务器域名" aria-label="服务器地址" />
+            <input type="text" id="serverUrl" placeholder="域名或 IP，可附加端口" aria-label="服务器地址" />
             <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
             <span id="serverStatus" class="status-dot disconnected"></span>
           </div>
@@ -79,6 +81,7 @@
           <span id="currentChannelIcon" aria-hidden="true"></span><span id="channelNameDisplay"></span>
         </div>
         <div class="room-actions">
+          <button id="btnMemberNetwork" class="member-network-button" type="button" title="成员 IP 和网络延迟" aria-label="成员 IP 和网络延迟">?</button>
           <button id="btnServerSettings" class="btn btn-outline btn-sm hidden">服务器设置</button>
           <button id="btnRoomSettingsToolbar" class="btn btn-outline btn-sm">屏幕共享设置</button>
           <button id="btnShare" class="btn btn-primary btn-sm">共享屏幕</button>
@@ -87,7 +90,6 @@
       </div>
 
       <div class="room-main">
-        <button id="btnMemberNetwork" class="member-network-button" type="button" title="成员 IP 和网络延迟" aria-label="成员 IP 和网络延迟">?</button>
         <div id="mainContent" class="main-content">
           <!-- 大厅卡片网格 -->
           <div id="userCardsView" class="cards-grid"></div>
@@ -100,6 +102,17 @@
             </div>
             <div id="videoContainer" class="video-container"></div>
           </div>
+          <div id="chatResizeHandle" class="chat-resize-handle hidden" role="separator" aria-label="调整聊天区域高度" aria-orientation="horizontal" tabindex="0"></div>
+          <section id="serverChat" class="server-chat hidden" aria-label="服务器文字聊天">
+            <div class="chat-header"><span id="chatStatus" role="status"></span><button id="chatCancelUpload" type="button" class="btn btn-outline btn-sm hidden">取消上传</button><button id="chatLoadOlder" type="button" class="btn btn-outline btn-sm hidden">更早的消息</button></div>
+            <div id="chatMessages" class="chat-messages" role="log" aria-label="聊天记录"><p class="chat-empty">发送第一条消息，开始聊天</p></div>
+            <form id="chatComposer" class="chat-composer">
+              <div class="chat-toolbar" role="toolbar" aria-label="文字格式"><button type="button" data-before="**" data-after="**" aria-label="加粗"><b>B</b></button><button type="button" data-before="*" data-after="*" aria-label="斜体"><i>I</i></button><button type="button" data-before="~~" data-after="~~" aria-label="删除线"><s>S</s></button><button type="button" data-before="__" data-after="__" aria-label="下划线"><u>U</u></button><button id="chatInsertLink" type="button" aria-label="插入网页链接">↗</button><button type="button" data-before="`" data-after="`" aria-label="代码">&lt;/&gt;</button><button type="button" data-before="- " aria-label="列表">☷</button><button type="button" data-before="> " aria-label="引用">❞</button><button type="button" data-before="## " aria-label="标题">H</button></div>
+              <div id="chatLinkFields" class="chat-link-fields hidden"><input id="chatLinkInput" type="text" placeholder="https://example.com" aria-label="网页地址" /><button id="chatConfirmLink" type="button" class="btn btn-outline btn-sm">插入</button></div>
+              <div id="chatAttachment" class="chat-attachment hidden"><span></span><button id="chatRemoveAttachment" type="button" aria-label="移除图片">×</button></div>
+              <div class="chat-input-row"><textarea id="chatInput" rows="1" maxlength="8000" placeholder="发送消息" aria-label="消息内容"></textarea><div class="chat-send-tools"><details id="chatEmoji" class="chat-emoji"><summary aria-label="表情">☺</summary><div class="chat-emoji-panel"></div></details><button id="chatChooseImage" type="button" aria-label="发送文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9M7 14l8-8"/></svg></button><input id="chatImageInput" type="file" hidden /><button id="chatSend" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9-4-9ZM7 12h15"/></svg></button></div></div>
+            </form>
+          </section>
         </div>
 
         <!-- Sidebar: users + screen sources -->
@@ -108,9 +121,14 @@
             <div class="channel-heading"><h3>频道</h3></div>
           </div>
           <!-- Users list -->
-          <div class="side-panel">
+          <div class="side-panel server-members-panel">
             <h3>服务器成员</h3>
             <ul id="userList" class="user-list"></ul>
+          </div>
+          <div id="serverInfo" class="server-info" aria-label="服务器信息">
+            <div class="server-info-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><div><div><span>用户</span><b id="serverInfoUsers">—</b></div><div><span>频道</span><b id="serverInfoChannels">—</b></div></div></div>
+            <div class="server-info-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5l3 2"/></svg><div><div><span>运行时间</span><b id="serverInfoUptime">—</b></div><div><span>已创建</span><b id="serverInfoCreated">—</b></div></div></div>
+            <div class="server-info-clock"><time id="serverInfoBeijing">—</time></div>
           </div>
         </div>
       </div>
@@ -125,8 +143,15 @@
     <div id="channelDialog" class="modal hidden">
       <form id="createChannelForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="channelDialogTitle">
         <div class="modal-header"><h2 id="channelDialogTitle">创建频道</h2><button id="btnCancelChannel" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="channel-dialog-body">
         <div class="form-group"><label for="channelNameInput">频道名称</label><input type="text" id="channelNameInput" placeholder="新频道名称" maxlength="30" required /></div>
+        <div class="channel-create-options">
+          <div class="form-group channel-type-setting"><div><label for="channelTypeInput">临时频道</label><button type="button" class="help-tip" aria-label="临时频道说明" data-tooltip="临时频道在无人后5分钟自动删除。">?</button></div><input id="channelTypeInput" type="checkbox" role="switch" checked /></div>
+          <div class="form-group"><label class="password-toggle" for="channelPasswordEnabled"><input id="channelPasswordEnabled" type="checkbox" role="switch" />启用频道密码</label></div>
+          <div id="channelCreatePasswordFields" class="hidden"><div class="form-group"><label for="channelCreatePassword">密码</label><input id="channelCreatePassword" class="form-control" type="password" maxlength="128" autocomplete="new-password" /></div><div class="form-group"><label for="channelCreatePasswordConfirm">确认密码</label><input id="channelCreatePasswordConfirm" class="form-control" type="password" maxlength="128" autocomplete="new-password" /></div></div>
+        </div>
         <div class="channel-icon-setting"><span id="channelIconPreview" class="channel-icon-preview" aria-label="频道图标"></span><div><button id="btnChooseChannelIcon" type="button" class="btn btn-outline btn-sm">选择图标</button><button id="btnResetChannelIcon" type="button" class="btn btn-outline btn-sm">恢复默认</button><small>PNG/JPEG/WebP/GIF，最大2MB</small></div><input id="channelIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
+        </div>
         <div class="dialog-actions"><button id="btnCreateChannel" class="btn btn-primary" type="submit">创建频道</button></div>
       </form>
     </div>
@@ -140,8 +165,8 @@
     <div id="serverSettingsDialog" class="modal hidden">
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverSettingsTitle">
         <div class="modal-header"><h2 id="serverSettingsTitle">服务器设置</h2><button id="btnCloseServerSettings" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="modal-body server-settings-body">
         <div class="server-setting-row"><label for="autoJoinChannelCheckbox">自动进入频道</label><input id="autoJoinChannelCheckbox" type="checkbox" role="switch" checked /></div>
-        <div class="server-setting-row"><div><label for="lolPingEnabled">启用 lolPing</label><small id="lolPingStatus">仅保存在本机，开启后与同频道成员同步</small></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div>
         <form id="serverNameForm" class="server-name-form server-owner-setting">
           <label for="serverNameInput">服务器名称</label>
           <div class="server-name-controls"><input id="serverNameInput" class="form-control" type="text" maxlength="40" required placeholder="0091 Server" /><button id="btnSaveServerName" type="submit" class="btn btn-primary btn-sm">保存</button></div>
@@ -150,12 +175,14 @@
         <div class="server-setting-row server-owner-setting"><span>EasyTier 组网节点</span><button id="btnServerPeers" class="btn btn-outline btn-sm">配置节点</button></div>
         <div class="server-setting-row server-owner-setting"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="server-setting-row server-owner-setting"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
+        <form id="serverChatSettingsForm" class="server-owner-setting chat-retention-form"><h3>服务器聊天记录 <button id="serverChatHelp" type="button" class="help-tip" aria-label="聊天保存说明" data-tooltip="0 表示不限制，超过任一上限时删除最早的记录及图片。">?</button></h3><div class="chat-retention-fields"><label>保存天数<input id="serverChatDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="serverChatMB" type="number" min="0" max="1048576" value="512" /></label></div><span id="serverChatUsage" class="hidden"></span><div class="dialog-actions"><button id="serverChatClear" type="button" class="btn btn-outline btn-sm">清除服务器记录</button><button type="submit" class="btn btn-primary btn-sm">保存</button></div></form>
+        </div>
       </div>
     </div>
     <div id="lolPingDialog" class="modal hidden">
       <form id="lolPingForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="lolPingTitle">
         <div class="modal-header"><h2 id="lolPingTitle">lolPing 配置</h2><button id="btnCloseLolPing" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <p class="lolping-note">按住触发键拖动鼠标，松开选择标记或表情。同频道内已启用 lolPing 的成员会收到。</p>
+        <p class="lolping-note">按住触发键拖动鼠标，松开选择标记或表情。未加入频道时仅自己可见；进入频道后与已启用 lolPing 的成员共享。</p>
         <div id="lolPingFields"></div>
         <p id="lolPingError" class="dialog-error" role="alert"></p>
         <div class="dialog-actions"><button id="btnSaveLolPing" type="submit" class="btn btn-primary">保存</button></div>
@@ -232,6 +259,8 @@
             <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
             <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
+          <div class="form-group setting-lolping"><div class="server-setting-row"><div><label for="lolPingEnabled">lolPing</label><small id="lolPingStatus">本机可用，进入频道后与成员共享</small></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div></div>
+          <div class="form-group setting-chat"><label class="password-toggle"><input id="chatCacheEnabled" type="checkbox" role="switch" checked />保存本地聊天记录</label><div class="chat-retention-fields"><label>保存天数<input id="chatCacheDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="chatCacheMB" type="number" min="0" max="1048576" value="256" /></label></div><small>仅管理本机保存的记录，0 表示不限制；服务器清理不影响本地记录。</small><div class="dialog-actions"><button id="chatCacheClearAll" type="button" class="btn btn-outline btn-sm">清除全部本地记录</button><button id="chatCacheSave" type="button" class="btn btn-primary btn-sm">保存</button></div><div id="chatCacheServers" class="chat-cache-servers"></div></div>
           <div class="form-group setting-voice">
             <label for="voiceMicrophone">麦克风</label>
             <select id="voiceMicrophone" class="form-control"><option value="default">系统默认麦克风</option></select>

@@ -15,4 +15,7 @@ test('channel preferences default on, fall back to main from outside and stay lo
   const result=await joinPreferredChannel('a',{userName:'User'},async payload=>{attempts.push(payload);if(payload.channelId==='music')throw Error('无法进入该频道');return {ok:true};});
   assert.deepEqual(attempts.map(item=>item.channelId),['music','main']);assert.equal(result.ok,true);
   let calls=0;await assert.rejects(joinPreferredChannel('a',{},async()=>{calls++;throw Error('服务器密码错误');}),/密码/);assert.equal(calls,1);
+  const locked=[];
+  const outside=await joinPreferredChannel('a',{},async payload=>{locked.push(payload.channelId);if(payload.channelId!==null)throw Error('请输入频道密码');return {ok:true};});
+  assert.deepEqual(locked,['music','main',null]);assert.equal(outside.ok,true);
 });

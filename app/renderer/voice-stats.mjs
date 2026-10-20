@@ -1,22 +1,46 @@
 const finite = value => typeof value === 'number' && Number.isFinite(value);
-export function sampleVoiceStats(report, previous) {
+function counterDelta(current, previous, key) {
+  if (!current || !previous || current.id !== previous.id || !(current.timestamp > previous.timestamp)) return null;
+  return finite(current[key]) && finite(previous[key]) && current[key] >= previous[key] ? current[key] - previous[key] : null;
+}
+const averageMs = (duration, count) => duration !== null && count > 0 ? duration * 1000 / count : null;
+const rate = (value, seconds) => value !== null && seconds > 0 ? value / seconds : null;
+export function sampleVoiceStats(report, previous, previousOutbound) {
   const audio = [...report.values()].find(s => s.type === 'inbound-rtp' && (s.kind === 'audio' || s.mediaType === 'audio') && !s.isRemote);
   const outbound = [...report.values()].find(s => s.type === 'outbound-rtp' && (s.kind === 'audio' || s.mediaType === 'audio'));
   const transport = report.get(audio?.transportId || outbound?.transportId);
   const pair = report.get(transport?.selectedCandidatePairId);
   const local = report.get(pair?.localCandidateId), remote = report.get(pair?.remoteCandidateId);
-  const valid = audio && previous && audio.id === previous.id && audio.timestamp > previous.timestamp;
-  const delta = key => valid && finite(audio[key]) && finite(previous[key]) && audio[key] >= previous[key] ? audio[key] - previous[key] : null;
-  const received = delta('packetsReceived'), lost = delta('packetsLost'), emitted = delta('jitterBufferEmittedCount'), delay = delta('jitterBufferDelay');
-  const bytes = delta('bytesReceived'), seconds = valid ? (audio.timestamp - previous.timestamp) / 1000 : 0;
+  const delta = key => counterDelta(audio, previous, key);
+  const sentDelta = key => counterDelta(outbound, previousOutbound, key);
+  const received = delta('packetsReceived'), lost = delta('packetsLost'), emitted = delta('jitterBufferEmittedCount');
+  const seconds = audio && previous ? (audio.timestamp - previous.timestamp) / 1000 : 0;
+  const sentSeconds = outbound && previousOutbound ? (outbound.timestamp - previousOutbound.timestamp) / 1000 : 0;
+  const sent = sentDelta('packetsSent'), samples = delta('totalSamplesReceived'), concealed = delta('concealedSamples');
+  const source = report.get(outbound?.mediaSourceId);
+  const codec = report.get(audio?.codecId || outbound?.codecId);
   return {
     snapshot: audio ? { ...audio } : null,
+    outboundSnapshot: outbound ? { ...outbound } : null,
+    sendKbps: rate(sentDelta('bytesSent'), sentSeconds) === null ? null : rate(sentDelta('bytesSent'), sentSeconds) * 8 / 1000,
+    sendPacketsPerSecond: rate(sent, sentSeconds),
+    receivePacketsPerSecond: rate(received, seconds),
+    sendQueue: averageMs(sentDelta('totalPacketSendDelay'), sent),
+    bufferTarget: averageMs(delta('jitterBufferTargetDelay'), emitted),
+    bufferMinimum: averageMs(delta('jitterBufferMinimumDelay'), emitted),
+    discarded: delta('packetsDiscarded'),
+    concealment: concealed !== null && samples > 0 ? 100 * concealed / samples : null,
+    concealmentEvents: delta('concealmentEvents'),
+    echoReturnLoss: finite(source?.echoReturnLoss) ? source.echoReturnLoss : null,
+    echoReturnLossEnhancement: finite(source?.echoReturnLossEnhancement) ? source.echoReturnLossEnhancement : null,
+    codecSampleRate: finite(codec?.clockRate) ? codec.clockRate : null,
+    codecChannels: finite(codec?.channels) ? codec.channels : null,
     rtt: finite(pair?.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
     jitter: finite(audio?.jitter) ? audio.jitter * 1000 : null,
     loss: received !== null && lost !== null && received + lost > 0 ? 100 * lost / (received + lost) : null,
-    buffer: delay !== null && emitted > 0 ? 1000 * delay / emitted : null,
-    kbps: bytes !== null && seconds > 0 ? bytes * 8 / seconds / 1000 : null,
-    codec: report.get(audio?.codecId)?.mimeType || null,
+    buffer: averageMs(delta('jitterBufferDelay'), emitted),
+    kbps: rate(delta('bytesReceived'), seconds) === null ? null : rate(delta('bytesReceived'), seconds) * 8 / 1000,
+    codec: codec?.mimeType || null,
     transport: local?.protocol || null,
     relayed: local?.candidateType === 'relay' || remote?.candidateType === 'relay',
   };
@@ -39,7 +63,7 @@ export function attachVoiceStats(details, { getPeers, getCapture }) {
     try {
       const peers = getPeers(), capture = getCapture(), settings = capture.track?.getSettings() || {};
       const results = await Promise.all(peers.map(async peer => {
-        try { return { peer, sample: sampleVoiceStats(await peer.pc.getStats(), previous.get(peer.pc)) }; }
+        try { return { peer, sample: sampleVoiceStats(await peer.pc.getStats(), previous.get(peer.pc)?.inbound, previous.get(peer.pc)?.outbound) }; }
         catch { return { peer, sample: null }; }
       }));
       if (disposed || token !== generation || !details.open) return;
@@ -47,8 +71,12 @@ export function attachVoiceStats(details, { getPeers, getCapture }) {
       for (const pc of previous.keys()) if (!current.has(pc)) previous.delete(pc);
       panel.replaceChildren();
       row(panel, '频道语音', capture.enabled ? '已连接' : '未连接');
-      row(panel, '采集采样率', format(settings.sampleRate, 'Hz'));
       row(panel, '设备报告采集延迟', format(finite(settings.latency) ? settings.latency * 1000 : null, 'ms', 1));
+      const status = value => value === true ? '已开启' : value === false ? '已关闭' : '设备未报告';
+      row(panel, '降噪（设备报告）', status(settings.noiseSuppression));
+      row(panel, '回声消除（设备报告）', status(settings.echoCancellation));
+      row(panel, '自动增益（设备报告）', status(settings.autoGainControl));
+      row(panel, '麦克风发送路径', capture.mixed ? '经过音量 / 伴奏混音' : capture.track ? '直接发送采集轨道' : '—');
       if (!peers.length) row(panel, '成员连接', '暂无连接，等待其他成员加入语音');
       for (const { peer, sample } of results) {
         if (!current.has(peer.pc)) continue;
@@ -56,9 +84,8 @@ export function attachVoiceStats(details, { getPeers, getCapture }) {
         const title = document.createElement('h4'); title.textContent = peer.name; section.append(title);
         row(section, '连接状态', ({ connected: '已连接', connecting: '连接中', disconnected: '连接中断', failed: '连接失败', closed: '已关闭', new: '准备连接' })[peer.pc.connectionState] || '未知');
         if (peer.pc.connectionState === 'connected' && sample) {
-          previous.set(peer.pc, sample.snapshot);
-          row(section, '网络往返 RTT', format(sample.rtt, 'ms', 1));
-          row(section, '接收丢包率（区间）', format(sample.loss, '%', 1));
+          previous.set(peer.pc, { inbound: sample.snapshot, outbound: sample.outboundSnapshot });
+          row(section, '单程网络估算（RTT ÷ 2）', format(finite(sample.rtt) ? sample.rtt / 2 : null, 'ms', 1));
           row(section, '接收缓冲延迟（区间）', format(sample.buffer, 'ms', 1));
           row(section, '网络抖动', format(sample.jitter, 'ms', 1));
           row(section, '音频接收码率', format(sample.kbps, 'kbps', 1));

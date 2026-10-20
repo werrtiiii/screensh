@@ -74,6 +74,25 @@ test('member history deduplicates identities, preserves offline profiles and enf
   snapshot=await request(returning,'switch-channel',{channelId:'main'});assert.equal(snapshot.memberHistory.length,2);assert.equal(snapshot.users.length,1);
 });
 
+test('host can promote and demote offline identities by member ID', async t => {
+  const f = await fixture(t), host = await f.client(), peer = await f.client();
+  const owner = await request(host, 'join-server', { userName: 'Owner', identity: identity(), virtualIp: '10.144.8.1' });
+  const key = identity(), joined = await request(peer, 'join-server', { userName: 'Offline', identity: key, virtualIp: '10.144.8.2' });
+  const target = joined.memberHistory.find(member => member.socketId === peer.id);
+  assert.equal((await request(peer, 'set-admin', { memberId: target.memberId, enabled: true })).ok, false);
+  await request(peer, 'leave-server');
+  assert.equal((await request(host, 'set-admin', { memberId: target.memberId, enabled: true })).ok, true);
+  const restored = await request(peer, 'join-server', { userName: 'Offline', identity: key, virtualIp: '10.144.8.2' });
+  assert.equal(restored.users.find(user => user.socketId === peer.id).role, 'admin');
+  await request(peer, 'leave-server');
+  assert.equal((await request(host, 'set-admin', { memberId: target.memberId, enabled: false })).ok, true);
+  const snapshot = await request(host, 'switch-channel', { channelId: 'main' });
+  assert.equal(snapshot.memberHistory.find(member => member.memberId === target.memberId).role, 'member');
+  assert.equal((await request(host, 'set-admin', { memberId: owner.memberHistory[0].memberId, enabled: false })).ok, false);
+  assert.equal((await request(host, 'set-admin', { memberId: 'missing', enabled: true })).ok, false);
+  assert.equal((await request(host, 'set-admin', { memberId: target.memberId, enabled: 'yes' })).ok, false);
+});
+
 test('join-server accepts a remembered channel or outside state without entering main first',async t=>{
   const f=await fixture(t),a=await f.client();
   const payload={userName:'Remembered',virtualIp:'10.144.20.1',identity:identity()};
@@ -525,7 +544,7 @@ test('single server: required names, role enforcement, channels and isolation', 
   const owner = identity(), admin = identity();
   const joined = await request(a, 'join-server', { userName: 'A', virtualIp: '10.144.1.1', identity: owner });
   assert.equal(joined.users[0].role, 'host');
-  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道', icon: null, voiceBitrate: 32 }]);
+  assert.deepEqual(joined.channels, [{ id: 'main', name: '主频道', icon: null, voiceBitrate: 32, temporary: false, passwordRequired: false, creatorId: null }]);
   assert.equal((await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.1', identity: admin })).ok, false);
   await request(b, 'join-server', { userName: 'B', virtualIp: '10.144.1.2', identity: admin });
   assert.equal((await request(c, 'join-server', { userName: ' a ', virtualIp: '10.144.1.3', identity: identity() })).ok, false);

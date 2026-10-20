@@ -1,18 +1,23 @@
 // A background status connection per saved server. It never joins a channel or a server room.
+import { serverAddressCandidates } from './server-address.mjs';
+import { serverIdentity } from './server-identity.mjs';
 export function presenceTargets(storage) {
   let bookmarks;
   try { bookmarks = JSON.parse(storage.getItem('serverBookmarks') || '[]'); } catch { return []; }
   if (!Array.isArray(bookmarks)) return [];
-  const urls = new Set();
+  const urls = new Map();
   for (const item of bookmarks.slice(0, 30)) {
-    try { const url = new URL(item.url); if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) urls.add(url.origin); } catch {}
+    try { for (const url of serverAddressCandidates(item.url)) urls.set(new URL(url).origin, url); } catch {}
   }
   const targets = [];
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i);
     if (!key?.startsWith('serverIdentity:')) continue;
-    const split = key.lastIndexOf(':'), url = key.slice(15, split), serverId = key.slice(split + 1), identity = storage.getItem(key);
-    if (urls.has(url) && /^[a-f0-9-]{36}$/.test(serverId) && /^[a-f0-9]{64}$/.test(identity || '')) targets.push({ url, serverId, identity });
+    const split = key.lastIndexOf(':'), serverId = key.slice(split + 1);
+    let url; try { url = urls.get(new URL(key.slice(15, split)).origin); } catch { continue; }
+    if (!url || !/^[a-f0-9-]{36}$/.test(serverId)) continue;
+    const identity = serverIdentity(storage, serverId);
+    if (identity) targets.push({ url, serverId, identity });
   }
   return targets;
 }
@@ -34,7 +39,7 @@ export class AppPresence {
     }
     for (const [url, targets] of groups) {
       if (this.connections.has(url)) { this.connections.get(url).targets = targets; continue; }
-      const socket = this.connect(url, { forceNew: true, transports: ['websocket', 'polling'], timeout: 6000, reconnection: true, reconnectionDelay: 3000, reconnectionDelayMax: 30000 });
+      const socket = this.connect(url, { forceNew: true, transports: ['polling', 'websocket'], tryAllTransports: true, timeout: 6000, reconnection: true, reconnectionDelay: 3000, reconnectionDelayMax: 30000 });
       const entry = { targets, identity: null, rejected: false, retry: null, pending: false };
       entry.stop = () => { clearTimeout(entry.retry); entry.identity = null; socket.removeAllListeners(); socket.disconnect(); };
       const reject = () => { entry.rejected = true; entry.stop(); };

@@ -9,8 +9,10 @@ const { Server } = require('socket.io');
 const proxyaddr = require('proxy-addr');
 const { normalizePeers } = require('./easytier-peers.cjs');
 const { cleanLolPingEndpoint } = require('./lolping-protocol.cjs');
+const { createChatStore } = require('./chat-store.cjs');
 
-function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000, presenceTtlMs = 45000, presenceSweepMs = 5000 } = {}) {
+function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000, presenceTtlMs = 45000, presenceSweepMs = 5000, temporaryChannelIdleMs = 300000 } = {}) {
+  const uptimeStart = performance.now();
   const dataDir = stateFile ? path.dirname(stateFile) : null;
   const mediaDir = dataDir ? path.join(dataDir, 'media') : null;
   const imageIds = new Map(), images = new Map();
@@ -20,7 +22,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     if (!ref) { ref = 'image:' + createHash('sha256').update(data).digest('hex') + '.' + imageExtension(data); imageIds.set(data, ref); images.set(ref, data); }
     return ref;
   }
-  let saved = { version: 2, serverId: randomUUID(), owner: null, admins: [], userProfiles: {}, serverIcon: null, channels: [{ id: 'main', name: '主频道' }] };
+  let saved = { version: 2, createdAt: Date.now(), serverId: randomUUID(), owner: null, admins: [], userProfiles: {}, serverIcon: null, channels: [{ id: 'main', name: '主频道' }] };
   if (stateFile && fs.existsSync(stateFile)) {
     saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     if (saved.version !== 2 || !/^[a-f0-9-]{36}$/.test(saved.serverId) || !Array.isArray(saved.admins)
@@ -28,10 +30,13 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       || (saved.password && (!/^[a-f0-9]{32}$/.test(saved.password.salt) || !/^[a-f0-9]{64}$/.test(saved.password.hash)))) throw new Error('服务器状态文件无效，请从备份恢复');
   }
   if (!saved.userProfiles || typeof saved.userProfiles !== 'object' || Array.isArray(saved.userProfiles)) saved.userProfiles = {};
+  if (!Number.isFinite(saved.createdAt) || saved.createdAt <= 0) saved.createdAt = Date.now();
   if (!saved.memberHistory || typeof saved.memberHistory !== 'object' || Array.isArray(saved.memberHistory)) saved.memberHistory = {};
   if (typeof saved.serverName !== 'string' || !saved.serverName.trim()) saved.serverName = '0091 Server';
   if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
   saved.channels = saved.channels.map(channel => ({ ...channel, voiceBitrate: [24, 32, 64, 96].includes(channel.voiceBitrate) ? channel.voiceBitrate : 32, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
+  saved.channels = saved.channels.map(channel => ({ ...channel, temporary: channel.id !== 'main' && channel.temporary === true }));
+  for (const channel of saved.channels) if (channel.password && (!/^[a-f0-9]{32}$/.test(channel.password.salt) || !/^[a-f0-9]{64}$/.test(channel.password.hash))) throw new Error('频道密码配置无效，请从备份恢复');
   for (const [key, profile] of Object.entries(saved.userProfiles)) {
     if (profile?.avatar && !isImageData(profile.avatar)) profile.avatar = readImageReference(profile.avatar);
     if (!profile?.avatar) delete saved.userProfiles[key];
@@ -88,8 +93,32 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   persist(saved);
   const app = express(), server = http.createServer(app);
   app.set('trust proxy', trustedProxies);
-  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 3 * 1024 * 1024 });
+  const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 28 * 1024 * 1024 });
   const members = new Map();
+  const chat = createChatStore({directory:dataDir ? path.join(dataDir,'chat') : null});
+  const chatDownloads=new Map();
+  app.get('/chat-files/:token',(req,res)=>{
+    const entry=chatDownloads.get(req.params.token);
+    if(!entry||entry.expires<Date.now()||!members.has(entry.socketId))return res.sendStatus(403);
+    try{const file=chat.attachment(entry.id);res.set('Cache-Control','no-store');res.set('X-Content-Type-Options','nosniff');
+      if(entry.video){
+        if(file.type!=='video/mp4')return res.sendStatus(415);
+        res.set('Access-Control-Allow-Origin','*');res.type('video/mp4');
+        if(file.path)return res.sendFile(path.resolve(file.path),{acceptRanges:true});
+        const bytes=file.bytes;res.set('Accept-Ranges','bytes');
+        if(req.headers.range){const match=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range);let start=Number(match?.[1]||0),end=match?.[2]?Number(match[2]):bytes.length-1;
+          if(match&&!match[1]&&match[2]){start=Math.max(0,bytes.length-Number(match[2]));end=bytes.length-1;}
+          end=Math.min(end,bytes.length-1);
+          if(!match||!match[1]&&!match[2]||!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>end||start>=bytes.length){res.set('Content-Range','bytes */'+bytes.length);return res.sendStatus(416);}
+          res.status(206).set('Content-Range',`bytes ${start}-${end}/${bytes.length}`);return res.send(bytes.subarray(start,end+1));
+        }
+        return res.send(bytes);
+      }
+      if(file.path)res.download(file.path,file.name);else{res.attachment(file.name);res.type('application/octet-stream').send(file.bytes);}
+    }catch{res.sendStatus(404);}
+  });
+  const chatTimer = setInterval(() => {try {if(chat.prune())io.to('members').emit('chat-trim',chat.info());}catch(error){console.error('聊天记录清理失败:',error.message);}},60000);
+  chatTimer.unref(); server.on('close',()=>{clearInterval(chatTimer);chat.close();chatDownloads.clear();});
   // Presence-only sockets prove an existing identity without joining any media room.
   const appPresence = new Map();
   const appOnline = key => [...appPresence.values()].some(record => record.key === key && record.expires > Date.now());
@@ -114,6 +143,70 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   const interactionTimes = new Map();
   const interactionIds = new Set(['poop', 'tomato', 'egg', 'heart', 'bomb', 'cake', 'thumb', 'boxing', 'question']);
   const attempts = new Map();
+  const channelAttempts = new Map(), temporaryTimers = new Map();
+  let pendingChannelCreates = 0;
+  server.on('close', () => { for (const entry of temporaryTimers.values()) clearTimeout(entry.timer); temporaryTimers.clear(); });
+  const canSetChannelPassword = (user, channel) => role(user.key) === 'host' || channel.creator === user.key;
+  const publicChannel = channel => ({ id: channel.id, name: channel.name, voiceBitrate: channel.voiceBitrate,
+    icon: imageRef(channel.icon), temporary: !!channel.temporary, passwordRequired: !!channel.password,
+    creatorId: saved.memberHistory[channel.creator]?.id || null });
+  async function makeChannelPassword(enabled, password) {
+    if (typeof enabled !== 'boolean') throw new Error('无效的频道密码设置');
+    if (!enabled) return null;
+    if (typeof password !== 'string' || !password.trim() || password.length > 128) throw new Error('频道密码需为1至128个字符，不能全为空格');
+    const salt = randomBytes(16).toString('hex');
+    return { salt, hash: (await derivePassword(password, salt, 32)).toString('hex') };
+  }
+  async function checkChannelAccess(socket, channelId, key, password, grants, returning) {
+    if (channelId === null) return;
+    const channel = saved.channels.find(item => item.id === channelId);
+    if (!channel) throw new Error('频道不存在');
+    const record = channel.password;
+    if (!record || canSetChannelPassword({ key }, channel) || grants.get(channelId) === record.hash
+      || returning?.channelId === channelId && returning.channelPasswordHash === record.hash) return;
+    if (typeof password !== 'string' || !password.length) throw new Error('请输入频道密码');
+    if (password.length > 128) throw new Error('频道密码不能超过128个字符');
+    const ip = proxyaddr(socket.request, app.get('trust proxy fn')), now = Date.now();
+    for (const [address, entry] of channelAttempts) if (entry.until <= now) channelAttempts.delete(address);
+    const entry = channelAttempts.get(ip) || { count: 0, until: now + 60000 };
+    if (entry.count >= 20 || channelAttempts.size >= 10000 && !channelAttempts.has(ip)) throw new Error('频道密码尝试过于频繁，请一分钟后重试');
+    entry.count++; channelAttempts.set(ip, entry);
+    const digest = await derivePassword(password, record.salt, 32);
+    if (!socket.connected || !saved.channels.includes(channel) || channel.password !== record) throw new Error('频道设置已变更，请重试');
+    if (!timingSafeEqual(digest, Buffer.from(record.hash, 'hex'))) throw new Error('频道密码错误');
+    entry.count = Math.max(0, entry.count - 1); grants.set(channelId, record.hash);
+  }
+  function syncTemporaryChannels() {
+    let changed = false;
+    const channels = saved.channels.map(channel => {
+      if (!channel.temporary || channel.id === 'main') return channel;
+      const occupied = [...members.values()].some(user => user.channelId === channel.id);
+      if (occupied && channel.emptySince != null || !occupied && !Number.isFinite(channel.emptySince)) {
+        changed = true; return { ...channel, emptySince: occupied ? null : Date.now() };
+      }
+      return channel;
+    });
+    if (changed) persist({ ...saved, channels });
+    for (const [id, entry] of temporaryTimers) {
+      const channel = saved.channels.find(item => item.id === id);
+      if (!channel?.temporary || channel.emptySince !== entry.since) { clearTimeout(entry.timer); temporaryTimers.delete(id); }
+    }
+    for (const channel of saved.channels) if (channel.temporary && Number.isFinite(channel.emptySince) && !temporaryTimers.has(channel.id)) {
+      const since = channel.emptySince;
+      const expire = () => {
+        temporaryTimers.delete(channel.id);
+        const current = saved.channels.find(item => item.id === channel.id);
+        if (!current?.temporary || current.emptySince !== since || [...members.values()].some(user => user.channelId === channel.id)) return;
+        try { persist({ ...saved, channels: saved.channels.filter(item => item.id !== channel.id) }); publish(); }
+        catch (error) {
+          console.error('临时频道清理失败，将稍后重试:', error.message);
+          const retry = setTimeout(expire, 30000); retry.unref?.(); temporaryTimers.set(channel.id, { since, timer: retry });
+        }
+      };
+      const timer = setTimeout(expire, Math.max(0, since + temporaryChannelIdleMs - Date.now()));
+      timer.unref?.(); temporaryTimers.set(channel.id, { since, timer });
+    }
+  }
   const nameKey = name => name.normalize('NFKC').toLowerCase();
   function isImageData(value) {
     return typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(value) && value.length <= Math.ceil(2 * 1024 * 1024 / 3) * 4 + 64 && Buffer.byteLength(value.slice(value.indexOf(',') + 1), 'base64') <= 2 * 1024 * 1024;
@@ -154,12 +247,14 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         channelId: current?.user.channelId ?? null, voiceMuted: !!current?.user.voiceMuted };
     });
   }
-  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, lolping: 'easytier-udp-v1', channels: saved.channels.map(channel => ({ ...channel, icon: imageRef(channel.icon) })), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
+  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, lolping: 'easytier-udp-v1', channels: saved.channels.map(publicChannel), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
+    serverStats: { users: members.size, maxUsers: 100, channels: saved.channels.length, uptimeMs: Math.max(0, performance.now() - uptimeStart), createdAt: saved.createdAt, serverTime: Date.now() },
     soundMembers: [...members.values(), ...[...disconnectedMembers.values()].map(record => record.user)].map(u => ({ memberId: u.memberId, channelId: u.channelId })),
     memberHistory: historicalMembers(),
-    users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, name: u.name, virtualIp: u.virtualIp,
+    users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, profileId: saved.memberHistory[u.key]?.id, name: u.name, virtualIp: u.virtualIp,
       channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, lolpingEndpoint: u.lolpingEndpoint || null, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
+    syncTemporaryChannels();
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
       if (!target?.isSharing || target.channelId !== u.channelId) u.watchingId = null;
@@ -167,8 +262,10 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     io.to('members').emit('server-update', snapshot());
   };
   const group = id => 'channel:' + id;
+  syncTemporaryChannels();
   app.get('/health', (_req, res) => res.json({ status: 'ok', protocol: 2, rooms: 1, channels: saved.channels.length, users: members.size }));
   io.on('connection', socket => {
+    const channelGrants = new Map();
     const handle = (name, fn) => socket.on(name, async (payload, ack) => {
       try { const result = await fn(payload); if (typeof ack === 'function') ack({ ok: true, ...result }); }
       catch (error) {
@@ -192,7 +289,37 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       u.lolpingEndpoint = endpoint; publish();
       return {};
     });
-    handle('server-info', () => ({ protocol: 2, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password, appPresence: true }));
+    handle('server-info', () => ({ protocol: 2, channelFeatures: 1, chatVersion: 1, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password, appPresence: true }));
+    let chatTokens=5,chatRefill=Date.now();
+    const chatAvatar=message=>message.avatar||imageRef(saved.userProfiles[Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId)]?.avatar);
+    handle('chat-history',payload=>{requireMember();const result=chat.history(payload?.before??Infinity,payload?.limit??40);return {...result,messages:result.messages.map(message=>({...message,avatar:chatAvatar(message)}))};});
+    handle('chat-image',payload=>{requireMember();return chat.image(payload?.id);});
+    handle('chat-upload-start',payload=>{requireMember();return chat.beginUpload(socket.id,payload);});
+    handle('chat-upload-chunk',payload=>{requireMember();return chat.uploadChunk(socket.id,payload);});
+    handle('chat-upload-cancel',payload=>{requireMember();if(payload?.uploadId)chat.cancelUpload(socket.id,payload.uploadId);else chat.cancelUploads(socket.id);return {};});
+    socket.on('disconnect',()=>chat.cancelUploads(socket.id));
+    handle('chat-download',payload=>{requireMember();chat.attachment(payload?.id);
+      for(const [key,value] of chatDownloads)if(value.expires<Date.now())chatDownloads.delete(key);
+      if([...chatDownloads.values()].filter(value=>value.socketId===socket.id&&!value.video).length>=20)throw Error('请稍后再下载');
+      const token=randomUUID();chatDownloads.set(token,{id:payload.id,socketId:socket.id,expires:Date.now()+60000});return {path:'/chat-files/'+token};});
+    handle('chat-video',payload=>{requireMember();if(chat.attachment(payload?.id).type!=='video/mp4')throw Error('这个文件不支持 MP4 预览');
+      for(const [key,value] of chatDownloads){if(value.expires<Date.now())chatDownloads.delete(key);else if(value.video&&value.socketId===socket.id&&value.id===payload.id)return {path:'/chat-files/'+key};}
+      const token=randomUUID();chatDownloads.set(token,{id:payload.id,socketId:socket.id,video:true,expires:Date.now()+3600000});return {path:'/chat-files/'+token};});
+    handle('chat-recall',payload=>{
+      const actor=requireMember(),actorId=saved.memberHistory[actor.key].id,message=chat.find(payload?.id),rank={host:2,admin:1,member:0};
+      const targetKey=message&&Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId);
+      const result=chat.recall(payload?.id,actorId,rank[role(actor.key)]>rank[targetKey?role(targetKey):'member']);
+      io.to('members').emit('chat-recalled',result);io.to('members').emit('chat-trim',chat.info());return result;
+    });
+    handle('chat-send',payload=>{
+      const actor=requireMember(),now=Date.now();chatTokens=Math.min(5,chatTokens+(now-chatRefill)/500);chatRefill=now;
+      if(chatTokens<1)throw new Error('发送过于频繁，请稍后再试');chatTokens--;
+      const result=chat.append({id:saved.memberHistory[actor.key].id,name:actor.name,avatar:imageRef(saved.userProfiles[actor.key]?.avatar),uploadOwner:socket.id},payload);
+      if(!result.duplicate){io.to('members').emit('chat-message',{epoch:chat.info().epoch,message:result.message});io.to('members').emit('chat-trim',chat.info());}
+      return {epoch:chat.info().epoch,message:result.message};
+    });
+    handle('chat-settings',payload=>{if(role(requireMember().key)!=='host')throw new Error('只有服主可以管理服务器聊天记录');const info=chat.configure(payload);io.to('members').emit('chat-trim',info);return info;});
+    handle('chat-clear',()=>{if(role(requireMember().key)!=='host')throw new Error('只有服主可以清除服务器聊天记录');const info=chat.clear();io.to('members').emit('chat-reset',info);return info;});
     handle('app-presence', payload => {
       if (payload?.serverId !== saved.serverId || typeof payload.identity !== 'string' || !/^[a-f0-9]{64}$/.test(payload.identity)) throw new Error('无效的在线状态');
       const key = createHash('sha256').update(payload.identity).digest('hex');
@@ -227,10 +354,17 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (Object.hasOwn(payload, 'channelId') && payload.channelId !== null && typeof payload.channelId !== 'string') throw new Error('无效的频道状态');
       const key = createHash('sha256').update(payload.identity).digest('hex');
       let channelId = 'main';
-      const previous = [...members.entries()].find(([, u]) => u.key === key);
+      let previous = [...members.entries()].find(([, u]) => u.key === key);
       const returning = previous?.[1] || disconnectedMembers.get(key)?.user;
       if (returning && (returning.channelId === null || saved.channels.some(channel => channel.id === returning.channelId))) channelId = returning.channelId;
       if (Object.hasOwn(payload, 'channelId')) channelId = payload.channelId === null ? null : saved.channels.some(channel => channel.id === payload.channelId) ? payload.channelId : 'main';
+      await checkChannelAccess(socket, channelId, key, payload.channelPassword, channelGrants, returning);
+      if (!socket.connected) throw new Error('连接已断开');
+      if (saved.password !== accessPassword) throw new Error('服务器密码已变更，请重新连接');
+      if (channelId !== null && !saved.channels.some(item => item.id === channelId)) throw new Error('频道不存在');
+      if (members.has(socket.id)) throw new Error('已进入服务器');
+      if (members.size >= 100) throw new Error('服务器已满（最多100人）');
+      previous = [...members.entries()].find(([, u]) => u.key === key);
       if (previous) {
         members.delete(previous[0]);
         const stale = io.sockets.sockets.get(previous[0]);
@@ -248,7 +382,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       }
       forgetDisconnected(key);
       const channelJoinedOrder = returning?.channelId === channelId ? returning.channelJoinedOrder : ++channelEntrySequence;
-      members.set(socket.id, { key, memberId: returning?.memberId || randomUUID(), name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, channelJoinedOrder, isSharing: false, voiceEnabled: false, voiceDeafened: !!payload.voiceDeafened, voiceMuted: mutedIdentities.has(key) });
+      members.set(socket.id, { key, memberId: returning?.memberId || randomUUID(), name: payload.userName.trim(), virtualIp: payload.virtualIp, channelId, channelPasswordHash: saved.channels.find(item => item.id === channelId)?.password?.hash, channelJoinedOrder, isSharing: false, voiceEnabled: false, voiceDeafened: !!payload.voiceDeafened, voiceMuted: mutedIdentities.has(key) });
       socket.join('members'); if (channelId) socket.join(group(channelId)); publish();
       return snapshot();
     });
@@ -348,14 +482,42 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (role(requireMember().key) !== 'host') throw new Error('房主连接已失效');
       persist({ ...saved, password }); publish(); return {};
     });
-    handle('create-channel', payload => {
-      if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以创建频道');
+    handle('create-channel', async payload => {
+      const actor = requireMember();
+      if (payload?.temporary !== undefined && typeof payload.temporary !== 'boolean') throw new Error('无效的频道类型');
+      const temporary = payload?.temporary === true;
+      if (!temporary && role(actor.key) === 'member') throw new Error('只有房主和管理员可以创建持久频道');
       const name = payload?.name;
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 30 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('频道名称需为1至30个字符');
       if (saved.channels.some(c => c.name === name.trim())) throw new Error('频道名称已存在');
-      if (saved.channels.length >= 50) throw new Error('最多创建50个频道');
-      const channel = { id: randomUUID(), name: name.trim(), voiceBitrate: 32, icon: validateImage(payload?.icon ?? null, '频道图标') };
-      persist({ ...saved, channels: [...saved.channels, channel] }); publish(); return { channel: { ...channel, icon: imageRef(channel.icon) } };
+      if (saved.channels.length + pendingChannelCreates >= 50) throw new Error('最多创建50个频道');
+      const icon = validateImage(payload?.icon ?? null, '频道图标');
+      pendingChannelCreates++;
+      try {
+        const password = await makeChannelPassword(payload?.passwordEnabled ?? false, payload?.password);
+        if (requireMember() !== actor || !temporary && role(actor.key) === 'member') throw new Error('创建频道权限已变更');
+        if (saved.channels.some(c => c.name === name.trim())) throw new Error('频道名称已存在');
+        const channel = { id: randomUUID(), name: name.trim(), temporary, creator: actor.key, password, emptySince: temporary ? Date.now() : null, voiceBitrate: 32, icon };
+        persist({ ...saved, channels: [...saved.channels, channel] }); publish(); return { channel: publicChannel(channel) };
+      } finally { pendingChannelCreates--; }
+    });
+    handle('set-channel-password', async payload => {
+      const actor = requireMember(), channel = saved.channels.find(item => item.id === payload?.channelId);
+      if (!channel) throw new Error('频道不存在');
+      if (!canSetChannelPassword(actor, channel)) throw new Error('只有服主或频道创建者可以设置频道密码');
+      const password = await makeChannelPassword(payload?.enabled, payload?.password);
+      const current = saved.channels.find(item => item.id === channel.id);
+      if (requireMember() !== actor || !current || !canSetChannelPassword(actor, current)) throw new Error('频道权限已变更');
+      persist({ ...saved, channels: saved.channels.map(item => item.id === current.id ? { ...item, password } : item) });
+      // Existing occupants remain connected and can recover from a brief network interruption.
+      for (const user of [...members.values(), ...[...disconnectedMembers.values()].map(entry => entry.user)]) if (user.channelId === current.id) user.channelPasswordHash = password?.hash;
+      publish(); return {};
+    });
+    handle('check-channel-access', async payload => {
+      const actor = requireMember();
+      await checkChannelAccess(socket, payload?.channelId, actor.key, payload?.password, channelGrants);
+      if (requireMember() !== actor) throw new Error('连接已断开');
+      return {};
     });
     handle('set-channel-voice-bitrate', payload => {
       if (role(requireMember().key) === 'member') throw new Error('只有房主和管理员可以设置频道语音码率');
@@ -388,8 +550,9 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       persist({ ...saved, channels: saved.channels.filter(c => c.id !== id) });
       for (const [sid, member] of [...members].filter(([, u]) => u.channelId === id).sort((a, b) => a[1].channelJoinedOrder - b[1].channelJoinedOrder)) {
         const client = io.sockets.sockets.get(sid);
-        client?.leave(group(id)); client?.join(group('main'));
-        member.channelId = 'main'; member.channelJoinedOrder = ++channelEntrySequence; member.lolpingEndpoint = null; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
+        const destination = saved.channels.find(channel => channel.id === 'main')?.password ? null : 'main';
+        client?.leave(group(id)); if (destination) client?.join(group(destination));
+        member.channelId = destination; member.channelPasswordHash = undefined; member.channelJoinedOrder = ++channelEntrySequence; member.lolpingEndpoint = null; member.isSharing = false; member.voiceEnabled = false; member.accompanimentActive = false; member.voiceSpeaking = false;
         client?.emit('channel-deleted');
       }
       publish(); return {};
@@ -422,17 +585,21 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     });
     handle('set-admin', payload => {
       if (role(requireMember().key) !== 'host') throw new Error('只有房主可以设置管理员');
-      const target = members.get(payload?.socketId);
-      if (!target || target.key === saved.owner || typeof payload.enabled !== 'boolean') throw new Error('无效的管理员设置');
-      const admins = saved.admins.filter(k => k !== target.key);
-      if (payload.enabled) admins.push(target.key);
+      const key = payload?.memberId ? Object.entries(saved.memberHistory).find(([, record]) => record.id === payload.memberId)?.[0] : members.get(payload?.socketId)?.key;
+      if (!key || key === saved.owner || typeof payload.enabled !== 'boolean') throw new Error('无效的管理员设置');
+      const admins = saved.admins.filter(k => k !== key);
+      if (payload.enabled) admins.push(key);
       persist({ ...saved, admins }); publish(); return {};
     });
-    handle('switch-channel', payload => {
+    handle('switch-channel', async payload => {
       const u = requireMember();
       if (payload?.channelId !== null && !saved.channels.some(c => c.id === payload?.channelId)) throw new Error('频道不存在');
+      if (u.channelId !== payload.channelId) await checkChannelAccess(socket, payload.channelId, u.key, payload?.password, channelGrants);
+      if (requireMember() !== u) throw new Error('连接已断开');
+      if (payload.channelId !== null && !saved.channels.some(item => item.id === payload.channelId)) throw new Error('频道不存在');
       if (u.channelId !== payload.channelId) {
         socket.leave(group(u.channelId)); u.channelId = payload.channelId; u.channelJoinedOrder = ++channelEntrySequence; u.lolpingEndpoint = null; u.isSharing = false; u.voiceEnabled = false; u.accompanimentActive = false; u.voiceSpeaking = false;
+        u.channelPasswordHash = saved.channels.find(item => item.id === u.channelId)?.password?.hash;
         if (u.channelId) socket.join(group(u.channelId)); publish();
       }
       return snapshot();
@@ -493,6 +660,6 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
 }
 if (require.main === module) {
   const { server } = createSignalingServer({ stateFile: process.env.SCREENSH_STATE_FILE || path.join(__dirname, 'data', 'server-state.json') });
-  server.listen(process.env.PORT || 3000, () => console.log('ScreenSh 频道服务器运行于端口 ' + server.address().port));
+  server.listen(process.env.PORT || 31012, () => console.log('ScreenSh 频道服务器运行于端口 ' + server.address().port));
 }
 module.exports = { createSignalingServer };

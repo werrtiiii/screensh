@@ -440,8 +440,6 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .user-card .avatar { font-size: 48px; background: var(--surface2); width: 80px; height: 80px; line-height: 80px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; }
 .user-card .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .user-card .name { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
-.user-card .btn-watch { width: 100%; }
-.user-card .btn-watch:disabled { background: var(--surface2); color: var(--text2); border-color: transparent; cursor: not-allowed; opacity: 0.5; box-shadow: none; }
 
 /* 视频视图 */
 .active-video-view { display: flex; flex-direction: column; height: 100%; }
@@ -659,9 +657,11 @@ input.sound-volume-slider {
 .server-current strong, .server-current small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .server-current strong { font-size: 13px; }
 .server-current small { color: var(--text2); font-size: 10px; }
-.room-sidebar .channel-list { overflow-y: auto; }
+.room-sidebar .channel-list { min-height:0; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }
 .channel-section { flex-shrink: 0; min-width: 0; }
 .channel-members { list-style: none; margin: 4px 0 6px 18px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.channel-members-scrollable { max-height:378px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.channel-members-scrollable > .channel-member { flex-shrink:0; height:36px; }
 .channel-member { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; color: var(--text2); font-size: 13px; }
 .channel-member:hover { background: var(--surface2); color: var(--text); }
 .channel-member.me { color: var(--text); }
@@ -671,7 +671,16 @@ input.sound-volume-slider {
 .room-sidebar .channel-button.active { border-color: color-mix(in srgb, var(--primary) 65%, transparent); box-shadow: inset 3px 0 var(--primary); }
 .room-sidebar .channel-button:hover { border-color: color-mix(in srgb, var(--primary) 50%, transparent); }
 .channel-button { display: flex; align-items: center; gap: 9px; }
-.channel-name { min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.channel-name { min-width: 0; flex: 1; overflow-wrap: anywhere; text-align: left; }
+.channel-lock, .channel-temporary { display: inline-flex; flex: 0 0 auto; align-items: center; color: var(--text2); opacity: .8; }
+.channel-lock svg, .channel-temporary svg { width: 16px; height: 16px; }
+.channel-type-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.channel-type-setting > div { display: flex; align-items: center; gap: 4px; }
+.channel-type-setting label { margin-bottom: 0; }
+.channel-type-setting .help-tip::after { left: 0; transform: none; width: 220px; }
+#createChannelForm { display: flex; flex-direction: column; overflow: hidden; }
+#createChannelForm > .modal-header, #createChannelForm > .dialog-actions { flex-shrink: 0; }
+.channel-dialog-body { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 3px; overscroll-behavior: contain; }
 .channel-icon { position: relative; flex: 0 0 24px; width: 24px; height: 24px; display: inline-grid; place-items: center; overflow: hidden; border-radius: 7px; color: #7163d9; background: #fff; box-shadow: inset 0 0 0 1px #8271dd20, 0 1px 2px #4236750a; }
 .channel-default { display: grid; place-items: center; width: 100%; height: 100%; background: linear-gradient(145deg, #fff 35%, #f2efff); }
 .channel-default svg { width: 83.333%; height: 83.333%; }
@@ -698,6 +707,18 @@ input.sound-volume-slider {
 #room .room-actions { flex-shrink: 0; flex-wrap: nowrap; }
 #room .room-main { flex: 1; min-width: 0; padding-top: 64px; }
 #room .sidebar { width: 240px; }
+#room .sidebar { min-height: 0; overflow: hidden; flex-shrink: 0; }
+#room .server-members-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; border-bottom: 0; }
+#room .server-members-panel h3 { flex-shrink: 0; }
+#room .server-members-panel .user-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.server-info { flex-shrink: 0; display: grid; gap: 7px; padding: 12px; border-top: 1px solid var(--border); }
+.server-info-card { display: flex; align-items: center; gap: 10px; padding: 10px 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; color: var(--text2); font-size: 11px; }
+.server-info-card > svg { width: 18px; height: 18px; flex-shrink: 0; opacity: .8; }
+.server-info-card > div { flex: 1; min-width: 0; display: grid; gap: 5px; }
+.server-info-card > div > div { display: flex; justify-content: space-between; gap: 7px; }
+.server-info-card b { font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.server-info-clock { display: grid; gap: 5px; text-align: center; padding: 5px 0 1px; color: var(--text2); font-size: 10px; }
+.server-info-clock time { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .025em; }
 #room .side-panel:first-child { display: none; }
 #roomUserName { color: var(--text); }
 .legacy-lobby-fields { display: none !important; }
@@ -734,11 +755,11 @@ input.sound-volume-slider {
 .source-dialog .screen-item.selected{background:transparent;border:0;}
 .screen-source-name{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:1.5;padding:0 4px;}
 .source-dialog #btnConfirmShare{margin-top:16px;}
-.card-share-button{position:absolute;right:10px;bottom:10px;display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:0;border-radius:5px;background:rgba(255,255,255,.76);backdrop-filter:blur(10px);color:#363a40;font-size:12px;cursor:pointer;}
-.card-share-button svg{width:16px;height:16px;}
-.card-share-button:hover{background:rgba(255,255,255,.94);}
-.card-share-button:disabled{opacity:.5;cursor:default;}
-.card-share-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
+.card-media-button{position:absolute;right:10px;bottom:10px;display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:0;border-radius:5px;background:rgba(255,255,255,.76);color:#363a40;font-size:12px;cursor:pointer;}
+.card-media-button svg{width:16px;height:16px;}
+.card-media-button:hover{background:rgba(255,255,255,.94);}
+.card-media-button:disabled{opacity:.5;cursor:default;}
+.card-media-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
 @media(max-width:560px){.source-dialog .screen-list{grid-template-columns:minmax(0,1fr);}}
 .room-actions { flex-wrap: wrap; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
@@ -792,7 +813,6 @@ input.sound-volume-slider {
 .card-cover { position: relative; width: 100%; }
 .user-card .avatar { width: 100%; height: var(--card-cover-height); border-radius: var(--radius) var(--radius) 0 0; font-size: 72px; }
 .user-card .name { width: calc(100% - 28px); font-size: 16px; font-weight: 500; }
-.user-card .btn-watch { position: absolute; right: 10px; bottom: 10px; width: auto; background: var(--surface); color: var(--text2); opacity: .9; }
 .card-voice-row { display: flex; align-items: center; gap: 10px; width: calc(100% - 28px); }
 .voice-control { display: grid; place-items: center; width: 28px; height: 28px; border: 0; background: transparent; padding: 3px; color: var(--text2); }
 .voice-control svg { width: 22px; height: 22px; }

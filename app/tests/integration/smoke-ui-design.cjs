@@ -20,8 +20,8 @@ app.whenReady().then(async () => {
     const shot = async name => { await new Promise(r => setTimeout(r, 260)); fs.writeFileSync(path.join(root, '.runtime-probe', name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     await shot('ui-lobby-light');
     await run(`document.querySelector('#btnSettings').click()`);
-    await wait(`document.querySelectorAll('.settings-navigation button').length===3`);
-    assert.deepEqual(await run(`[...document.querySelectorAll('.settings-navigation button')].map(n=>n.textContent)`), ['常规', '音效', '语音']);
+    await wait(`document.querySelectorAll('.settings-navigation button').length===5`);
+    assert.deepEqual(await run(`[...document.querySelectorAll('.settings-navigation button')].map(n=>n.textContent)`), ['常规', '音效', 'lolPing', '聊天', '语音']);
     await shot('ui-settings-light');
     await run(`document.querySelector('.settings-navigation button:last-child').click()`);
     await wait(`(()=>{const b=document.querySelector('#settingsModal .modal-body'),n=document.querySelector('.setting-voice').getBoundingClientRect();return b.scrollTop>0 && n.top>=b.getBoundingClientRect().top-2 && n.top<b.getBoundingClientRect().bottom})()`);

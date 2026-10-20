@@ -1,6 +1,6 @@
 {
   "name": "screensh-server",
-  "version": "2.4.2",
+  "version": "2.5.0",
   "description": "Signaling server for ScreenSh P2P screen sharing",
   "main": "server.js",
   "scripts": {

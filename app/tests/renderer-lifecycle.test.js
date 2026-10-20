@@ -33,7 +33,7 @@ function renderer(ipc = {}) {
   $('#btnRetryCleanup').classList.add('hidden');
   const api = { startSharing: async () => ({}), stopSharing: async () => {}, leaveRuntime: async () => {}, ...ipc };
   const context = vm.createContext({
-    console, setTimeout, clearTimeout, closeContextMenu() {},
+    console, setTimeout, clearTimeout, closeContextMenu() {}, syncLolPing() {},
     document: { querySelector: $, querySelectorAll: () => [], pictureInPictureElement: null },
     window: { electronAPI: api },
     socket: { connected: true, id: 'self', emit() {} }, roomUsers: new Map(), disconnectSignaling() {},

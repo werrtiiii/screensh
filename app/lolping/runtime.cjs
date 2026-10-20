@@ -4,6 +4,7 @@ const { EasyTierLolPing } = require('./easytier.cjs');
 const { LolPingRoom, roomEventValid } = require('./room.cjs');
 const contextKey = context => context && JSON.stringify([context.serverId,context.channelId,context.socketId,context.virtualIp]);
 const serverIdValid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
+const GLOBAL_CONFIG_ID = '00000000-0000-0000-0000-000000000000';
 const CONFIG_KEYS = ['trigger', 'dragThresholdPx', 'clickPing', 'clickPingId', 'gameCheck', 'wheelSizePx', 'wheel',
   'pingSizePx', 'pingDurationS', 'keepLastPing', 'volume', 'muted', 'tickSound', 'emoteTrigger', 'emoteClick',
   'emoteWheel', 'clickEmoteId', 'emoteSizePx', 'emoteSound', 'incomingPingLimit', 'tagColor',
@@ -16,6 +17,8 @@ class LolPingRuntime {
     this.configs = {}; this.context = null; this.liveKey = null; this.revision = 0; this.chain = Promise.resolve();
     this.overlay = null; this.bridge = null; this.paused = false; this.incoming = new Map(); this.status = 'stopped';
     try { const raw = JSON.parse(fs.readFileSync(file, 'utf8')); for (const [id, config] of Object.entries(raw)) if (serverIdValid(id)) this.configs[id] = this.normalize(config); } catch {}
+    // Prefer an enabled legacy configuration when migrating to one application-wide preference.
+    if (!this.configs[GLOBAL_CONFIG_ID]) this.configs[GLOBAL_CONFIG_ID] = Object.values(this.configs).find(config => config.enabled) || Object.values(this.configs)[0] || this.normalize({});
   }
   normalize(raw) {
     const clean = {}, source = raw && typeof raw === 'object' ? raw : {};
@@ -23,9 +26,9 @@ class LolPingRuntime {
     const s = this.core.normalizeSettings({ ...clean, language: 'zh-CN', customEmotes: [], autoUpdateCheck: false, launchAtStartup: false });
     return { enabled: source.enabled === true, ...Object.fromEntries(CONFIG_KEYS.map(key => [key, s[key]])) };
   }
-  get(id) {
+  get(id = GLOBAL_CONFIG_ID) {
     if (!serverIdValid(id)) throw Error('无效的服务器');
-    return { config: this.configs[id] || this.normalize({}), catalog: {
+    return { config: this.configs[GLOBAL_CONFIG_ID], catalog: {
       pings: this.core.ALL_PINGS.map(p => ({ id: p.id, name: p.name, icon: p.icon })),
       emotes: this.core.EMOTE_CATALOG.map(e => ({ id: e.slug, name: e.nameZh })),
     }, status: this.status };
@@ -38,7 +41,7 @@ class LolPingRuntime {
     const textKey=raw?.textHotkey||current.textHotkey,toggleKey=raw?.toggleHotkey||current.toggleHotkey;
     if(textKey.mods===toggleKey.mods&&textKey.vk===toggleKey.vk)throw Error('文字输入与暂停不能使用相同快捷键');
     const config = this.normalize({ ...current, ...raw });
-    const configs = { ...this.configs, [id]: config };
+    const configs = { ...this.configs, [GLOBAL_CONFIG_ID]: config };
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     fs.writeFileSync(this.file + '.tmp', JSON.stringify(configs, null, 2)); fs.renameSync(this.file + '.tmp', this.file);
     this.configs = configs; this.paused = false;
@@ -197,4 +200,4 @@ class LolPingRuntime {
   }
   clearPreview(){clearTimeout(this.previewTimer);this.previewOverlay?.destroy();this.previewOverlay=null;}
 }
-module.exports = { LolPingRuntime };
+module.exports = { LolPingRuntime, GLOBAL_CONFIG_ID };

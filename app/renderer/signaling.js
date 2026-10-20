@@ -1,4 +1,5 @@
 import { syncChannelSounds, leaveChannelSounds } from './channel-sounds.mjs';
+import { normalizeServerAddress } from './server-address.mjs';
 import { syncLolPing, stopLolPing } from './lolping.js';
 import { saveCachedImage } from './image-cache.mjs';
 import { isImageData } from './image-data.mjs';
@@ -17,7 +18,7 @@ let joinCredentials = null;
 let kickedOut = false;
 let reconnectPromise = null;
 let reconnectGeneration = 0;
-let connectedServerUrl = null, bookmarkSocketId = null;
+let connectedServerUrl = null, connectedServerEndpoint = null, bookmarkSocketId = null;
 const isImageRef = value => /^image:[a-f0-9]{64}\.(png|jpg|webp|gif)$/.test(value || '');
 function cachedImage(value) {
   if (!isImageRef(value)) return typeof value === 'string' && value.startsWith('data:image/') ? value : null;
@@ -79,6 +80,8 @@ export function applyServerState(data, restoring = false) {
   state.channelId = me.channelId;
   saveChannelPreference(data.serverId, { lastChannel: me.channelId });
   state.channels = data.channels;
+  document.dispatchEvent(new CustomEvent('chat-context', {detail:{serverId:state.roomId,name:data.serverName||'0091 Server',channelId:me.channelId,members:data.memberHistory||data.users,meId:me.profileId||me.memberId,myRole:me.role}}));
+  document.dispatchEvent(new CustomEvent('server-stats-updated', { detail: data.serverStats }));
   state.passwordRequired = !!data.passwordRequired;
   state.serverIcon = data.serverIcon || null;
   state.serverName = data.serverName || '0091 Server';
@@ -111,11 +114,12 @@ export function applyServerState(data, restoring = false) {
   syncLolPing(data.lolping);
   if (state.watchingId) renderViewerNames();
 }
-export function connectServer() {
+export function connectServer(url = (state.roomId && connectedServerEndpoint) || normalizeServerAddress($('#serverUrl').value), address = (state.roomId && connectedServerUrl) || $('#serverUrl').value.trim()) {
   imageRevision++; imageCache.clear();
   if (socket) { socket.removeAllListeners(); socket.disconnect(); }
-  connectedServerUrl = new URL($('#serverUrl').value.trim()).origin; bookmarkSocketId = null;
-  socket = io(connectedServerUrl, { transports: ['websocket', 'polling'], timeout: 10000, reconnection: false });
+  connectedServerUrl = address; bookmarkSocketId = null;
+  connectedServerEndpoint = url;
+  socket = io(url, { transports: ['polling', 'websocket'], tryAllTransports: true, timeout: 5000, reconnection: false });
   socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
   socket.on('disconnect', reason => {
     stopLolPing();
@@ -165,6 +169,8 @@ async function reconnectJoin(deadline, previousChannel) {
   if (generation !== reconnectGeneration || !state.roomId || state.leaving || kickedOut) throw new Error('已取消重连');
   const info = await request('server-info');
   if (info.protocol !== 2 || info.serverId !== state.roomId) throw new Error('服务器已变化，请重新连接');
+  if (info.channelFeatures !== 1) throw new Error('请更新频道服务器，以支持临时频道和频道密码');
+  if (info.chatVersion !== 1) throw new Error('请更新频道服务器，以支持文字聊天');
   if (info.passwordRequired && !credentials.password) throw new Error('服务器需要密码，请重新输入');
   const access = await request('check-access', { userName: credentials.userName, password: credentials.password, identity: credentials.identity });
   if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
@@ -218,7 +224,7 @@ function startReconnect() {
 }
 export function disconnectSignaling() {
   stopLolPing();
-  connectedServerUrl = null; bookmarkSocketId = null;
+  connectedServerUrl = null; connectedServerEndpoint = null; bookmarkSocketId = null;
   resetInteractions();
   leaveChannelSounds();
   imageRevision++; imageCache.clear();

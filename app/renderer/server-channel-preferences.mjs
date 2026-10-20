@@ -14,11 +14,19 @@ export function preferredChannel(serverId) {
 }
 export async function joinPreferredChannel(serverId, payload, join) {
   const channelId = preferredChannel(serverId);
-  try { return await join({ ...payload, channelId }); }
+  const attempt = async id => {
+    try { return await join({ ...payload, channelId: id }); }
+    catch (error) {
+      // A locked main channel must not prevent entering the server itself.
+      if (id === 'main' && /频道密码/.test(error.message || '')) return join({ ...payload, channelId: null });
+      throw error;
+    }
+  };
+  try { return await attempt(channelId); }
   catch (error) {
     // Only channel-specific rejection can be recovered by joining main.
     // Password, network and server admission errors must remain unchanged.
     if (!channelId || channelId === 'main' || !/频道/.test(error.message || '')) throw error;
-    return join({ ...payload, channelId: 'main' });
+    return attempt('main');
   }
 }

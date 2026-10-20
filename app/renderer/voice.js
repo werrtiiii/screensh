@@ -5,6 +5,7 @@ import { attachVoiceStats } from './voice-stats.mjs';
 import { toast } from './toast.js';
 import { channelVoiceBitrate, allowOpusStereo, setVoiceBitrate } from './voice-encoding.mjs';
 import { preferVoicePacketTime, preferVoiceReceiveLatency } from './voice-latency.mjs';
+import { voiceIcon } from './voice-icons.mjs';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
@@ -389,10 +390,6 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   }).finally(() => { cleanup = null; });
   return cleanup;
 }
-function voiceIcon(kind, off = false) {
-  const path = kind === 'mute' ? '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>' : '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="9" rx="2"/><rect x="17" y="12" width="4" height="9" rx="2"/>';
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">${path}${off ? '<path d="M2 2l20 20"/>' : ''}</svg>`;
-}
 async function changeVoicePreference(mode) {
   if (mode === 'mute') voice.muted = !voice.muted; else voice.deafened = !voice.deafened;
   localStorage.setItem('voiceMuted', String(voice.muted));
@@ -470,14 +467,6 @@ export function decorateVoiceCard(card, user, isMe) {
     card.classList.add('remote-user-card');
     const footer = document.createElement('div'); footer.className = 'remote-card-footer';
     footer.append(card.querySelector('.name'), row); card.append(footer); row.className = 'remote-card-actions';
-    if (user.voiceMuted || user.microphoneMuted || !user.voiceEnabled) {
-      const muted = document.createElement('span'); muted.className = 'remote-mic-muted'; muted.innerHTML = voiceIcon('mute', true);
-      muted.title = user.voiceMuted ? '已被禁言' : '麦克风已关闭'; muted.setAttribute('aria-label', muted.title); row.append(muted);
-    }
-    if (user.voiceDeafened) {
-      const deafened = document.createElement('span'); deafened.className = 'remote-headphones-off'; deafened.innerHTML = voiceIcon('deafen', true);
-      deafened.title = '已关闭听筒'; deafened.setAttribute('aria-label', deafened.title); row.append(deafened);
-    }
     const control = document.createElement('div'); control.className = 'speaker-control'; row.append(control);
     const speakerButton = document.createElement('button'); speakerButton.type = 'button'; speakerButton.className = 'remote-speaker-button';
     paintSpeakerButton(speakerButton, user);
@@ -534,7 +523,7 @@ export function initVoice() {
     input.checked = processingSettings()[input.dataset.voiceProcessing];
     input.onchange = () => void changeMicrophone(microphone(), { key: input.dataset.voiceProcessing, value: input.checked });
   }
-  attachVoiceStats($('#voiceDiagnostics'), { getPeers: () => [...peers].map(([id, peer]) => ({ id, name: state.serverUsers.find(u => u.socketId === id)?.name || '成员', pc: peer.pc })), getCapture: () => ({ track: rawStream?.getAudioTracks()[0], context, enabled: voice.enabled }) });
+  attachVoiceStats($('#voiceDiagnostics'), { getPeers: () => [...peers].map(([id, peer]) => ({ id, name: state.serverUsers.find(u => u.socketId === id)?.name || '成员', pc: peer.pc })), getCapture: () => ({ track: rawStream?.getAudioTracks()[0], context, enabled: voice.enabled, mixed: !!rawStream && outgoing !== rawStream }) });
   window.channelVoice = { accompanimentState: async active => {
     accompanimentStereo = !!active;
     if (voiceDestination) voiceDestination.channelCount = active ? 2 : 1;

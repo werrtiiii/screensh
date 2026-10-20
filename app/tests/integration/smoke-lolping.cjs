@@ -31,11 +31,23 @@ app.whenReady().then(async () => {
       windows.push(win); win.webContents.on('console-message',(_event,level,message)=>{if(level>=3)errors.push(message);});
       runtimes.set(win.webContents.id,new LolPingRuntime({file:path.join(profile,`config-${i}.json`),helper:path.join(root,'res/lolping-hook-helper.exe'),core:{...core,InputBridge:SimBridge},transportFactory:options=>new EasyTierLolPing({...options,allowLoopback:true}),send:(channel,data)=>{if(!win.isDestroyed())win.webContents.send(channel,data);}}));
       await win.loadFile(path.join(root,'renderer/index.html'));
-      await execute(win,`(async()=>{await import('./renderer.js');window.channelVoice={sync(){},stop:async()=>{},decorate(){}};document.querySelector('#serverUrl').value='http://127.0.0.1:${server.address().port}';document.querySelector('#userName').value='Ping ${i}';document.querySelector('#btnConnect').click();})()`);
+      await execute(win,`(async()=>{await import('./renderer.js');window.channelVoice={sync(){},stop:async()=>{},decorate(){}};})()`);
+      if (i===0) {
+        await execute(win,`document.querySelector('#btnSettings').click();document.querySelector('#lolPingEnabled').click()`);
+        const local = runtimes.get(win.webContents.id);
+        await wait(()=>local.context?.channelId===null&&local.bridge?.status==='running');
+        assert.equal(local.context.serverId,'00000000-0000-0000-0000-000000000000');
+        assert.equal(local.transport,null,'home-page lolPing never starts a network transport');
+        assert.equal(await execute(win,`document.querySelector('#serverSettingsDialog #lolPingEnabled')===null && !!document.querySelector('#settingsModal #lolPingEnabled')`),true);
+        await execute(win,`document.querySelector('#lolPingEnabled').click()`);
+        await wait(()=>!local.bridge&&!local.overlay);
+        await execute(win,`document.querySelector('#btnCloseSettings').click()`);
+      }
+      await execute(win,`document.querySelector('#serverUrl').value='http://127.0.0.1:${server.address().port}';document.querySelector('#userName').value='Ping ${i}';document.querySelector('#btnConnect').click();`);
       await wait(()=>execute(win,`document.querySelector('#room').classList.contains('active')`));
     }
     for (const win of windows) {
-      await execute(win,`document.querySelector('#btnServerSettings').click()`);
+      await execute(win,`document.querySelector('#btnSettings').click()`);
       await wait(()=>execute(win,`!document.querySelector('#lolPingEnabled').checked`));
       await execute(win,`document.querySelector('#btnLolPingConfig').click()`);
       await wait(()=>execute(win,`!document.querySelector('#lolPingDialog').classList.contains('hidden')`));
@@ -171,9 +183,11 @@ app.whenReady().then(async () => {
     assert.equal(b.get(b.context.serverId).config.enabled,true,'rejoining/reconnecting restores the local server preference');
     await execute(guest,`document.querySelector('#btnLeaveChannel').click()`);
     await wait(()=>b.context?.channelId===null&&b.bridge?.status==='running'&&b.transport===null);
+    await execute(guest,`document.querySelector('#btnLeave').click()`);
+    await wait(()=>b.context?.serverId==='00000000-0000-0000-0000-000000000000'&&b.bridge?.status==='running'&&b.transport===null);
     await b.save(b.context.serverId,{enabled:false});await wait(()=>b.overlay===null&&b.bridge===null);
     const serverId = a.context.serverId;
-    await execute(windows[0],`document.querySelector('#btnServerSettings').click();document.querySelector('#lolPingEnabled').click()`);
+    await execute(windows[0],`document.querySelector('#btnSettings').click();document.querySelector('#lolPingEnabled').click()`);
     await wait(()=>a.overlay===null&&a.bridge===null);
     assert.equal(overlay().length,0);
     assert.equal(ipcMain.listenerCount('overlay:pinged'),ipcBaseline);

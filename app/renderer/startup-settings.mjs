@@ -1,3 +1,4 @@
+import { normalizeServerAddress } from './server-address.mjs';
 export function initStartupSettings(api, notify) {
   const autoConnect = document.querySelector('#autoConnectCheckbox');
   autoConnect.checked = localStorage.getItem('autoConnectLastServer') !== 'false';
@@ -23,7 +24,7 @@ export function lastConnectedServer() {
   try {
     const last = JSON.parse(localStorage.getItem('lastConnectedServer'));
     if (!last || typeof last.url !== 'string' || typeof last.userName !== 'string' || !last.userName.trim()) return null;
-    const url = new URL(last.url);
-    return ['http:', 'https:'].includes(url.protocol) && url.origin === last.url ? last : null;
+    normalizeServerAddress(last.url);
+    return last;
   } catch { return null; }
 }

@@ -145,12 +145,13 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 100));
     require('node:fs').writeFileSync(path.join(root, '.runtime-probe', 'receive-volume-control.png'), (await host.webContents.capturePage()).toPNG());
     await run(guest, `document.querySelector('[data-voice="deafen"]').click()`);
-    await wait(host, `!!document.querySelector('[data-user-id="${guestId}"] .remote-headphones-off')`);
+    await wait(host, `!!document.querySelector('.channel-member[data-user-id="${guestId}"] .remote-headphones-off')`);
+    assert.equal(await run(host, `!!document.querySelector('.user-card[data-user-id="${guestId}"] .remote-headphones-off')`), false);
     await run(guest, `document.querySelector('[data-voice="deafen"]').click()`);
-    await wait(host, `!document.querySelector('[data-user-id="${guestId}"] .remote-headphones-off')`);
+    await wait(host, `!document.querySelector('.channel-member[data-user-id="${guestId}"] .remote-headphones-off')`);
     await run(guest, `const receive = document.querySelector('.receive-volume-control input'); receive.value=0;receive.dispatchEvent(new Event('input'))`);
     assert.equal(await run(guest, `[...document.querySelectorAll('audio:not([data-voice-capture])')].every(a=>a.volume===0)`), true);
-    assert.equal(await run(host, `!!document.querySelector('[data-user-id="${guestId}"] .remote-headphones-off')`), false);
+    assert.equal(await run(host, `!!document.querySelector('.channel-member[data-user-id="${guestId}"] .remote-headphones-off')`), false);
     await run(guest, `document.querySelector('.receive-volume-control input').value=100;document.querySelector('.receive-volume-control input').dispatchEvent(new Event('input'))`);
     const beforeRetry = await run(host, 'voicePCs.length');
     await run(host, `{ const pc = voicePCs.find(pc => pc.connectionState === 'connected'); Object.defineProperty(pc, 'connectionState', { configurable: true, value: 'failed' }); pc.onconnectionstatechange(); delete pc.connectionState; }`);
@@ -196,9 +197,9 @@ app.whenReady().then(async () => {
     assert.equal(await run(guest, `capturedMicrophones[0].getTracks().every(t=>t.readyState==='ended') && captureConstraints.at(-1).audio.deviceId.exact==='alternate' && retainedPeer.connectionState==='connected'`),true);
     await run(guest, `document.querySelector('#btnCloseSettings').click();document.querySelector('#btnMemberNetwork').click();document.querySelector('#voiceDiagnostics').open=true`);
     await wait(guest, `document.querySelector('.voice-diagnostics-body').textContent.includes('audio/opus') && !document.querySelector('.voice-diagnostics-body').textContent.includes('RTT—')`);
-    await wait(guest, `['接收丢包率（区间）','接收缓冲延迟（区间）','音频接收码率'].every(label=>[...document.querySelectorAll('.voice-diagnostics-row')].some(row=>row.querySelector('span').textContent===label && row.querySelector('strong').textContent!=='—'))`);
+    await wait(guest, `['接收缓冲延迟（区间）','音频接收码率'].every(label=>[...document.querySelectorAll('.voice-diagnostics-row')].some(row=>row.querySelector('span').textContent===label && row.querySelector('strong').textContent!=='—'))`);
     const diagnostics=await run(guest, `document.querySelector('.voice-diagnostics-body').textContent`);
-    assert.ok(diagnostics.includes('接收丢包率（区间）') && diagnostics.includes('接收缓冲延迟（区间）'));
+    assert.ok(diagnostics.includes('音频接收码率') && diagnostics.includes('接收缓冲延迟（区间）'));
     guest.show();await run(guest, `document.querySelector('#voiceDiagnostics').scrollIntoView({block:'end'})`);await new Promise(r=>setTimeout(r,100));
     require('node:fs').writeFileSync(path.join(root,'.runtime-probe','voice-diagnostics.png'),(await guest.webContents.capturePage()).toPNG());
     await run(guest, `document.querySelector('#btnCloseMemberNetwork').click()`);

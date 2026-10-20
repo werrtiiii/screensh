@@ -77,7 +77,7 @@ const check = spawnSync(process.execPath, [path.join(__dirname, "./check-package
 });
 if (check.error || check.status !== 0) throw check.error || new Error('Package validation failed; no ZIP produced');
 console.log('设置启动时请求管理员权限...');
-const edit = spawnSync(rcedit, [executable, '--set-requested-execution-level', 'requireAdministrator'], {
+const edit = spawnSync(rcedit, [executable, '--set-icon', path.join(root, 'assets/branding/icon.ico'), '--set-requested-execution-level', 'requireAdministrator'], {
   stdio: 'inherit', windowsHide: true,
 });
 if (edit.error || edit.status !== 0) throw edit.error || new Error('写入管理员权限声明失败');
@@ -90,7 +90,7 @@ fs.writeFileSync(path.join(output, '使用说明.md'), `# ScreenSh Windows 便�
 
 1. 将整个压缩包解压到本地目录，勿只复制 ScreenSh.exe。
 2. 双击 ScreenSh.exe，在 Windows 权限确认窗口中选择“是”，以便 EasyTier 创建虚拟网卡。
-3. 在主页填写名称及服务器地址，点击连接服务器。需要配套的 2.4.0 频道服务器。名称不能与在线成员重复；启用服务器密码时会弹窗输入。
+3. 在主页填写名称及服务器地址，点击连接服务器。需要配套的 2.5.0 频道服务器。名称不能与在线成员重复；启用服务器密码时会弹窗输入。
 4. 每台服务器只有一个房间，默认进入主频道；房主和管理员可以创建频道。名称和地址会保存到本机。
 5. 共享者选择显示器/窗口开始共享，其他成员点击观看共享。
 
@@ -98,7 +98,7 @@ fs.writeFileSync(path.join(output, '使用说明.md'), `# ScreenSh Windows 便�
 如果提示缺少 VCRUNTIME/MSVCP DLL，请安装微软 Visual C++ 2015–2022 x64 运行库。
 resources 中的 Packet.dll、wintun.dll 和驱动文件属于随附依赖，请完整保留。
 服务器需另行运行本项目 server；客户端包不包含信令服务。
-防火墙需允许客户端通信：信令服务 TCP 3000（默认），共享端虚拟网卡 TCP 8889、UDP/TCP 8189。
+防火墙需允许客户端通信：信令服务 TCP 31012（默认），共享端虚拟网卡 TCP 8889、UDP/TCP 8189。
 用户设置保存在用户账户的应用数据目录中，不随压缩包分发。
 `);
 console.log('压缩便携版...');

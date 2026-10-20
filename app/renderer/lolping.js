@@ -2,28 +2,30 @@ import { state, $ } from './shared.js';
 import { socket, requestServer } from './signaling.js';
 import { toast } from './toast.js';
 import { codeToVk, vkLabel, hotkeyLabel, eventMods, UNSAFE_TRIGGER_VKS, DEFAULT_WHEEL, DEFAULT_EMOTE_WHEEL } from '../lolping/dist/settings-tools.mjs';
-let serverSupport = false, cached, cacheId, syncingKey, generation = 0, dialogServer;
+const CONFIG_ID = '00000000-0000-0000-0000-000000000000';
+let serverSupport = false, cached, syncingKey, generation = 0, closing = false;
 const api = () => window.electronAPI;
 const statusText = text => { if ($('#lolPingStatus')) $('#lolPingStatus').textContent = text; };
-const currentContext = () => socket?.connected && state.roomId && !state.leaving && !state.switchingChannel ?
-  { serverId: state.roomId, channelId: state.channelId || null, socketId: socket.id, name:state.serverUsers.find(u=>u.socketId===socket.id)?.name, virtualIp: state.virtualIp, connected: true,
+const currentContext = () => state.leaving || state.switchingChannel ? null : socket?.connected && state.roomId ?
+  { serverId: state.roomId, channelId: serverSupport ? state.channelId || null : null, socketId: socket.id, name:state.serverUsers.find(u=>u.socketId===socket.id)?.name, virtualIp: state.virtualIp, connected: true,
     peers: state.serverUsers.filter(u => state.channelId && u.channelId === state.channelId && u.socketId !== socket.id && u.lolpingEndpoint)
-      .map(u => ({ socketId: u.socketId, name: u.name, virtualIp: u.virtualIp, channelId: u.channelId, lolpingEndpoint: u.lolpingEndpoint })) } : null;
+      .map(u => ({ socketId: u.socketId, name: u.name, virtualIp: u.virtualIp, channelId: u.channelId, lolpingEndpoint: u.lolpingEndpoint })) } :
+  { serverId: CONFIG_ID, channelId: null, socketId: 'local', name: state.userName || localStorage.getItem('userName') || '', virtualIp: null, peers: [], connected: true };
 async function load() {
-  const id = state.roomId;
-  if (!id || !api()?.getLolPing) return null;
-  if (id === cacheId && cached) return cached;
-  const result = await api().getLolPing(id);
-  if (state.roomId === id) { cacheId = id; cached = result; }
+  if (!api()?.getLolPing) return null;
+  if (cached) return cached;
+  const result = await api().getLolPing(CONFIG_ID);
+  cached = result;
   return result;
 }
 export function syncLolPing(supported) {
+  if (closing) return;
   if (arguments.length) serverSupport = supported === 'easytier-udp-v1';
   const context = currentContext(), key = JSON.stringify([context, serverSupport, cached?.config]);
   if (key === syncingKey) return;
   syncingKey = key; const token = ++generation;
   void (async () => {
-    const data = state.roomId && serverSupport ? await load() : null;
+    const data = await load();
     if (token !== generation) return;
     const enabled = !!(data?.config.enabled && context);
     const endpoint = await api()?.syncLolPing?.(enabled ? context : null);
@@ -31,29 +33,30 @@ export function syncLolPing(supported) {
     if (socket?.connected && state.roomId && serverSupport) await requestServer('lolping-enable', { enabled: enabled && !!endpoint, channelId: context?.channelId, endpoint });
     if (token !== generation) return;
     $('#lolPingEnabled').checked = !!data?.config.enabled;
-    statusText(!serverSupport ? '当前服务器需更新后才能使用 lolPing' : enabled ? (context.channelId&&data.config.features.rooms?'已启用':'已启用 · 仅自己可见') : '开启后，频道内同步，频道外仅自己可见');
+    statusText(enabled ? (context.channelId&&data.config.features.rooms?'已启用 · 与同频道成员共享':'已启用 · 仅自己可见') : '开启后可在本机使用，进入频道后与成员共享');
   })().catch(error => { if (token === generation) { statusText(error.message); syncingKey = null; } });
 }
 export function stopLolPing() {
-  generation++; syncingKey = null;
-  void api()?.syncLolPing?.(null)?.catch(error => console.warn('[lolPing]', error));
+  const token = ++generation; syncingKey = null;
+  void Promise.resolve(api()?.syncLolPing?.(null)).then(() => {
+    if (token === generation && !closing && !state.leaving && !state.switchingChannel) syncLolPing();
+  }).catch(error => console.warn('[lolPing]', error));
 }
+window.addEventListener('beforeunload', () => { closing = true; stopLolPing(); });
 api()?.onLolPingStatus?.(({ status, error }) => {
-  if(status==='settings-changed'){const id=state.roomId;if(id)void api().getLolPing(id).then(data=>{if(state.roomId===id){cacheId=id;cached=data;syncingKey=null;syncLolPing();}}).catch(error=>statusText(error.message));return;}
+  if(status==='settings-changed'){void api().getLolPing(CONFIG_ID).then(data=>{cached=data;syncingKey=null;syncLolPing();}).catch(error=>statusText(error.message));return;}
   if(status==='kicked'){if(cached)cached.config.enabled=false;syncingKey=null;syncLolPing();toast(error||'已退出 lolPing 房间');return;}
-  if (!currentContext() || !cached?.config.enabled) return;
+  if (closing || !currentContext() || !cached?.config.enabled) return;
   statusText(error || ({ running: currentContext().channelId&&cached.config.features.rooms?'已启用 · EasyTier 频道房间':'已启用 · 仅自己可见', paused: `已暂停 · ${hotkeyLabel(cached.config.toggleHotkey)} 恢复`, starting: '正在启动 lolPing…', failed: 'lolPing 输入助手启动失败' })[status] || 'lolPing 已停止');
 });
-$('#btnServerSettings')?.addEventListener('click', () => {
+$('#btnSettings')?.addEventListener('click', () => {
   void load().then(data => { if (data && $('#lolPingEnabled')) $('#lolPingEnabled').checked = data.config.enabled; }).catch(error => statusText(error.message));
 });
 $('#lolPingEnabled')?.addEventListener('change', async event => {
-  const button = event.target, id = state.roomId; button.disabled = true;
+  const button = event.target; button.disabled = true;
   try {
-    if (button.checked && !serverSupport) throw Error('请先更新频道服务器后再启用 lolPing');
-    const data = await api().saveLolPing(id, { enabled: button.checked });
-    if (state.roomId !== id) return;
-    cacheId = id; cached = data; syncingKey = null; syncLolPing();
+    const data = await api().saveLolPing(CONFIG_ID, { enabled: button.checked });
+    cached = data; syncingKey = null; syncLolPing();
   } catch (error) { button.checked = !!cached?.config.enabled; toast(error.message, 'error'); }
   finally { button.disabled = false; }
 });
@@ -121,15 +124,13 @@ function renderFields(data) {
   visibility();
 }
 $('#btnLolPingConfig')?.addEventListener('click', async () => {
-  const id = state.roomId;
-  try { const data = await load(); if (!data || state.roomId !== id) return; dialogServer = id; renderFields(data); $('#lolPingError').textContent = ''; $('#lolPingDialog').classList.remove('hidden'); }
+  try { const data = await load(); if (!data) return; renderFields(data); $('#lolPingError').textContent = ''; $('#lolPingDialog').classList.remove('hidden'); }
   catch (error) { toast(error.message, 'error'); }
 });
 $('#btnCloseLolPing')?.addEventListener('click', () => {captureEnd?.();$('#lolPingDialog').classList.add('hidden');});
 $('#lolPingForm')?.addEventListener('submit', async event => {
-  event.preventDefault(); const form = event.target, id = dialogServer, patch = {}; $('#btnSaveLolPing').disabled = true; $('#lolPingError').textContent = '';
+  event.preventDefault(); const form = event.target, patch = {}; $('#btnSaveLolPing').disabled = true; $('#lolPingError').textContent = '';
   try {
-    if (state.roomId !== id) throw Error('当前服务器已变更，请重新打开配置');
     for (const [key,,type] of fields) { const input = form.elements.namedItem(key); patch[key] = type === 'checkbox' ? input.checked : type === 'range' ? Number(input.value) : input.value; }
     captureEnd?.();for(const key of ['trigger','emoteTrigger'])if(patch[key]==='custom')patch[key]=keyValues[key].value;
     for(const key of ['toggleHotkey','textHotkey','panelKey'])patch[key]=keyValues[key].value;
@@ -137,8 +138,9 @@ $('#lolPingForm')?.addEventListener('submit', async event => {
     for (const key of ['wheel','emoteWheel']) { patch[key] = Array.from({length:8},(_,i)=>form.elements.namedItem(key+i).value); if (new Set(patch[key]).size !== 8) throw Error('轮盘中的 8 个选项不能重复'); }
     if (JSON.stringify(patch.trigger) === JSON.stringify(patch.emoteTrigger)) throw Error('标记与表情不能使用相同触发键');
     for (const key of ['clickPingId','clickEmoteId']) patch[key] = form.elements.namedItem(key).value;
-    const data = await api().saveLolPing(id, patch); if (state.roomId !== id) return;
-    cacheId = id; cached = data; syncingKey = null; syncLolPing(); $('#lolPingDialog').classList.add('hidden');
+    const data = await api().saveLolPing(CONFIG_ID, patch);
+    cached = data; syncingKey = null; syncLolPing(); $('#lolPingDialog').classList.add('hidden');
   } catch (error) { $('#lolPingError').textContent = error.message; }
   finally { $('#btnSaveLolPing').disabled = false; }
 });
+void load().then(() => syncLolPing()).catch(error => statusText(error.message));

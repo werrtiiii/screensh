@@ -71,6 +71,7 @@ app.whenReady().then(async () => {
       await request('set-voice-state', { enabled: true });
       for (let i = 0; i < 100 && !state.serverUsers.some(u => u.socketId === other.id && u.voiceEnabled); i++) await new Promise(r => setTimeout(r, 50));
       const remoteCard = () => [...document.querySelectorAll('.user-card')].find(c => c.dataset.userId === other.id);
+      const memberRow = () => [...document.querySelectorAll('.channel-member')].find(c => c.dataset.userId === other.id);
       const waitCard = async predicate => { for (let i = 0; i < 100; i++) { if (predicate(remoteCard())) return; await new Promise(r => setTimeout(r, 30)); } throw new Error('Remote card UI did not update'); };
       await waitCard(card => card?.querySelector('.remote-speaker-button') && !card.querySelector('.remote-mic-muted'));
       if (getComputedStyle(remoteCard().querySelector('.speaker-popover')).display !== 'none') throw new Error('Volume slider should be hidden initially');
@@ -78,9 +79,9 @@ app.whenReady().then(async () => {
       if (getComputedStyle(remoteCard().querySelector('.speaker-popover')).display === 'none') throw new Error('Volume slider must open on focus');
       const volume = remoteCard().querySelector('.voice-volume input'); volume.value = 25; volume.dispatchEvent(new Event('input'));
       await request('set-voice-state', { enabled: true, muted: true });
-      await waitCard(card => !!card?.querySelector('.remote-mic-muted'));
+      await waitCard(card => card && !card.querySelector('.remote-mic-muted') && !!memberRow()?.querySelector('.remote-mic-muted'));
       await request('set-voice-state', { enabled: true, muted: false });
-      await waitCard(card => card && !card.querySelector('.remote-mic-muted'));
+      await waitCard(card => card && !memberRow()?.querySelector('.remote-mic-muted'));
       if (remoteCard().querySelector('.voice-volume input').value !== '25') throw new Error('Volume preference was lost on card refresh');
       const activity = new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Local speaking was not relayed')), 3000); other.once('voice-activity', event => { clearTimeout(timer); resolve(event); }); });
       document.querySelector('[data-voice="mute"]').click(); await waitSpeaking(true);
@@ -91,7 +92,7 @@ app.whenReady().then(async () => {
       await request('voice-activity', { speaking: false }); await waitSpeaking(false, other.id);
       await request('voice-activity', { speaking: true }); await waitSpeaking(true, other.id);
       await requestServer('set-member-mute', { socketId: other.id, muted: true }); await waitSpeaking(false, other.id);
-      await waitCard(card => card?.querySelector('.remote-mic-muted')?.title === '已被禁言');
+      await waitCard(card => card && memberRow()?.querySelector('.remote-mic-muted')?.title === '已被禁言');
       document.querySelector('#btnCloseSettings').click();
       remoteCard().querySelector('.remote-speaker-button').focus();
       window.cardPreviewReady = true;

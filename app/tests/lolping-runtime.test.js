@@ -23,7 +23,7 @@ function fixture(t) {
   const runtime = new LolPingRuntime({ file, helper, transportFactory, send: (...args) => sent.push(args), core: { ...core, OverlayManager: Overlay, InputBridge: Bridge } });
   return { runtime, overlays, bridges, sent, file, context: { serverId, channelId: 'main', socketId: 'alice', virtualIp:'10.144.31.1', connected: true } };
 }
-test('lolPing settings are disabled by default, normalized and persisted separately for each server', async t => {
+test('lolPing settings are disabled by default and persisted globally across servers', async t => {
   const f = fixture(t), r = f.runtime;
   assert.equal(r.get(serverId).config.enabled, false);
   await r.save(serverId, { enabled: true, volume: 999, pingDurationS: -10, allowInternet: true, wheel: ['bad'] });
@@ -31,8 +31,17 @@ test('lolPing settings are disabled by default, normalized and persisted separat
   assert.equal(config.allowInternet, undefined);
   const copy = new LolPingRuntime({ file: f.file, helper: '', send() {}, core });
   assert.deepEqual(copy.get(serverId).config, config);
-  assert.equal(copy.get('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').config.enabled, false);
+  assert.deepEqual(copy.get('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').config, config);
   assert.throws(() => r.get('../bad'));
+});
+
+test('global preferences migrate an enabled legacy server configuration', async t => {
+  const f = fixture(t), globalId = require('../lolping/runtime.cjs').GLOBAL_CONFIG_ID;
+  fs.writeFileSync(f.file, JSON.stringify({ [serverId]: { enabled: false, volume: 20 }, ['a'.repeat(36)]: { enabled: true, volume: 73 } }));
+  const runtime = new LolPingRuntime({ file: f.file, helper: '', send() {}, core });
+  assert.equal(runtime.get(globalId).config.volume, 73); assert.equal(runtime.get(globalId).config.enabled, true);
+  await runtime.save(globalId, { volume: 41 });
+  assert.equal(JSON.parse(fs.readFileSync(f.file))[globalId].volume, 41);
 });
 test('channel changes drop stale events and shutdown/restart without retaining the old hook or overlay', async t => {
   const f = fixture(t), r = f.runtime; await r.save(serverId, { enabled: true }); await r.sync(f.context);

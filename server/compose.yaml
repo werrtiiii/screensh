@@ -3,9 +3,9 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "31012:31012"
     environment:
-      PORT: "3000"
+      PORT: "31012"
       SCREENSH_STATE_FILE: /app/data/server-state.json
       # Required for a new server. Replace the empty value with a YAML block, one node per line.
       SCREENSH_EASYTIER_PEERS: ""

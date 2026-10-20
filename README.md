@@ -39,14 +39,4 @@ npm ci --prefix app
 npm test --prefix app
 npm run dev --prefix app
 ```
-客户端首页填写 `http://127.0.0.1:3000`。Windows 安装包使用 `npm run pack:win --prefix app` 构建。客户端使用服务器下发的 EasyTier 节点；新服务器没有节点部署配置时会拒绝启动。
-
-## 一条命令发布
-
-先提交需要发布的代码改动，再在项目根目录执行（将版本改为未使用的新版本）：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\release.ps1 1.4.6
-```
-
-脚本检查工作区和标签，运行客户端及服务端测试，自动同步客户端版本文件、提交、创建标签并一起推送。GitHub Actions 随后构建并发布安装包，本地不打包。若推送失败，脚本保留本地提交和标签并给出重试命令；不会覆盖已有标签。
+客户端首页可填写 `127.0.0.1`，先使用 HTTP/HTTPS 的默认端口，连接失败后再尝试 31012 端口，输入框与书签保留原地址，也可填写 `example.com:端口` 或完整 HTTP/HTTPS 地址。Windows 安装包使用 `npm run pack:win --prefix app` 构建。客户端使用服务器下发的 EasyTier 节点；新服务器没有节点部署配置时会拒绝启动。

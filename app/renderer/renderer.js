@@ -21,9 +21,15 @@ import { joinPreferredChannel } from './server-channel-preferences.mjs';
 import { avatarThumbnail } from './avatar-thumbnail.mjs';
 import { initSettingsNavigation } from './ui.js';
 import { AppPresence } from './app-presence.mjs';
+import { normalizeServerAddress, connectServerAddress } from './server-address.mjs';
+import { serverIdentity } from './server-identity.mjs';
+import { initServerInfo } from './server-info.mjs';
+import { initChat } from './chat.js';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
+initServerInfo();
+initChat({state,getSocket:()=>socket,requestServer});
 initSoundVolume();
 initStartupSettings(window.electronAPI, toast);
 const appPresence = new AppPresence({ storage: localStorage, connect: (url, options) => io(url, options) });
@@ -64,26 +70,18 @@ async function joinServer() {
   const userName = $('#userName').value.trim();
   if (!userName) { $('#userName').focus(); return toast('请输入名称', 'error'); }
   if (userName.length > 20) return toast('名称最多20个字符', 'error');
-  let serverUrl;
+  const serverAddress = $('#serverUrl').value.trim();
   try {
-    const parsed = new URL($('#serverUrl').value.trim());
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
-    serverUrl = parsed.origin;
-  } catch { return toast('请输入有效的 HTTP 或 HTTPS 服务器地址，不要附加路径', 'error'); }
-  $('#serverUrl').value = serverUrl;
-  localStorage.setItem('userName', userName); localStorage.setItem('serverUrl', serverUrl);
+    normalizeServerAddress(serverAddress);
+  } catch { return toast('请输入有效的服务器域名或 IP，可附加端口，不要附加路径', 'error'); }
+  localStorage.setItem('userName', userName); localStorage.setItem('serverUrl', serverAddress);
   state.joining = true; $('#btnConnect').disabled = true; $('#btnConnect').textContent = '连接中…';
   try {
-    const connection = connectServer();
-    await new Promise((resolve, reject) => {
-      const finish = error => { clearTimeout(timer); connection.off('connect', ready); connection.off('connect_error', failed); error ? reject(error) : resolve(); };
-      const ready = () => finish(), failed = () => finish(new Error('无法连接到服务器，请检查服务器地址、网络连接及服务器是否已启动'));
-      const timer = setTimeout(() => finish(new Error('连接服务器超时')), 12000);
-      connection.once('connect', ready); connection.once('connect_error', failed);
-      if (connection.connected) ready();
-    });
+    const { connection, url: serverUrl } = await connectServerAddress(serverAddress, url => connectServer(url, serverAddress));
     const info = await requestServer('server-info', {}, connection);
     if (info.protocol !== 2 || !/^[a-f0-9-]{36}$/.test(info.serverId)) throw new Error('请升级为支持频道的服务器');
+    if (info.channelFeatures !== 1) throw new Error('请更新频道服务器，以支持临时频道和频道密码');
+    if (info.chatVersion !== 1) throw new Error('请更新频道服务器，以支持文字聊天');
     let password = '', access;
     if (info.passwordRequired) {
       try { password = await window.electronAPI.getSavedServerPassword(serverUrl, info.serverId); }
@@ -106,20 +104,18 @@ async function joinServer() {
     access ||= await requestServer('check-access', { userName, password }, connection);
     if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
     const easytierPeers = normalizePeers(access.easytierPeers);
-    const identityKey = 'serverIdentity:' + serverUrl + ':' + info.serverId;
-    let identity = localStorage.getItem(identityKey);
-    if (!/^[a-f0-9]{64}$/.test(identity || '')) {
-      identity = Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join('');
-      localStorage.setItem(identityKey, identity);
-    }
+    const identity = serverIdentity(localStorage, info.serverId, () =>
+      Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join(''));
     rememberJoinCredentials({ userName, identity, password });
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
     const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;
     enterRoom(info.serverId); applyServerState(joined);
+    const addressIdentityKey = 'serverIdentity:' + new URL(serverUrl).origin + ':' + info.serverId;
+    if (!localStorage.getItem(addressIdentityKey)) localStorage.setItem(addressIdentityKey, identity);
     appPresence.sync({ retryRejected: true });
-    localStorage.setItem('lastConnectedServer', JSON.stringify({ url: serverUrl, userName }));
+    localStorage.setItem('lastConnectedServer', JSON.stringify({ url: serverAddress, userName }));
     try { await window.electronAPI.saveServerPassword(serverUrl, info.serverId, password); }
     catch { if (password) toast('连接成功，但服务器密码未能保存', 'error'); }
   } catch (error) { toast(error.message, 'error'); await leaveRoom(); }
@@ -239,38 +235,27 @@ $('#btnStopShare').addEventListener('click', stopSharing);
 $('#btnStopWatch').addEventListener('click', () => stopWatch({ retain: true }));
 
 // --- 信令服务器连通性检测 ---
-function testServerConnection() {
+async function testServerConnection() {
+  if ($('#btnTestServer').disabled) return;
   const url = $('#serverUrl').value.trim();
   if (!url) { $('#serverUrl').focus(); return toast('请先填写服务器地址', 'error'); }
   try {
-    const parsed = new URL(url);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
-  } catch { return toast('请输入有效的 HTTP 或 HTTPS 服务器地址，不要附加路径', 'error'); }
-  const testSocket = io(url, { transports: ['websocket', 'polling'], timeout: 5_000 });
-
+    normalizeServerAddress(url);
+  } catch { return toast('请输入有效的服务器域名或 IP，可附加端口，不要附加路径', 'error'); }
   $('#btnTestServer').textContent = '检测中...';
   $('#btnTestServer').disabled = true;
 
-  testSocket.on('connect', () => {
+  try {
+    const { connection } = await connectServerAddress(url, address => io(address, { transports: ['polling', 'websocket'], tryAllTransports: true, timeout: 5000, reconnection: false }));
     $('#serverStatus').className = 'status-dot connected';
-    testSocket.disconnect();
-    $('#btnTestServer').textContent = '检测';
-    $('#btnTestServer').disabled = false;
-  });
-
-  testSocket.on('connect_error', () => {
+    connection.disconnect();
+  } catch {
     $('#serverStatus').className = 'status-dot disconnected';
     toast('无法连接到服务器', 'error');
-    testSocket.disconnect();
+  } finally {
     $('#btnTestServer').textContent = '检测';
     $('#btnTestServer').disabled = false;
-  });
-
-  setTimeout(() => {
-    testSocket.disconnect();
-    $('#btnTestServer').textContent = '检测';
-    $('#btnTestServer').disabled = false;
-  }, 6_000);
+  }
 }
 
 $('#btnTestServer').addEventListener('click', testServerConnection);
@@ -499,7 +484,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup').forEach(el => el.style.display = '');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-chat').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
       $$('.setting-room').forEach(el => el.style.display = 'none');
@@ -509,7 +494,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup').forEach(el => el.style.display = 'none');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-chat').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');
       $$('.setting-room').forEach(el => el.style.display = '');
@@ -581,9 +566,9 @@ function renderBookmarks() {
 function addBookmark(url, name = '') {
   url = url.trim();
   if (!url) return toast('请输入服务器地址', 'error');
-  try { const parsed = new URL(url); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(); url = parsed.origin; }
-  catch { return toast('请输入有效的 HTTP 或 HTTPS 地址', 'error'); }
-  name = name.trim() || new URL(url).hostname;
+  try { normalizeServerAddress(url); }
+  catch { return toast('请输入有效的服务器域名或 IP，可附加端口，不要附加路径', 'error'); }
+  name = name.trim() || new URL(normalizeServerAddress(url)).hostname;
   const bookmarks = readBookmarks().filter(item => item.url !== url);
   const previous = readBookmarks().find(item => item.url === url);
   bookmarks.unshift({ ...previous, name, url }); saveBookmarks(bookmarks); renderBookmarks();
@@ -661,13 +646,12 @@ $('#bookmarkEditForm')?.addEventListener('submit', event => {
   const name = $('#bookmarkEditName').value.trim();
   const url = $('#bookmarkEditUrl').value.trim();
   try {
-    const parsed = new URL(url);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error();
+    normalizeServerAddress(url);
     const next = readBookmarks();
     const old = next[editingBookmarkIndex];
-    next[editingBookmarkIndex] = { ...(old?.url === parsed.origin ? old : {}), name, url: parsed.origin };
+    next[editingBookmarkIndex] = { ...(old?.url === url ? old : {}), name, url };
     saveBookmarks(next); renderBookmarks(); $('#bookmarkEditDialog').classList.add('hidden');
-  } catch { $('#bookmarkEditError').textContent = '请输入有效的 HTTP 或 HTTPS 地址，不要附加路径'; }
+  } catch { $('#bookmarkEditError').textContent = '请输入有效的域名或 IP，可附加端口，不要附加路径'; }
 });
 
 const startupServer = lastConnectedServer();

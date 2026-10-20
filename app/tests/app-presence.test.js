@@ -31,3 +31,31 @@ test('background presence verifies instance ID, keeps one connection and stops o
   assert.equal(socket.connected, false); assert.equal(socket.sent.length, 3, 'identity never sent to a different instance');
   storage.setItem('serverBookmarks', '[]'); presence.sync(); assert.equal(presence.connections.size, 0);
 });
+
+test('shorthand bookmarks match normalized identities without changing explicit standard ports', async () => {
+  const { presenceTargets } = await import('../renderer/app-presence.mjs');
+  const serverId = 'a'.repeat(36), identity = 'b'.repeat(64);
+  const storage = storageOf([
+    ['serverBookmarks', JSON.stringify([{url:'localhost'}, {url:'https://secure.test:443'}])],
+    ['serverIdentity:http://localhost:31012:' + serverId, identity],
+    ['serverIdentity:https://secure.test:' + serverId, identity],
+  ]);
+  assert.deepEqual(presenceTargets(storage), [
+    {url:'http://localhost:31012', serverId, identity},
+    {url:'https://secure.test', serverId, identity},
+  ]);
+});
+
+test('background presence uses the same migrated identity for different saved addresses', async () => {
+  const {presenceTargets} = await import('../renderer/app-presence.mjs');
+  const serverId = 'a'.repeat(36), identity = 'b'.repeat(64);
+  const storage = storageOf([
+    ['serverBookmarks', JSON.stringify([{url:'http://first.test'}, {url:'https://second.test'}])],
+    ['serverIdentity:http://first.test:' + serverId, identity],
+    ['serverIdentity:https://second.test:' + serverId, 'c'.repeat(64)],
+  ]);
+  assert.deepEqual(presenceTargets(storage), [
+    {url:'http://first.test', serverId, identity},
+    {url:'https://second.test', serverId, identity},
+  ]);
+});

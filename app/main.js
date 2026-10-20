@@ -1,4 +1,15 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, safeStorage, desktopCapturer } = require('electron');
+const { shell } = require('electron');
+ipcMain.handle('download-chat-file',(event,value)=>{
+  requireMainWindow(event);const url=new URL(value);
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||!/^\/chat-files\/[a-f0-9-]{36}$/.test(url.pathname))throw Error('无效的聊天文件地址');
+  event.sender.downloadURL(url.href);
+});
+ipcMain.handle('open-web-link',async (_event,value)=>{
+  if(typeof value!=='string'||value.length>2048)throw new Error('无效的网页地址');
+  const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('仅支持 HTTP 或 HTTPS 网页地址');
+  await shell.openExternal(url.href);
+});
 const { listCaptureSources, attachCapturePreviews } = require('./main/capture-sources');
 const path = require('path');
 const os = require('os');
@@ -141,6 +152,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
   mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
+    icon: path.join(__dirname, 'assets/branding/icon.png'),
     webPreferences: { preload: path.join(__dirname, "./preload.js"), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
   });
   trayController?.attach(mainWindow);

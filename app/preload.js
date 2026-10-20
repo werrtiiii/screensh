@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
+  openWebLink: url => ipcRenderer.invoke('open-web-link',url),
+  downloadChatFile: url => ipcRenderer.invoke('download-chat-file',url),
   getLolPing: id => ipcRenderer.invoke('lolping-get', id),
   saveLolPing: (id, config) => ipcRenderer.invoke('lolping-save', id, config),
   syncLolPing: context => ipcRenderer.invoke('lolping-sync', context),

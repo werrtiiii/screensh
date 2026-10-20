@@ -1,17 +1,18 @@
 // The caller saves a successful join's password through main-process encryption.
-export function requestPassword({ settings = false, enabled = true, connection } = {}) {
+export function requestPassword({ settings = false, enabled = true, connection, channel = false, error = '' } = {}) {
   return new Promise(resolve => {
     const modal = document.createElement('div');
     modal.className = 'modal password-modal';
     modal.innerHTML = `<form class="modal-content" role="dialog" aria-modal="true" aria-labelledby="passwordTitle">
-      <div class="modal-header"><h2 id="passwordTitle">${settings ? '服务器密码' : '请输入服务器密码'}</h2><button type="button" class="btn-close" aria-label="取消">×</button></div>
-      ${settings ? '<div class="form-group"><label class="password-toggle"><input id="passwordEnabled" type="checkbox" role="switch"> 启用服务器密码</label></div>' : ''}
+      <div class="modal-header"><h2 id="passwordTitle">${settings ? (channel ? '频道密码' : '服务器密码') : (channel ? '请输入频道密码' : '请输入服务器密码')}</h2><button type="button" class="btn-close" aria-label="取消">×</button></div>
+      ${settings ? `<div class="form-group"><label class="password-toggle"><input id="passwordEnabled" type="checkbox" role="switch"> 启用${channel ? '频道' : '服务器'}密码</label></div>` : ''}
       <div class="form-group"><label for="serverPasswordInput">${settings ? '新密码' : '密码'}</label><input id="serverPasswordInput" type="password" maxlength="128" autocomplete="off" /></div>
       ${settings ? '<div class="form-group"><label for="passwordConfirm">确认新密码</label><input id="passwordConfirm" type="password" maxlength="128" autocomplete="off" /></div>' : ''}
       <p class="password-error" role="alert" style="color:var(--danger)"></p>
       <div class="dialog-actions"><button type="button" class="btn btn-outline password-cancel">取消</button><button type="submit" class="btn btn-primary">${settings ? '保存' : '连接'}</button></div>
     </form>`;
     const previous = document.activeElement;
+    modal.querySelector('.password-error').textContent = error;
     const input = modal.querySelector('#serverPasswordInput'), toggle = modal.querySelector('#passwordEnabled'), confirm = modal.querySelector('#passwordConfirm');
     let finished = false;
     const finish = value => {

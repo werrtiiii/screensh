@@ -9,7 +9,7 @@ test('closing hides window, tray restores it, and explicit quit permits closing'
     constructor() { super(); tray = this; }
     setToolTip() {} setContextMenu(value) { menu = value; } isDestroyed() { return !!this.dead; } destroy() { this.dead = true; }
   }
-  const controller = createTrayController({ Tray, Menu: { buildFromTemplate: value => value }, nativeImage: { createFromBitmap: buffer => { assert.equal(buffer.length, 4096); return {}; } } }, { getWindow: () => win, canClose: () => quitting, quit: () => { quits++; quitting = true; } });
+  const controller = createTrayController({ Tray, Menu: { buildFromTemplate: value => value }, nativeImage: { createFromPath: file => { assert.match(file, /assets[\\/]branding[\\/]tray\.png$/); return {}; } } }, { getWindow: () => win, canClose: () => quitting, quit: () => { quits++; quitting = true; } });
   controller.attach(win); let prevented = 0;
   win.emit('close', { preventDefault: () => prevented++ }); assert.equal(hidden, 1); assert.equal(prevented, 1);
   tray.emit('double-click'); assert.equal(shown, 1); assert.equal(restored, 1); assert.equal(focused, 1);

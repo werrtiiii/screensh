@@ -15,7 +15,7 @@ ipcMain.handle('get-screens',()=>{
 let pingCalls=0;
 ipcMain.handle('ping-member',(_event,ip)=>{pingCalls++;return {ip,rttMs:ip.endsWith('.2')?32:null}});
 app.whenReady().then(async()=>{
- const {server,io}=createSignalingServer({initialPeers:'test.example:11010'});let win;const clients=[];
+ const {server,io}=createSignalingServer({initialPeers:'test.example:11010'});let win,memberWin;const clients=[];
  try{
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   win=new BrowserWindow({show:false,frame:false,width:960,height:640,webPreferences:{preload:path.join(root,'preload.js'),backgroundThrottling:false}});
@@ -24,7 +24,11 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.join(root,'renderer/index.html'));
   await run(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{};const s=await import('./signaling.js');const {state}=await import('./shared.js');document.querySelector('#serverUrl').value='http://127.0.0.1:${server.address().port}';const connection=s.connectServer();await new Promise(r=>connection.once('connect',r));const joined=await s.requestServer('join-server',{userName:'Owner',virtualIp:'10.144.11.1',identity:'${'a'.repeat(64)}',easytierPeers:['tcp://test.example:11010']});state.roomId=joined.serverId;document.querySelector('#lobby').classList.remove('active');document.querySelector('#room').classList.add('active');s.applyServerState(joined)})()`);
   assert.equal(await run(`document.querySelectorAll('.server-dot,#userCount,.user-channel').length`),0);
-  assert.equal(await run(`document.querySelector('.member-role').textContent`),'服主');
+  assert.equal(await run(`document.querySelector('#serverInfoUsers').textContent`),'1 / 100');
+  assert.equal(await run(`document.querySelector('#serverInfoChannels').textContent`),'1');
+  assert.match(await run(`document.querySelector('#serverInfoBeijing').textContent`),/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal(await run(`document.querySelector('.member-role').getAttribute('aria-label')`),'服主');
+  assert.equal(await run(`document.querySelector('.member-role').textContent`),'');
   assert.equal(await run(`!!document.querySelector('.member-role svg') && !!document.querySelector('.channel-default svg path') && getComputedStyle(document.querySelector('.channel-icon')).backgroundColor==='rgb(255, 255, 255)' && !document.querySelector('.room-label')`),true);
   await run(`document.querySelector('.card-share-button').click()`);
   await wait(`document.querySelectorAll('.screen-item').length===2 && !!document.querySelector('.screen-preview img')`);
@@ -45,7 +49,7 @@ app.whenReady().then(async()=>{
   await run(`(async()=>{const {requestServer}=await import('./signaling.js');await requestServer('set-avatar',{avatar:null});})()`);
   await wait(`!document.querySelector('#userList .me img') && !document.querySelector('.profile-avatar.has-image')`);
   await run(`document.querySelector('.channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
-  assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),3,'main channel offers rename, icon and voice bitrate settings');
+  assert.equal(await run(`document.querySelectorAll('.context-menu button').length`),4,'main channel offers rename, icon, voice bitrate and password settings');
   assert.equal(await run(`document.querySelector('.context-menu').textContent.includes('删除')`),false);
   await run(`[...document.querySelectorAll('.context-menu button')].find(b=>b.textContent==='重命名').click();document.querySelector('#channelNameInput').value='新的主频道';document.querySelector('#createChannelForm').requestSubmit()`);
   await wait(`document.querySelector('.channel-name').textContent==='新的主频道' && document.querySelector('#channelNameDisplay').textContent==='新的主频道' && document.querySelector('#channelDialog').classList.contains('hidden')`);
@@ -59,6 +63,8 @@ app.whenReady().then(async()=>{
   await run(`document.querySelector('#createChannelForm').requestSubmit()`);
   await wait(`document.querySelectorAll('.channel-button').length===2 && document.querySelectorAll('.channel-button')[1].querySelector('img')?.src === '${icon}'`);
   assert.equal(await run(`document.querySelectorAll('.channel-button')[1].querySelector('.channel-name').textContent`),'图标频道');
+  assert.equal(await run(`!!document.querySelectorAll('.channel-button')[1].querySelector('.channel-temporary svg')&&!document.querySelectorAll('.channel-button')[0].querySelector('.channel-temporary')`),true,'only temporary channels show an hourglass marker');
+  assert.equal(await run(`[...document.querySelectorAll('.channel-button')].every(button=>!button.hasAttribute('title'))`),true,'channel buttons no longer have type hover tooltips');
   assert.equal(await run(`(()=>{const event=new DragEvent('dragstart',{bubbles:true,cancelable:true});document.querySelector('.channel-icon img').dispatchEvent(event);return event.defaultPrevented;})()`),true);
   win.show();await new Promise(r=>setTimeout(r,300));
   fs.writeFileSync(path.join(root,'.runtime-probe','channel-icons-roles.png'),(await win.webContents.capturePage()).toPNG());
@@ -73,6 +79,8 @@ app.whenReady().then(async()=>{
   }
   const mainNames=`[...document.querySelectorAll('.channel-section[data-channel-id="main"] .channel-member-name')].map(n=>n.textContent)`;
   await wait(`JSON.stringify(${mainNames})==='["Owner","First","Second"]'`);
+  assert.equal(await run(`document.querySelector('#serverInfoUsers').textContent`),'3 / 100');
+  assert.equal(await run(`document.querySelector('#serverInfoChannels').textContent`),'2');
   assert.equal(await run(`!!document.querySelector('.channel-members img')`),true,'member custom avatar is displayed');
   const other=await run(`(async()=>{const {state}=await import('./shared.js');return state.channels[1].id})()`);
   await request(clients[0],'switch-channel',{channelId:other});
@@ -87,11 +95,12 @@ app.whenReady().then(async()=>{
   assert.deepEqual(await run(`copiedIps`),['10.144.11.2'],'click copies the selected member IP');
   await run(`(()=>{const ip=document.querySelector('.member-virtual-ip'),range=document.createRange();range.selectNodeContents(ip);window.getSelection().removeAllRanges();window.getSelection().addRange(range);ip.click();window.selectedIpNode=ip.firstChild;})()`);
   assert.equal(await run(`copiedIps.length`),1,'selecting text does not trigger click-to-copy');
+  const clockBefore=await run(`document.querySelector('#serverInfoBeijing').textContent`);
   await new Promise(resolve=>setTimeout(resolve,3200));
+  assert.notEqual(await run(`document.querySelector('#serverInfoBeijing').textContent`),clockBefore,'Beijing clock advances without server polling');
   assert.equal(await run(`window.getSelection().toString()==='10.144.11.2' && document.querySelector('.member-virtual-ip').firstChild===selectedIpNode`),true,'Ping refresh preserves selected IP text');
   await run(`window.getSelection().removeAllRanges()`);
-  const position=await run(`(()=>{const b=document.querySelector('#btnMemberNetwork').getBoundingClientRect(),area=document.querySelector('#mainContent').getBoundingClientRect();return {inside:b.left>=area.left&&b.right<=area.right&&b.top>=area.top&&b.bottom<=area.bottom,right:area.right-b.right,bottom:area.bottom-b.bottom}})()`);
-  assert.equal(position.inside,true);assert.ok(position.right<20&&position.bottom<20,'button is at the bottom right of the card area');
+  assert.equal(await run(`(()=>{const button=document.querySelector('#btnMemberNetwork'),settings=document.querySelector('#btnServerSettings');return button.nextElementSibling===settings&&button.parentElement.classList.contains('room-actions')})()`),true,'network button stays immediately left of server settings');
   await new Promise(resolve=>setTimeout(resolve,150));
   fs.writeFileSync(path.join(root,'.runtime-probe','member-network.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.querySelector('#btnCloseMemberNetwork').click()`);
@@ -103,13 +112,14 @@ app.whenReady().then(async()=>{
   await run(`document.querySelectorAll('.channel-members .channel-member')[1].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200}))`);
   assert.deepEqual(await run(`[...document.querySelectorAll('.context-menu button')].map(n=>n.textContent)`),['设为管理员','踢出服务器','禁言']);
   await run(`[...document.querySelectorAll('.context-menu button')].find(n=>n.textContent==='设为管理员').click()`);
-  await wait(`[...document.querySelectorAll('#userList li')].some(n=>n.querySelector('.member-name').textContent==='Second' && n.querySelector('.member-role').textContent==='管理员')`);
+  await wait(`[...document.querySelectorAll('#userList li')].some(n=>n.querySelector('.member-name').textContent==='Second' && n.querySelector('.member-role').getAttribute('aria-label')==='管理员')`);
   assert.deepEqual(await run(mainNames),['Owner','Second','First'],'role changes do not reorder channel members');
   fs.writeFileSync(path.join(root,'.runtime-probe','channel-member-list.png'),(await win.webContents.capturePage()).toPNG());
   await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');updateUserList(state.serverUsers.map(u=>({...u,role:'member'})));document.querySelectorAll('.channel-member')[1].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200}));})()`);
   assert.equal(await run(`!!document.querySelector('.context-menu')`),false,'ordinary members do not see an empty menu');
-  const overflow=await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const me=state.serverUsers[0];updateUserList([me,...Array.from({length:60},(_,i)=>({...me,socketId:'extra-'+i,name:'Member '+i,role:'member',channelJoinedOrder:i+100}))]);const list=document.querySelector('#channelList');list.scrollTop=list.scrollHeight;const last=list.querySelector('.channel-member:last-child').getBoundingClientRect(),bounds=list.getBoundingClientRect(),profile=document.querySelector('#room .profile-bar').getBoundingClientRect();const result={scrolls:list.scrollHeight>list.clientHeight,lastVisible:last.bottom<=bounds.bottom+1,aboveProfile:bounds.bottom<=profile.top};updateUserList(state.serverUsers);return result;})()`);
+  const overflow=await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const me=state.serverUsers[0];updateUserList([me,...Array.from({length:60},(_,i)=>({...me,socketId:'extra-'+i,name:'Member '+i,role:'member',channelJoinedOrder:i+100}))]);const list=document.querySelector('#channelList');list.scrollTop=list.scrollHeight;const memberList=list.querySelector('.channel-members');memberList.scrollTop=memberList.scrollHeight;const last=list.querySelector('.channel-member:last-child').getBoundingClientRect(),bounds=list.getBoundingClientRect(),profile=document.querySelector('#room .profile-bar').getBoundingClientRect();const result={scrolls:memberList.scrollHeight>memberList.clientHeight,lastVisible:last.bottom<=bounds.bottom+1,aboveProfile:bounds.bottom<=profile.top};updateUserList(state.serverUsers);return result;})()`);
   assert.deepEqual(overflow,{scrolls:true,lastVisible:true,aboveProfile:true},'long member lists scroll without covering profile controls: '+JSON.stringify(overflow));
+  const serverInfoLayout=await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const me=state.serverUsers[0];updateUserList([me,...Array.from({length:60},(_,i)=>({...me,socketId:'stats-extra-'+i,name:'Member '+i,role:'member'}))]);const list=document.querySelector('#userList'),footer=document.querySelector('#serverInfo'),r=footer.getBoundingClientRect();const bounds=list.getBoundingClientRect();const result=list.scrollHeight>list.clientHeight&&r.bottom<=innerHeight+1&&r.top>=bounds.bottom-1;const detail={result,height:list.clientHeight,scroll:list.scrollHeight,footerTop:r.top,footerBottom:r.bottom,listBottom:bounds.bottom,viewport:innerHeight};updateUserList(state.serverUsers);return detail;})()`);assert.equal(serverInfoLayout.result,true,JSON.stringify(serverInfoLayout));
   // Modal bounds and bottom controls remain reachable at minimum window size.
   for(const id of ['settingsModal','serverSettingsDialog','serverPeersDialog','bookmarkEditDialog','channelDialog','channelBitrateDialog','screenPicker','memberNetworkDialog']){
    await run(`document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));document.querySelector('#${id}').classList.remove('hidden');document.querySelectorAll('#${id} .form-group').forEach(n=>n.style.display='')`);
@@ -166,13 +176,68 @@ app.whenReady().then(async()=>{
   await wait(`[...document.querySelectorAll('#userList .member-offline')].some(row=>row.querySelector('.member-name').textContent==='First')`);
   assert.equal(await run(`[...document.querySelectorAll('.channel-member-name')].some(node=>node.textContent==='First')`),false,'offline history does not become a channel member');
   await run(`[...document.querySelectorAll('#userList .member-offline')].find(row=>row.querySelector('.member-name').textContent==='First').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:700,clientY:220}))`);
-  assert.deepEqual(await run(`[...document.querySelectorAll('.context-menu button')].map(node=>node.textContent)`),['删除成员配置']);
+  assert.deepEqual(await run(`[...document.querySelectorAll('.context-menu button')].map(node=>node.textContent)`),['设为管理员','删除成员配置']);
+  await run(`document.querySelector('.context-menu button').click()`);
+  await wait(`[...document.querySelectorAll('#userList li')].some(row=>row.querySelector('.member-name').textContent==='First'&&row.querySelector('.member-role').getAttribute('aria-label')==='管理员')`);
+  await run(`[...document.querySelectorAll('#userList li')].find(row=>row.querySelector('.member-name').textContent==='First').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:700,clientY:220}));document.querySelector('.context-menu button').click()`);
+  await wait(`[...document.querySelectorAll('#userList li')].some(row=>row.querySelector('.member-name').textContent==='First'&&row.querySelector('.member-role').getAttribute('aria-label')==='成员')`);
+  await run(`[...document.querySelectorAll('#userList li')].find(row=>row.querySelector('.member-name').textContent==='First').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:700,clientY:220}))`);
   await new Promise(resolve=>setTimeout(resolve,200));
   fs.writeFileSync(path.join(root,'.runtime-probe','member-history-delete.png'),(await win.webContents.capturePage()).toPNG());
-  await run(`document.querySelector('.context-menu button').click()`);
+  await run(`[...document.querySelectorAll('.context-menu button')].find(node=>node.textContent==='删除成员配置').click()`);
   await wait(`![...document.querySelectorAll('#userList .member-name')].some(node=>node.textContent==='First')`);
-  console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true,soundVolume:true}));
+  await run(`document.querySelector('#btnAddChannel').click();document.querySelector('#channelNameInput').value='加密持久频道';document.querySelector('#channelTypeInput').checked=false;document.querySelector('#channelPasswordEnabled').click();document.querySelector('#channelCreatePassword').value='ui-secret';document.querySelector('#channelCreatePasswordConfirm').value='ui-secret';document.querySelector('#createChannelForm').requestSubmit()`);
+  await wait(`[...document.querySelectorAll('.channel-button')].some(button=>button.querySelector('.channel-name').textContent==='加密持久频道'&&button.querySelector('.channel-lock'))`);
+  assert.equal(await run(`[...document.querySelectorAll('.channel-button')].find(button=>button.querySelector('.channel-name').textContent==='加密持久频道').querySelector('.channel-temporary')===null`),true,'turning the temporary switch off creates a persistent channel');
+  const lockedId=await run(`(async()=> (await import('./shared.js')).state.channels.find(channel=>channel.name==='加密持久频道').id)()`);
+  memberWin=new BrowserWindow({show:false,frame:false,width:960,height:640,webPreferences:{preload:path.join(root,'preload.js'),backgroundThrottling:false}});
+  await memberWin.loadFile(path.join(root,'renderer/index.html'));
+  const memberRun=code=>memberWin.webContents.executeJavaScript(code,true);
+  const memberWait=async code=>{for(let i=0;i<150;i++){if(await memberRun(code))return;await new Promise(r=>setTimeout(r,30));}throw Error('Member UI timeout: '+code)};
+  await memberRun(`(async()=>{await import('./renderer.js');window.channelVoice.sync=()=>{};const s=await import('./signaling.js');const {state}=await import('./shared.js');document.querySelector('#serverUrl').value='http://127.0.0.1:${server.address().port}';const connection=s.connectServer();await new Promise(r=>connection.once('connect',r));const joined=await s.requestServer('join-server',{userName:'Member UI',virtualIp:'10.144.11.9',identity:'${'9'.repeat(64)}',easytierPeers:['tcp://test.example:11010']});state.roomId=joined.serverId;document.querySelector('#lobby').classList.remove('active');document.querySelector('#room').classList.add('active');s.applyServerState(joined)})()`);
+  assert.equal(await memberRun(`!document.querySelector('#btnAddChannel').classList.contains('hidden')`),true,'ordinary members can create channels');
+  await memberRun(`document.querySelector('.channel-section[data-channel-id="${lockedId}"] .channel-button').click()`);
+  await memberWait(`!!document.querySelector('.password-modal')`);
+  assert.equal(await memberRun(`document.querySelector('#passwordTitle').textContent`),'请输入频道密码');
+  await memberRun(`document.querySelector('.password-cancel').click()`);
+  await memberWait(`(async()=>!(await import('./shared.js')).state.switchingChannel)()`);
+  assert.equal(await memberRun(`(async()=> (await import('./shared.js')).state.channelId)()`),'main','canceling a password prompt keeps the current channel');
+  await memberRun(`document.querySelector('.channel-section[data-channel-id="${lockedId}"] .channel-button').click()`);
+  await memberWait(`!!document.querySelector('.password-modal')`);
+  await memberRun(`document.querySelector('#serverPasswordInput').value='wrong';document.querySelector('.password-modal form').requestSubmit()`);
+  await memberWait(`document.querySelector('.password-error')?.textContent==='频道密码错误'`);
+  await memberRun(`document.querySelector('#serverPasswordInput').value='ui-secret';document.querySelector('.password-modal form').requestSubmit()`);
+  await memberWait(`(async()=> (await import('./shared.js')).state.channelId==='${lockedId}'&&!(await import('./shared.js')).state.switchingChannel)()`);
+  await memberRun(`document.querySelector('#btnAddChannel').click()`);
+  assert.equal(await memberRun(`document.querySelector('#channelTypeInput').checked&&document.querySelector('#channelTypeInput').disabled`),true,'member creation keeps the temporary switch enabled and cannot turn it off');
+  assert.equal(await memberRun(`document.querySelector('#channelTypeInput').getAttribute('role')==='switch'&&getComputedStyle(document.querySelector('#channelTypeInput')).appearance==='none'`),true,'temporary control uses the shared sliding switch style');
+  memberWin.show();await new Promise(resolve=>setTimeout(resolve,150));await memberRun(`document.querySelector('.channel-type-setting .help-tip').focus()`);await new Promise(resolve=>setTimeout(resolve,180));
+  assert.equal(await memberRun(`getComputedStyle(document.querySelector('.channel-type-setting .help-tip'),'::after').opacity==='1'&&getComputedStyle(document.querySelector('.channel-type-setting .help-tip'),'::after').content.includes('无人后5分钟自动删除')`),true,'question mark exposes the temporary expiry explanation on focus');
+  await memberRun(`document.querySelector('#channelNameInput').value='成员临时频道';document.querySelector('#channelPasswordEnabled').click();document.querySelector('#channelCreatePassword').value='own-secret';document.querySelector('#channelCreatePasswordConfirm').value='own-secret'`);
+  assert.equal(await memberRun(`(()=>{const modal=document.querySelector('#createChannelForm'),body=modal.querySelector('.channel-dialog-body'),button=document.querySelector('#btnCreateChannel');return modal.getBoundingClientRect().height<=innerHeight-24&&getComputedStyle(body).overflowY==='auto'&&button.getBoundingClientRect().bottom<=modal.getBoundingClientRect().bottom})()`),true,'password creation fields scroll while the submit button stays visible at minimum window size');
+  memberWin.show(); await new Promise(resolve=>setTimeout(resolve,200));
+  fs.writeFileSync(path.join(root,'.runtime-probe','channel-create-password.png'),(await memberWin.webContents.capturePage()).toPNG());
+  await memberRun(`document.querySelector('#createChannelForm').requestSubmit()`);
+  await memberWait(`[...document.querySelectorAll('.channel-name')].some(node=>node.textContent==='成员临时频道')`);
+  const ownId=await memberRun(`(async()=> (await import('./shared.js')).state.channels.find(channel=>channel.name==='成员临时频道').id)()`);
+  assert.equal(await memberRun(`!!document.querySelector('.channel-section[data-channel-id="${ownId}"] .channel-temporary')&&!!document.querySelector('.channel-section[data-channel-id="${ownId}"] .channel-lock')`),true,'temporary and password markers can appear together');
+  await memberRun(`document.querySelector('.channel-section[data-channel-id="${ownId}"] .channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
+  assert.deepEqual(await memberRun(`[...document.querySelectorAll('.context-menu button')].map(button=>button.textContent)`),['修改或取消密码']);
+  await memberRun(`document.querySelector('.context-menu button').click()`);
+  await memberWait(`document.querySelector('#passwordTitle')?.textContent==='频道密码'`);
+  await memberRun(`document.querySelector('#passwordEnabled').click();document.querySelector('.password-modal form').requestSubmit()`);
+  await memberWait(`!document.querySelector('.channel-section[data-channel-id="${ownId}"] .channel-lock')`);
+  await memberRun(`document.querySelector('.channel-section[data-channel-id="${lockedId}"] .channel-button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:200}))`);
+  assert.equal(await memberRun(`!!document.querySelector('.context-menu')`),false,'members cannot change another creator\'s password');
+  assert.equal(await run(`(async()=>{const {state}=await import('./shared.js'),{updateUserList}=await import('./room.js');const original=state.serverUsers[0],channel=state.channels[0];
+    const users=Array.from({length:11},(_,index)=>({...original,socketId:index?'scroll-test-'+index:original.socketId,memberId:'scroll-member-'+index,name:'Member '+index,channelId:channel.id,channelJoinedOrder:index}));
+    updateUserList(users.slice(0,10));let members=document.querySelector('.channel-members');if(members.classList.contains('channel-members-scrollable'))throw Error('ten members should not need an inner scrollbar');
+    state.channels=[channel,...Array.from({length:24},(_,index)=>({id:'scroll-channel-'+index,name:'Channel '+index}))];updateUserList(users);
+    members=document.querySelector('.channel-members-scrollable');const channels=document.querySelector('#channelList');if(!members||members.scrollHeight<=members.clientHeight||channels.scrollHeight<=channels.clientHeight)throw Error('member or channel overflow is not scrollable');
+    members.scrollTop=20;channels.scrollTop=40;const before=[members.scrollTop,channels.scrollTop];updateUserList(users);
+    return before[0]>0&&before[1]>0&&document.querySelector('.channel-members-scrollable').scrollTop===before[0]&&channels.scrollTop===before[1];})()`),true,'eleven members gain a nested scrollbar and state refreshes preserve both scroll positions');
+  console.log('CHANNEL_UI_OK',JSON.stringify({createIcon:true,resetIcon:true,defaultIcon:true,roleBadges:true,noCountsOrDot:true,modalsFit:true,soundVolume:true,temporaryCreation:true,passwordPrompt:true,passwordPermissions:true,lockIndicator:true,memberScroll:true}));
  }catch(error){console.error(error.stack);process.exitCode=1;}
- finally{clients.forEach(client=>client.disconnect());win?.destroy();await new Promise(r=>io.close(r));app.exit(process.exitCode||0)}
+ finally{clients.forEach(client=>client.disconnect());memberWin?.destroy();win?.destroy();await new Promise(r=>io.close(r));app.exit(process.exitCode||0)}
 });
 
