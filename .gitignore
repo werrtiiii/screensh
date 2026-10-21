@@ -13,6 +13,7 @@ release/
 
 # Native binaries, drivers and compiler/debug outputs
 *.exe
+!app/res/easytier-cli.exe
 *.dll
 *.node
 *.sys

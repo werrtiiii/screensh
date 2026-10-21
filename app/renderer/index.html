@@ -109,8 +109,8 @@
             <form id="chatComposer" class="chat-composer">
               <div class="chat-toolbar" role="toolbar" aria-label="文字格式"><button type="button" data-before="**" data-after="**" aria-label="加粗"><b>B</b></button><button type="button" data-before="*" data-after="*" aria-label="斜体"><i>I</i></button><button type="button" data-before="~~" data-after="~~" aria-label="删除线"><s>S</s></button><button type="button" data-before="__" data-after="__" aria-label="下划线"><u>U</u></button><button id="chatInsertLink" type="button" aria-label="插入网页链接">↗</button><button type="button" data-before="`" data-after="`" aria-label="代码">&lt;/&gt;</button><button type="button" data-before="- " aria-label="列表">☷</button><button type="button" data-before="> " aria-label="引用">❞</button><button type="button" data-before="## " aria-label="标题">H</button></div>
               <div id="chatLinkFields" class="chat-link-fields hidden"><input id="chatLinkInput" type="text" placeholder="https://example.com" aria-label="网页地址" /><button id="chatConfirmLink" type="button" class="btn btn-outline btn-sm">插入</button></div>
-              <div id="chatAttachment" class="chat-attachment hidden"><span></span><button id="chatRemoveAttachment" type="button" aria-label="移除图片">×</button></div>
-              <div class="chat-input-row"><textarea id="chatInput" rows="1" maxlength="8000" placeholder="发送消息" aria-label="消息内容"></textarea><div class="chat-send-tools"><details id="chatEmoji" class="chat-emoji"><summary aria-label="表情">☺</summary><div class="chat-emoji-panel"></div></details><button id="chatChooseImage" type="button" aria-label="发送文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9M7 14l8-8"/></svg></button><input id="chatImageInput" type="file" hidden /><button id="chatSend" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9-4-9ZM7 12h15"/></svg></button></div></div>
+              <div id="chatAttachment" class="chat-attachment hidden" aria-label="待发送附件"></div>
+              <div class="chat-input-row"><textarea id="chatInput" rows="1" maxlength="8000" placeholder="发送消息" aria-label="消息内容"></textarea><div class="chat-send-tools"><details id="chatEmoji" class="chat-emoji"><summary aria-label="表情">☺</summary><div class="chat-emoji-panel"></div></details><button id="chatChooseImage" type="button" aria-label="发送文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9M7 14l8-8"/></svg></button><input id="chatImageInput" type="file" multiple hidden /><button id="chatSend" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9-4-9ZM7 12h15"/></svg></button></div></div>
             </form>
           </section>
         </div>
@@ -136,7 +136,7 @@
     <div id="memberNetworkDialog" class="modal hidden">
       <div class="modal-content member-network-panel" role="dialog" aria-modal="true" aria-label="成员 IP 和网络延迟">
         <div class="modal-header" style="justify-content:flex-end"><button id="btnCloseMemberNetwork" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <table class="member-network-table"><thead><tr><th>成员</th><th>虚拟 IP</th><th>延迟（Ping）</th></tr></thead><tbody id="memberNetworkRows"></tbody></table>
+        <table class="member-network-table"><thead><tr><th>成员</th><th>虚拟 IP</th><th>延迟</th><th>路由</th><th>协议</th></tr></thead><tbody id="memberNetworkRows"></tbody></table>
         <details id="voiceDiagnostics" class="voice-diagnostics"><summary>语音连接统计</summary><div class="voice-diagnostics-body"></div></details>
       </div>
     </div>
@@ -178,6 +178,13 @@
         <form id="serverChatSettingsForm" class="server-owner-setting chat-retention-form"><h3>服务器聊天记录 <button id="serverChatHelp" type="button" class="help-tip" aria-label="聊天保存说明" data-tooltip="0 表示不限制，超过任一上限时删除最早的记录及图片。">?</button></h3><div class="chat-retention-fields"><label>保存天数<input id="serverChatDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="serverChatMB" type="number" min="0" max="1048576" value="512" /></label></div><span id="serverChatUsage" class="hidden"></span><div class="dialog-actions"><button id="serverChatClear" type="button" class="btn btn-outline btn-sm">清除服务器记录</button><button type="submit" class="btn btn-primary btn-sm">保存</button></div></form>
         </div>
       </div>
+    </div>
+    <div id="easyTierSettingsDialog" class="modal hidden">
+      <form id="easyTierSettingsForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="easyTierSettingsTitle">
+        <div class="modal-header"><h2 id="easyTierSettingsTitle">EasyTier 高级设置</h2><button id="btnCloseEasyTierSettings" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="easytier-settings-body"><p class="easytier-settings-note">仅保存在本机，下次连接服务器时生效。</p><div id="easyTierOptions" class="easytier-options"></div><p id="easyTierSettingsError" class="dialog-error" role="alert"></p></div>
+        <div class="dialog-actions"><button id="easyTierOfficialDocs" type="button" class="btn btn-outline btn-sm">官方说明</button><button id="easyTierReset" type="button" class="btn btn-outline btn-sm">恢复默认</button><button id="easyTierSave" type="submit" class="btn btn-primary btn-sm">保存</button></div>
+      </form>
     </div>
     <div id="lolPingDialog" class="modal hidden">
       <form id="lolPingForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="lolPingTitle">
@@ -260,6 +267,7 @@
             <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
           <div class="form-group setting-lolping"><div class="server-setting-row"><div><label for="lolPingEnabled">lolPing</label><small id="lolPingStatus">本机可用，进入频道后与成员共享</small></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div></div>
+          <div class="form-group setting-easytier"><div class="server-setting-row"><div><label>EasyTier 组网</label><small>本机设置，下次连接服务器时生效</small></div><button id="btnEasyTierAdvanced" type="button" class="btn btn-outline btn-sm">高级设置</button></div><div class="server-setting-row ipv6-network-setting"><div><label>IPv6 网络 <button type="button" class="help-tip" data-tooltip="用于提高 P2P 连接成功率。尝试开启当前活动物理网卡的 IPv6 协议，并检测公网 IPv6 连通性。需要路由器和运营商支持，无法保证直连成功；启用网卡协议可能短暂重连网络。">?</button></label><small>尝试启用当前网络的 IPv6 并查看结果</small></div><button id="btnTryIpv6" type="button" class="btn btn-outline btn-sm">尝试启用 IPv6</button></div><div id="ipv6Result" class="ipv6-result hidden" role="status" aria-live="polite"></div></div>
           <div class="form-group setting-chat"><label class="password-toggle"><input id="chatCacheEnabled" type="checkbox" role="switch" checked />保存本地聊天记录</label><div class="chat-retention-fields"><label>保存天数<input id="chatCacheDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="chatCacheMB" type="number" min="0" max="1048576" value="256" /></label></div><small>仅管理本机保存的记录，0 表示不限制；服务器清理不影响本地记录。</small><div class="dialog-actions"><button id="chatCacheClearAll" type="button" class="btn btn-outline btn-sm">清除全部本地记录</button><button id="chatCacheSave" type="button" class="btn btn-primary btn-sm">保存</button></div><div id="chatCacheServers" class="chat-cache-servers"></div></div>
           <div class="form-group setting-voice">
             <label for="voiceMicrophone">麦克风</label>

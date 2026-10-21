@@ -198,3 +198,26 @@ input[type="range"] { accent-color: var(--primary); cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.setting-easytier .server-setting-row { border:0; padding:0; gap:12px; }
+.setting-easytier small { color:var(--text2); font-size:11px; }
+.setting-easytier .ipv6-network-setting { margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+.ipv6-network-setting > .btn { flex-shrink:0; }
+.ipv6-result { margin-top:10px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text2); font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.ipv6-result[data-state="success"] { color:var(--primary); }
+.ipv6-result[data-state="error"] { color:var(--danger); }
+#easyTierSettingsDialog { z-index:1150; }
+#easyTierSettingsForm { width:min(850px,calc(100vw - 32px)); display:flex; flex-direction:column; overflow:hidden; }
+.easytier-settings-body { min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+.easytier-settings-note { color:var(--text2); font-size:12px; margin-bottom:14px; }
+.easytier-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px 12px; }
+.easytier-option { display:grid; grid-template-columns:minmax(0,1fr) 36px 18px; gap:8px; align-items:center; padding:10px 2px; border-bottom:1px solid var(--border); }
+.easytier-option > label { font-size:12px; line-height:1.4; margin:0; cursor:pointer; }
+.easytier-option > input { margin:0; }
+.easytier-option > .help-tip { margin:0; }
+.easytier-option > .help-tip::after { display:none; }
+.easytier-option.unavailable > label { color:var(--text2); cursor:default; }
+.easytier-help-tooltip { position:fixed; z-index:1600; width:min(320px,calc(100vw - 24px)); padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); color:var(--text); font-size:12px; line-height:1.6; box-shadow:var(--shadow); pointer-events:none; }
+#easyTierSettingsForm > .dialog-actions { flex-shrink:0; margin-top:16px; }
+@media(max-width:800px){.easytier-options{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:520px){.easytier-options{grid-template-columns:1fr;}}

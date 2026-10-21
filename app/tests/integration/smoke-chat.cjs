@@ -9,8 +9,8 @@ ipcMain.handle('open-web-link',(_event,url)=>url);
 let downloadedUrl;ipcMain.handle('download-chat-file',(_event,url)=>{downloadedUrl=url;});
 app.whenReady().then(async()=>{
   const {server,io}=createSignalingServer({stateFile:path.join(profile,'server-state.json'),initialPeers:'test.example:11010'}),windows=[];
-  let delayedChatEvent=null,releaseChatEvent=null;
-  io.on('connection',socket=>socket.use((packet,next)=>{if(packet[0]===delayedChatEvent){delayedChatEvent=null;releaseChatEvent=next;}else next();}));
+  let delayedChatEvent=null,delayedChatName=null,releaseChatEvent=null;
+  io.on('connection',socket=>socket.use((packet,next)=>{if(packet[0]===delayedChatEvent&&(!delayedChatName||packet[1]?.name===delayedChatName)){delayedChatEvent=null;delayedChatName=null;releaseChatEvent=next;}else next();}));
   try{
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     async function client(name,index){
@@ -53,7 +53,7 @@ app.whenReady().then(async()=>{
     assert.equal(local.records.messages.length,3);assert.ok(local.usage[0].bytes>0);
     const reader=new BrowserWindow({show:false,webPreferences:{preload:path.join(root,'preload.js')}});windows.push(reader);await reader.loadFile(path.join(root,'renderer/index.html'));
     assert.equal(await reader.webContents.executeJavaScript(`(async()=>{const cache=await import('./chat-cache.mjs');return (await cache.readChatCache('${local.server}')).messages.length})()`),3,'a new window restores persisted local messages');reader.destroy();windows.splice(windows.indexOf(reader),1);
-    await host.run(`document.querySelector('#btnSettings').click()`);await host.wait(`document.querySelectorAll('.settings-navigation button').length===5`);
+    await host.run(`document.querySelector('#btnSettings').click()`);await host.wait(`document.querySelectorAll('.settings-navigation button').length===6`);
     await host.wait(`document.querySelector('#chatCacheServers').textContent.includes('0091 Server')`);
     await host.run(`document.querySelector('#chatCacheServers button').click()`);await host.wait(`!!document.querySelector('.chat-confirm-dialog')`);await host.run(`document.querySelector('.chat-confirm-dialog [data-confirm]').click()`);
     await host.wait(`document.querySelector('#chatCacheServers').children.length===0`);
@@ -139,7 +139,7 @@ app.whenReady().then(async()=>{
     fs.writeFileSync(path.join(profile,'chat-outside.png'),(await host.window.webContents.capturePage()).toPNG());
     const mislabeled=process.env.CHAT_TEST_IMAGE?fs.readFileSync(process.env.CHAT_TEST_IMAGE).toString('base64'):gif.split(',')[1];
     await peer.run(`(()=>{const files=new DataTransfer();files.items.add(new File([Uint8Array.from(atob(${JSON.stringify(mislabeled)}),c=>c.charCodeAt(0))],'sticker.jpg',{type:'image/jpeg'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));})()`);
-    await peer.wait(`document.querySelector('#chatAttachment img')?.src.startsWith('data:image/gif;')`);
+    await peer.wait(`document.querySelector('#chatAttachment img')?.src.startsWith('blob:')`);
     await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);
     await host.wait(`!!document.querySelector('.chat-message-image[alt="sticker.gif"]')`);
     assert.equal(await host.run(`(async()=>{const cache=await import('./chat-cache.mjs'),id=document.querySelector('.chat-message-image[alt="sticker.gif"]').dataset.messageId;const data=await(await import('./signaling.js')).requestServer('chat-image',{id});return data.data===${JSON.stringify('data:image/gif;base64,'+mislabeled)}})()`),true,'GIF bytes survive a wrong JPEG extension and MIME without rasterizing animation');
@@ -162,7 +162,7 @@ app.whenReady().then(async()=>{
     await peer.wait(`!document.querySelector('#chatSend').disabled`);
     const videoBytes=fs.readFileSync(path.join(root,'../server/tests/fixtures/chat-video.mp4'));
     await peer.run(`(()=>{const files=new DataTransfer();files.items.add(new File([Uint8Array.from(atob('${videoBytes.toString('base64')}'),c=>c.charCodeAt(0))],'preview.mp4',{type:'video/mp4'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));})()`);
-    await peer.wait(`document.querySelector('#chatAttachment span').textContent==='preview.mp4'`);await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);
+    await peer.wait(`document.querySelector('#chatAttachment span')?.textContent==='preview.mp4'`);await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);
     await host.wait(`!!document.querySelector('.chat-video-preview')`);await host.run(`document.querySelector('.chat-video-preview').scrollIntoView({block:'center'})`);
     await host.wait(`document.querySelector('.chat-video-preview img').naturalWidth===320`);
     const videoId=await host.run(`document.querySelector('.chat-video-preview').dataset.messageId`);
@@ -174,7 +174,59 @@ app.whenReady().then(async()=>{
     await new Promise(resolve=>setTimeout(resolve,250));
     fs.writeFileSync(path.join(root,'.runtime-probe','chat-video-player.png'),(await host.window.webContents.capturePage()).toPNG());
     await host.run(`(async()=>{await(await import('./signaling.js')).requestServer('chat-recall',{id:'${videoId}'})})()`);await host.wait(`!document.querySelector('.chat-video-dialog')&&!document.querySelector('.chat-video-preview')`);
-    console.log('CHAT_UI_OK',JSON.stringify({serverWide:true,richText:true,safeHtml:true,gif:true,webp:true,imagePreview:true,outsideLayout:true,inChannelLayout:true,cache:true,cachePersistence:true,cacheRetention:true,localClear:true,serverClear:true,avatars:true,files:true,recall:true,resize:true,linkDismiss:true,mp4Cover:true,mp4Playback:true,mp4Seek:true}));
+    const batchBefore=await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).count})()`);
+    await peer.run(`(()=>{
+      window.batchFiles=(names)=>{const files=new DataTransfer();for(const name of names){let bytes,type;if(name.endsWith('.gif')){bytes=Uint8Array.from(atob('${gif.split(',')[1]}'),c=>c.charCodeAt(0));type='image/gif';}else{const canvas=document.createElement('canvas');canvas.width=80;canvas.height=50;canvas.getContext('2d').fillRect(0,0,80,50);type=name.endsWith('.webp')?'image/webp':'image/png';bytes=Uint8Array.from(atob(canvas.toDataURL(type).split(',')[1]),c=>c.charCodeAt(0));}files.items.add(new File([bytes],name,{type}));}return files;};
+      const input=document.querySelector('#chatImageInput');input.files=batchFiles(['select-a.png','select-b.gif']).files;input.dispatchEvent(new Event('change'));
+      input.files=batchFiles(['remove-me.png']).files;input.dispatchEvent(new Event('change'));
+      document.querySelector('#chatComposer').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:batchFiles(['drop-a.webp','drop-b.gif'])}));
+      const clipboard=batchFiles(['paste-a.gif','paste-b.png']);clipboard.setData('text/plain','Batch caption');document.querySelector('#chatComposer').dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:clipboard}));
+    })()`);
+    await peer.wait(`document.querySelectorAll('.chat-attachment-item').length===7`);
+    assert.equal(await peer.run(`document.querySelector('#chatImageInput').multiple&&document.querySelector('#chatInput').value==='Batch caption'`),true,'multi-file input and pasted text coexist');
+    await peer.run(`[...document.querySelectorAll('.chat-attachment-item')].find(item=>item.textContent.includes('remove-me.png')).querySelector('button').click()`);
+    assert.deepEqual(await peer.run(`[...document.querySelectorAll('.chat-attachment-item span')].map(node=>node.textContent)`),['select-a.png','select-b.gif','drop-a.webp','drop-b.gif','paste-a.gif','paste-b.png']);
+    peer.window.show();peer.window.focus();await new Promise(resolve=>setTimeout(resolve,150));fs.writeFileSync(path.join(root,'.runtime-probe','chat-multiple-attachments.png'),(await peer.window.webContents.capturePage()).toPNG());
+    await peer.run(`document.querySelector('#chatInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))`);
+    await peer.wait(`document.querySelector('#chatAttachment').classList.contains('hidden')&&!document.querySelector('#chatSend').disabled`);
+    const batch=await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).messages.at(-1)})()`);
+    assert.deepEqual(batch.attachments.map(item=>item.name),['select-a.png','select-b.gif','drop-a.webp','drop-b.gif','paste-a.gif','paste-b.png']);
+    assert.equal(batch.text,'Batch caption','caption and every image belong to one message');
+    assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).count})()`),batchBefore+1);
+    await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-media-multiple')?.children.length===6`);
+    await peer.run(`document.querySelector('.chat-message[data-message-id="${batch.id}"]').scrollIntoView({block:'start'})`);peer.window.show();peer.window.focus();await new Promise(resolve=>setTimeout(resolve,250));
+    fs.writeFileSync(path.join(root,'.runtime-probe','chat-combined-message.png'),(await peer.window.webContents.capturePage()).toPNG());
+    for(let index=0;index<batch.attachments.length;index++)if(batch.attachments[index].name.endsWith('.gif'))assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-image',{id:'${batch.id}',index:${index}})).data})()`),gif,'batch GIF retains original bytes');
+    delayedChatEvent='chat-upload-start';delayedChatName='retry-b.gif';releaseChatEvent=null;
+    await peer.run(`(()=>{const input=document.querySelector('#chatImageInput');input.files=batchFiles(['retry-a.gif','retry-b.gif','retry-c.gif']).files;input.dispatchEvent(new Event('change'));document.querySelector('#chatComposer').requestSubmit()})()`);
+    for(let i=0;i<150&&!releaseChatEvent;i++)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(releaseChatEvent,'batch reaches second attachment');
+    await peer.run(`document.querySelector('#chatCancelUpload').click()`);await peer.wait(`!document.querySelector('#chatSend').disabled`);
+    assert.deepEqual(await peer.run(`[...document.querySelectorAll('.chat-attachment-item span')].map(node=>node.textContent)`),['retry-a.gif','retry-b.gif','retry-c.gif'],'cancel retains the entire unpublished message');
+    releaseChatEvent();releaseChatEvent=null;await new Promise(resolve=>setTimeout(resolve,100));
+    await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);await peer.wait(`document.querySelector('#chatAttachment').classList.contains('hidden')&&!document.querySelector('#chatSend').disabled`);
+    const retried=await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).messages.filter(message=>message.attachments?.some(item=>item.name.startsWith('retry-'))).map(message=>message.attachments.map(item=>item.name))})()`);
+    assert.deepEqual(retried,[['retry-a.gif','retry-b.gif','retry-c.gif']],'retry publishes exactly one message with all attachments');
+    await peer.run(`(()=>{const files=batchFiles(['mixed.gif']);files.items.add(new File(['mixed file contents'],'mixed.txt',{type:'text/plain'}));files.items.add(new File([Uint8Array.from(atob('${videoBytes.toString('base64')}'),c=>c.charCodeAt(0))],'mixed.mp4',{type:'video/mp4'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));document.querySelector('#chatComposer').requestSubmit()})()`);
+    await peer.wait(`document.querySelector('#chatAttachment').classList.contains('hidden')&&!document.querySelector('#chatSend').disabled`);
+    const mixedId=await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).messages.at(-1).id})()`);
+    await host.wait(`!!document.querySelector('.chat-message[data-message-id="${mixedId}"] .chat-video-preview')`);
+    await host.run(`document.querySelector('.chat-message[data-message-id="${mixedId}"] .chat-video-preview').scrollIntoView({block:'center'})`);
+    await host.wait(`document.querySelector('.chat-message[data-message-id="${mixedId}"] .chat-video-preview img').naturalWidth===320`);
+    downloadedUrl=null;await host.run(`document.querySelector('.chat-message[data-message-id="${mixedId}"] .chat-file').click()`);
+    for(let i=0;i<100&&!downloadedUrl;i++)await new Promise(resolve=>setTimeout(resolve,20));assert.equal(await(await fetch(downloadedUrl)).text(),'mixed file contents','download token selects the correct attachment');
+    await host.run(`document.querySelector('.chat-message[data-message-id="${mixedId}"] .chat-video-preview').click()`);await host.wait(`document.querySelector('.chat-video-dialog video')?.currentTime>0`);
+    await host.run(`document.querySelector('.chat-video-dialog .btn-close').click()`);
+    for(let index=0;index<6;index++){
+      await host.run(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-image[data-attachment-index="${index}"]').scrollIntoView({block:'center'})`);
+      await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-image[data-attachment-index="${index}"]').naturalWidth>0`);
+    }
+    assert.equal(await host.run(`(async()=>{const cache=await import('./chat-cache.mjs');return(await Promise.all(Array.from({length:6},(_,index)=>cache.readChatImage('${local.server}','${batch.id}',index)))).every(Boolean)})()`),true,'each image has an independent cache entry');
+    await host.run(`(async()=>{await(await import('./signaling.js')).requestServer('chat-clear')})()`);
+    assert.equal(await host.run(`(async()=>{const cache=await import('./chat-cache.mjs');return(await Promise.all(Array.from({length:6},(_,index)=>cache.readChatImage('${local.server}','${batch.id}',index)))).every(Boolean)})()`),true,'server cleanup preserves all local images in a combined message');
+    await peer.run(`(async()=>{await(await import('./signaling.js')).requestServer('chat-recall',{id:'${batch.id}'})})()`);
+    await host.wait(`!document.querySelector('.chat-message[data-message-id="${batch.id}"]')`);
+    assert.equal(await host.run(`(async()=>{const cache=await import('./chat-cache.mjs');return(await Promise.all(Array.from({length:6},(_,index)=>cache.readChatImage('${local.server}','${batch.id}',index)))).every(data=>!data)})()`),true,'recall deletes the whole message and every cached attachment');
+    console.log('CHAT_UI_OK',JSON.stringify({serverWide:true,richText:true,safeHtml:true,gif:true,webp:true,imagePreview:true,outsideLayout:true,inChannelLayout:true,cache:true,cachePersistence:true,cacheRetention:true,localClear:true,serverClear:true,avatars:true,files:true,recall:true,resize:true,linkDismiss:true,mp4Cover:true,mp4Playback:true,mp4Seek:true,multipleAttachments:true,multiPaste:true,multiDrop:true,batchRetry:true}));
   }catch(error){console.error(error.stack);process.exitCode=1;}
   finally{windows.forEach(window=>window.destroy());await new Promise(resolve=>io.close(resolve));app.exit(process.exitCode||0);}
 });

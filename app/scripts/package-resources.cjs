@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const requiredResources = ['easytier-core.exe', 'mediamtx.exe', 'wintun.dll', 'Packet.dll', 'screensh-process-audio.exe', 'lolping-hook-helper.exe'];
+const requiredResources = ['easytier-core.exe', 'easytier-cli.exe', 'mediamtx.exe', 'wintun.dll', 'Packet.dll', 'screensh-process-audio.exe', 'lolping-hook-helper.exe'];
 
 function collectResources(directory) {
   const files = fs.readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name);

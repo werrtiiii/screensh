@@ -4,7 +4,7 @@ const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
-for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe',
+for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
   'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node']) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
@@ -27,7 +27,7 @@ const probe = `
   const fs = require('node:fs'), path = require('node:path'), root = path.dirname(${JSON.stringify(manifest)});
   for (const file of ['main/saved-passwords.cjs','main/login-startup.cjs','main/capture-sources.js','renderer/ui.css','renderer/ui.js','renderer/app-presence.mjs','renderer/channel-sound-tracker.mjs',
     'renderer/chat.js','renderer/chat.css','renderer/chat-cache.mjs','renderer/chat-image-type.mjs','renderer/chat-markup.mjs','renderer/chat-video.mjs',
-    'renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
+    'main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
     'lolping/runtime.cjs','lolping/room.cjs','lolping/easytier.cjs','lolping/windows.cjs',
     'lolping/dist/main/core.cjs','lolping/dist/preload/overlay.cjs','lolping/dist/ui/preload.cjs','lolping/dist/settings-tools.mjs',
     'lolping/dist/renderer/overlay/index.html','lolping/dist/renderer/overlay/main.js','lolping/dist/renderer/overlay/main.css',
@@ -39,6 +39,10 @@ const probe = `
     if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
   }
   console.log('PACKAGED_LOLPING_ASSETS_OK');
+  load('./main/ipv6-network.cjs').createIpv6Network({platform:'win32',execute:(_exe,args,_options,done)=>{
+    if(!args.includes('-EncodedCommand') || args.includes('-File') || !Buffer.from(args.at(-1),'base64').toString('utf16le').includes('Get-NetAdapter -Physical'))throw Error('Packaged IPv6 script is not available outside ASAR');
+    done(null,JSON.stringify({policyBlocked:false,adapters:[{name:'fixture',enabled:true}],addresses:[],failures:[]}));
+  }}).inspect().then(result=>{if(result.code!=='no-address')throw Error('Packaged IPv6 script check failed');console.log('PACKAGED_IPV6_SCRIPT_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   const { ObsEngine } = load('./main/obs-engine.js');
   const engine = new ObsEngine(process.env.TEMP || process.cwd());
   try {
@@ -51,7 +55,7 @@ const result = spawnSync(require('electron'), ['-e', probe], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true,
   encoding: 'utf8', timeout: 60000,
 });
-if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK')) {
+if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK') || !result.stdout.includes('PACKAGED_IPV6_SCRIPT_OK')) {
   throw result.error || new Error(`Packaged OBS failed: ${result.stderr || result.stdout}`);
 }
 console.log(result.stdout.trim());

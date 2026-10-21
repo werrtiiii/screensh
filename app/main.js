@@ -15,8 +15,10 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { isIPv4 } = require('net');
-const { randomInt } = require('crypto');
+const { randomInt, randomUUID } = require('crypto');
 const { ManagedProcess } = require('./main/managed-process');
+let easytierSettings;
+async function getEasyTierSettings(){const {normalizeEasyTierSettings}=await import('./renderer/easytier-options.mjs');return easytierSettings ||= require('./main/easytier-settings.cjs').createEasyTierSettings({file:path.join(app.getPath('userData'),'easytier-settings.json'),normalize:normalizeEasyTierSettings});}
 const { ObsEngine } = require('./main/obs-engine');
 const renderingConfigPath = path.join(app.getPath('userData'), 'rendering.json');
 let hardwareAccelerationEnabled = false;
@@ -73,6 +75,10 @@ const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
 ipcMain.handle('ping-member', (_event, ip) => memberPinger.ping(ip));
+let easytierRpc=null;
+const {allocateRpcPortal,createMemberRoutes}=require('./main/member-routes.cjs');
+const memberRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
+ipcMain.handle('get-member-routes',event=>{requireMainWindow(event);return memberRoutes.read();});
 const savedPasswords = require('./main/saved-passwords.cjs').createSavedPasswords(path.join(app.getPath('userData'), 'server-passwords.json'), safeStorage);
 const loginStartup = require('./main/login-startup.cjs').createLoginStartup({ exe: process.execPath, appPath: __dirname, packaged: app.isPackaged });
 ipcMain.handle('get-saved-server-password', (_event, url, id) => savedPasswords.get(url, id));
@@ -89,6 +95,10 @@ ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
   return enabled;
 });
 ipcMain.handle('test-easytier-peer', (_event, peer) => peerTester.test(peer));
+ipcMain.handle('get-easytier-settings',async event=>{requireMainWindow(event);return (await getEasyTierSettings()).get();});
+ipcMain.handle('set-easytier-settings',async(event,value)=>{requireMainWindow(event);return (await getEasyTierSettings()).set(value);});
+const ipv6Network=require('./main/ipv6-network.cjs').createIpv6Network({getEasyTierDisabled:async()=>(await getEasyTierSettings()).get().disableIpv6});
+ipcMain.handle('try-enable-ipv6',event=>{requireMainWindow(event);return ipv6Network.run();});
 ipcMain.handle('check-for-update', async () => {
   if (!app.isPackaged) return { available: false, currentVersion: app.getVersion(), development: true };
   try {
@@ -177,6 +187,9 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   if (typeof roomId !== 'string' || !/^[\p{L}\p{N}_-]{1,64}$/u.test(roomId)) throw new Error('房间号仅支持1至64位字母、数字、下划线和连字符');
   const { normalizePeers } = await import('./renderer/easytier-peers.mjs');
   const peers = normalizePeers(configuredPeers);
+  const {easyTierAdvancedArgs,EASYTIER_CONNECTION_ARGS}=await import('./renderer/easytier-options.mjs');
+  const advancedArgs=easyTierAdvancedArgs((await getEasyTierSettings()).get());
+  easytierRpc=null;
   await easytier.stop();
   virtualIp = null;
   // Optional LAN-only validation, without changing virtual adapters or contacting a relay.
@@ -190,16 +203,19 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   const exe = resource('easytier-core.exe');
   if (!fs.existsSync(resource('wintun.dll'))) throw new Error('缺少 Wintun：请把匹配 Windows x64 的 wintun.dll 放到 app/res 目录');
   try {
+    easytierRpc={portal:await allocateRpcPortal(),instance:'screensh-'+randomUUID()};
     // Addresses span 10.144.0.0/16. Without a prefix EasyTier defaults to /24,
     // sending other members' virtual IPs through the physical default gateway.
     await easytier.start(exe, ['-i', `${ip}/16`, '--network-name', `screensh-${roomId}`,
     '--network-secret', process.env.SCREENSH_NETWORK_SECRET || 'screensh-p2p',
-    '-p', ...peers], {
+    '--rpc-portal',easytierRpc.portal,'--instance-name',easytierRpc.instance,
+    ...EASYTIER_CONNECTION_ARGS,...advancedArgs, '-p', ...peers], {
     cwd: path.dirname(exe),
     probe: () => Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && i.cidr === `${ip}/16`),
     timeout: 20000,
   });
   } catch (error) {
+    easytierRpc=null;
     console.error('[EasyTier startup]', error);
     if (/Failed to create adapter|Access is denied|拒绝访问/i.test(error.message)) {
       throw new Error('EasyTier 无法创建虚拟网卡。请完全退出客户端，右键选择“以管理员身份运行”后重试。');

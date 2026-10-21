@@ -100,7 +100,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   app.get('/chat-files/:token',(req,res)=>{
     const entry=chatDownloads.get(req.params.token);
     if(!entry||entry.expires<Date.now()||!members.has(entry.socketId))return res.sendStatus(403);
-    try{const file=chat.attachment(entry.id);res.set('Cache-Control','no-store');res.set('X-Content-Type-Options','nosniff');
+    try{const file=chat.attachment(entry.id,entry.index);res.set('Cache-Control','no-store');res.set('X-Content-Type-Options','nosniff');
       if(entry.video){
         if(file.type!=='video/mp4')return res.sendStatus(415);
         res.set('Access-Control-Allow-Origin','*');res.type('video/mp4');
@@ -293,18 +293,18 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     let chatTokens=5,chatRefill=Date.now();
     const chatAvatar=message=>message.avatar||imageRef(saved.userProfiles[Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId)]?.avatar);
     handle('chat-history',payload=>{requireMember();const result=chat.history(payload?.before??Infinity,payload?.limit??40);return {...result,messages:result.messages.map(message=>({...message,avatar:chatAvatar(message)}))};});
-    handle('chat-image',payload=>{requireMember();return chat.image(payload?.id);});
+    handle('chat-image',payload=>{requireMember();return chat.image(payload?.id,payload?.index);});
     handle('chat-upload-start',payload=>{requireMember();return chat.beginUpload(socket.id,payload);});
     handle('chat-upload-chunk',payload=>{requireMember();return chat.uploadChunk(socket.id,payload);});
     handle('chat-upload-cancel',payload=>{requireMember();if(payload?.uploadId)chat.cancelUpload(socket.id,payload.uploadId);else chat.cancelUploads(socket.id);return {};});
     socket.on('disconnect',()=>chat.cancelUploads(socket.id));
-    handle('chat-download',payload=>{requireMember();chat.attachment(payload?.id);
+    handle('chat-download',payload=>{requireMember();chat.attachment(payload?.id,payload?.index);
       for(const [key,value] of chatDownloads)if(value.expires<Date.now())chatDownloads.delete(key);
       if([...chatDownloads.values()].filter(value=>value.socketId===socket.id&&!value.video).length>=20)throw Error('请稍后再下载');
-      const token=randomUUID();chatDownloads.set(token,{id:payload.id,socketId:socket.id,expires:Date.now()+60000});return {path:'/chat-files/'+token};});
-    handle('chat-video',payload=>{requireMember();if(chat.attachment(payload?.id).type!=='video/mp4')throw Error('这个文件不支持 MP4 预览');
-      for(const [key,value] of chatDownloads){if(value.expires<Date.now())chatDownloads.delete(key);else if(value.video&&value.socketId===socket.id&&value.id===payload.id)return {path:'/chat-files/'+key};}
-      const token=randomUUID();chatDownloads.set(token,{id:payload.id,socketId:socket.id,video:true,expires:Date.now()+3600000});return {path:'/chat-files/'+token};});
+      const token=randomUUID();chatDownloads.set(token,{id:payload.id,index:payload.index,socketId:socket.id,expires:Date.now()+60000});return {path:'/chat-files/'+token};});
+    handle('chat-video',payload=>{requireMember();if(chat.attachment(payload?.id,payload?.index).type!=='video/mp4')throw Error('这个文件不支持 MP4 预览');
+      for(const [key,value] of chatDownloads){if(value.expires<Date.now())chatDownloads.delete(key);else if(value.video&&value.socketId===socket.id&&value.id===payload.id&&value.index===payload.index)return {path:'/chat-files/'+key};}
+      const token=randomUUID();chatDownloads.set(token,{id:payload.id,index:payload.index,socketId:socket.id,video:true,expires:Date.now()+3600000});return {path:'/chat-files/'+token};});
     handle('chat-recall',payload=>{
       const actor=requireMember(),actorId=saved.memberHistory[actor.key].id,message=chat.find(payload?.id),rank={host:2,admin:1,member:0};
       const targetKey=message&&Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId);

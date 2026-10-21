@@ -25,6 +25,7 @@ import { normalizeServerAddress, connectServerAddress } from './server-address.m
 import { serverIdentity } from './server-identity.mjs';
 import { initServerInfo } from './server-info.mjs';
 import { initChat } from './chat.js';
+import { initEasyTierSettings } from './easytier-settings.mjs';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
@@ -32,6 +33,7 @@ initServerInfo();
 initChat({state,getSocket:()=>socket,requestServer});
 initSoundVolume();
 initStartupSettings(window.electronAPI, toast);
+initEasyTierSettings(window.electronAPI);
 const appPresence = new AppPresence({ storage: localStorage, connect: (url, options) => io(url, options) });
 appPresence.sync();
 const avatarReady = readCachedImage('avatar').then(avatar => {
@@ -471,6 +473,7 @@ function showSettings() {
 
 // Help remains accessible by mouse, click, or keyboard without toggling a setting.
 $$('.help-tip').forEach(tip => {
+  if(tip.closest('#easyTierSettingsDialog'))return;
   tip.tabIndex = 0;
   tip.setAttribute('role', 'note');
   tip.setAttribute('aria-label', tip.dataset.tooltip);
@@ -484,7 +487,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-chat').forEach(el => el.style.display = '');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-easytier, .setting-chat').forEach(el => el.style.display = '');
       $$('.setting-theme').forEach(el => el.style.display = '');
       $$('.setting-update').forEach(el => el.style.display = '');
       $$('.setting-room').forEach(el => el.style.display = 'none');
@@ -494,7 +497,7 @@ if (settingsModal && btnCloseSettings) {
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
       $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-chat').forEach(el => el.style.display = 'none');
+      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-easytier, .setting-chat').forEach(el => el.style.display = 'none');
       $$('.setting-theme').forEach(el => el.style.display = 'none');
       $$('.setting-update').forEach(el => el.style.display = 'none');
       $$('.setting-room').forEach(el => el.style.display = '');

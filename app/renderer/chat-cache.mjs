@@ -66,13 +66,13 @@ export async function readChatCache(serverId,before=Infinity,limit=40) {
     request.onsuccess=()=>{const cursor=request.result;if(cursor&&result.messages.length<limit){result.messages.unshift(cursor.value.message);cursor.continue();}else done(result);};
   });
 }
-export async function readChatImage(serverId,id) {
-  await queue;const db=await open();return transaction(db,['images'],'readonly',(tx,done)=>{const request=tx.objectStore('images').get(serverId+':'+id);request.onsuccess=()=>done(request.result?.data||null);});
+export async function readChatImage(serverId,id,index) {
+  await queue;const db=await open();return transaction(db,['images'],'readonly',(tx,done)=>{const request=tx.objectStore('images').get(serverId+':'+id);request.onsuccess=()=>done(index===undefined?request.result?.data||null:request.result?.items?.[index]||null);});
 }
-export function saveChatImage(serverId,id,data) {
+export function saveChatImage(serverId,id,data,index) {
   return serialize(async()=>{
     if(!chatCacheSettings().enabled)return;const db=await open();
-    await transaction(db,['messages','images'],'readwrite',tx=>{const store=tx.objectStore('messages'),request=store.get(serverId+':'+id);request.onsuccess=()=>{const record=request.result;if(record){store.put({...record,imageBytes:data.length,bytes:new TextEncoder().encode(JSON.stringify(record.message)).length+data.length});tx.objectStore('images').put({key:record.key,serverId,data});}};});await pruneRaw();
+    await transaction(db,['messages','images'],'readwrite',tx=>{const store=tx.objectStore('messages'),request=store.get(serverId+':'+id);request.onsuccess=()=>{const record=request.result;if(record){const images=tx.objectStore('images'),previous=images.get(record.key);previous.onsuccess=()=>{const saved={...previous.result,key:record.key,serverId};if(index===undefined)saved.data=data;else saved.items={...saved.items,[index]:data};const imageBytes=(saved.data?.length||0)+Object.values(saved.items||{}).reduce((sum,item)=>sum+item.length,0);store.put({...record,imageBytes,bytes:new TextEncoder().encode(JSON.stringify(record.message)).length+imageBytes});images.put(saved);};}};});await pruneRaw();
   });
 }
 export async function chatCacheUsage() {

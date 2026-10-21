@@ -21,10 +21,11 @@ export function initChat({state,getSocket,requestServer}) {
   const $=selector=>document.querySelector(selector),panel=$('#serverChat'),list=$('#chatMessages'),input=$('#chatInput'),root=$('#mainContent');
   const topbar=$('#room .room-topbar');
   new ResizeObserver(()=>root.parentElement.style.setProperty('--chat-topbar-height',topbar.getBoundingClientRect().height+'px')).observe(topbar);
-  let context=null,connection=null,generation=0,historyRevision=0,epoch=null,loading=false,hasMore=false,localHasMore=false,draft=null,pendingSend=null,cacheFailed=false,settingsDirty=false;
+  let context=null,connection=null,generation=0,historyRevision=0,epoch=null,loading=false,hasMore=false,localHasMore=false,draft=[],pendingSend=null,cacheFailed=false,settingsDirty=false;
+  let selectionQueue=Promise.resolve();
   const messages=new Map(),nodes=new Map(),urls=new Map(),recalled=new Set(),avatars=new Map();
   let activeUpload=null;
-  let serverLimit=512,chatHeight=Number(localStorage.getItem('chatPanelHeight'))||0;
+  let serverMaxAttachments=1,serverLimit=512,chatHeight=Number(localStorage.getItem('chatPanelHeight'))||0;
   const handle=$('#chatResizeHandle');
   function layout(){
     const inChannel=!!context?.channelId;handle.classList.toggle('hidden',!inChannel);
@@ -44,8 +45,18 @@ export function initChat({state,getSocket,requestServer}) {
   function sizeInput(){input.style.height='auto';input.style.height=Math.min(100,Math.max(32,input.scrollHeight))+'px';}
   input.addEventListener('input',sizeInput);
   function status(text){$('#chatStatus').textContent=text;}
+  function releaseMedia(id){for(const [key,url] of urls)if(key===id||key.startsWith(id+':')){URL.revokeObjectURL(url);urls.delete(key);}}
   function clearView(){activeUpload?.abort();videos.clear();$('#chatCancelUpload').classList.add('hidden');observer.disconnect();document.querySelector('.chat-image-dialog')?.remove();$('#chatSend').disabled=false;for(const url of urls.values())URL.revokeObjectURL(url);urls.clear();messages.clear();nodes.clear();list.replaceChildren();const empty=document.createElement('p');empty.className='chat-empty';empty.textContent='发送第一条消息，开始聊天';list.append(empty);}
-  function draftChanged(image=null){if(draft?.preview)URL.revokeObjectURL(draft.preview);draft=image;const container=$('#chatAttachment');container.classList.toggle('hidden',!image);container.querySelector('img')?.remove();if(image?.data||image?.preview){const preview=document.createElement('img');preview.alt='待发送图片';preview.src=image.data||image.preview;container.prepend(preview);}container.querySelector('span').textContent=image?.name||'';$('#chatImageInput').value='';}
+  function draftChanged(images=[]){
+    for(const image of draft)if(image.preview&&!images.includes(image))URL.revokeObjectURL(image.preview);
+    draft=images;const container=$('#chatAttachment');container.classList.toggle('hidden',!images.length);container.replaceChildren();
+    for(const image of images){const item=document.createElement('div');item.className='chat-attachment-item';
+      if(image.preview){const preview=document.createElement('img');preview.alt='待发送图片';preview.src=image.preview;item.append(preview);}
+      const name=document.createElement('span');name.textContent=image.name;name.title=image.name;
+      const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','移除 '+image.name);remove.onclick=()=>{if(activeUpload?.images.includes(image))activeUpload.abort();draftChanged(draft.filter(current=>current!==image));};
+      item.append(name,remove);container.append(item);
+    }
+  }
   async function paintAvatar(avatar,message){const member=message.authorId&&context?.members?.find(item=>item.memberId===message.authorId||item.profileId===message.authorId),source=member?.avatar||message.avatar;if(!source)return;
     const token=generation,key=context.serverId+':chat-avatar:'+(message.avatar||message.authorId);
     try{if(!avatars.has(key))avatars.set(key,(async()=>{let data=await readCachedImage(key);if(!data){data=source.startsWith('data:')?source:(await requestServer('get-image',{ref:source})).data;data=await avatarThumbnail(data);await saveCachedImage(key,data);}return data;})());
@@ -54,21 +65,21 @@ export function initChat({state,getSocket,requestServer}) {
   }
   const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);if(entry.target.classList.contains('chat-video-preview'))void videos.load(entry.target);else void loadImage(entry.target);}}, {root:list,rootMargin:'160px'});
   async function loadImage(image) {
-    const token=generation,serverId=context?.serverId,id=image.dataset.messageId;if(!serverId)return;
+    const token=generation,serverId=context?.serverId,id=image.dataset.messageId,index=image.dataset.attachmentIndex===undefined?undefined:Number(image.dataset.attachmentIndex),key=index===undefined?id:id+':'+index;if(!serverId)return;
     try {
-      let data=await readChatImage(serverId,id).catch(()=>null);
-      if(!data){const result=await requestServer('chat-image',{id},getSocket(),180000);data=result.data;if(token!==generation||recalled.has(id))return;await cache(saveChatImage(serverId,id,data));}
+      let data=await readChatImage(serverId,id,index).catch(()=>null);
+      if(!data){const result=await requestServer('chat-image',{id,index},getSocket(),180000);data=result.data;if(token!==generation||recalled.has(id))return;await cache(saveChatImage(serverId,id,data,index));}
       if(token!==generation||recalled.has(id)||!image.isConnected)return;
       const split=data.indexOf(','),type=data.slice(5,data.indexOf(';')),bytes=Uint8Array.from(atob(data.slice(split+1)),character=>character.charCodeAt(0));
       const blob=new Blob([bytes],{type});if(token!==generation)return;
       const follow=list.scrollHeight-list.scrollTop-list.clientHeight<50;
-      const url=URL.createObjectURL(blob);urls.set(id,url);image.onload=()=>{if(follow)list.scrollTop=list.scrollHeight;};image.src=url;
+      const url=URL.createObjectURL(blob);urls.set(key,url);image.onload=()=>{if(follow)list.scrollTop=list.scrollHeight;};image.src=url;
     }catch(error){if(token===generation){image.alt='图片已过期或暂时无法加载';image.classList.add('chat-image-unavailable');}}
   }
   function imageDialog(image) {
     if(!image.src)return;const modal=document.createElement('div');modal.className='modal chat-image-dialog';modal.dataset.messageId=image.dataset.messageId||image.closest('.chat-message')?.dataset.messageId||'';
     modal.innerHTML='<div class="modal-content"><div class="modal-header"><h2>图片</h2><button type="button" class="btn-close" aria-label="关闭">×</button></div><img alt="聊天图片" /><div class="dialog-actions"><a class="btn btn-outline btn-sm" download>保存图片</a></div></div>';
-    modal.querySelector('img').src=image.src;const link=modal.querySelector('a');link.href=image.src;link.download=messages.get(image.dataset.messageId)?.image?.name||'图片';modal.querySelector('button').onclick=()=>modal.remove();modal.onclick=event=>{if(event.target===modal)modal.remove();};document.body.append(modal);
+    modal.querySelector('img').src=image.src;const link=modal.querySelector('a');link.href=image.src;link.download=image.alt||'图片';modal.querySelector('button').onclick=()=>modal.remove();modal.onclick=event=>{if(event.target===modal)modal.remove();};document.body.append(modal);
   }
   function groupMessages(){let previous=null;for(const node of list.querySelectorAll('.chat-message')){const message=messages.get(node.dataset.messageId);node.classList.toggle('chat-message-grouped',!!message?.authorId&&message.authorId===previous?.authorId);previous=message;}}
   function render(newMessages) {
@@ -82,8 +93,12 @@ export function initChat({state,getSocket,requestServer}) {
       const hoverTime=time.cloneNode(true);hoverTime.textContent=day+'\n'+clock;hoverTime.className='chat-message-hover-time';node.append(hoverTime);
       const content=document.createElement('div');content.className='chat-message-content';content.append(renderChatMarkup(message.text));main.append(heading,content);
       for(const image of content.querySelectorAll('.chat-linked-image'))image.onclick=()=>imageDialog(image);
-      if(message.image){const image=document.createElement('img');image.className='chat-message-image';image.alt=message.image.name;image.dataset.messageId=message.id;image.loading='lazy';image.onclick=()=>imageDialog(image);main.append(image);observer.observe(image);}
-      if(message.file){if(/\.mp4$/i.test(message.file.name)){const preview=videos.preview(message);main.append(preview);observer.observe(preview);}const button=document.createElement('button');button.type='button';button.className='chat-file';button.textContent='↧ '+message.file.name+' · '+sizeLabel(message.file.bytes);button.onclick=async()=>{try{const result=await requestServer('chat-download',{id:message.id});const url=new URL(result.path,getSocket().io.uri);await window.electronAPI.downloadChatFile(url.href);}catch(error){toast(error.message,'error');}};main.append(button);}
+      const attachments=message.attachments||[...(message.image?[{...message.image,kind:'image'}]:[]),...(message.file?[{...message.file,kind:'file'}]:[])];
+      const media=document.createElement('div');media.className='chat-message-media'+(attachments.length>1?' chat-message-media-multiple':'');
+      attachments.forEach((attachment,position)=>{const index=message.attachments?.length>1?position:undefined;
+        if(attachment.kind==='image'){const image=document.createElement('img');image.className='chat-message-image';image.alt=attachment.name;image.dataset.messageId=message.id;if(index!==undefined)image.dataset.attachmentIndex=index;image.loading='lazy';image.onclick=()=>imageDialog(image);media.append(image);observer.observe(image);}
+        else{const item=document.createElement('div');item.className='chat-message-file';if(/\.mp4$/i.test(attachment.name)){const preview=videos.preview({...message,file:attachment,attachmentIndex:index});item.append(preview);observer.observe(preview);}const button=document.createElement('button');button.type='button';button.className='chat-file';button.textContent='↧ '+attachment.name+' · '+sizeLabel(attachment.bytes);button.onclick=async()=>{try{const result=await requestServer('chat-download',{id:message.id,index});const url=new URL(result.path,getSocket().io.uri);await window.electronAPI.downloadChatFile(url.href);}catch(error){toast(error.message,'error');}};item.append(button);media.append(item);}
+      });if(attachments.length)main.append(media);
       node.oncontextmenu=event=>{const rank={host:2,admin:1,member:0},target=context?.members?.find(item=>item.memberId===message.authorId),mine=context?.meId===message.authorId,allowed=mine?Date.now()-message.time<=120000:(rank[context?.myRole]??0)>(rank[target?.role||'member']??0);
         showContextMenu(event,allowed?[{label:'撤回消息',run:async()=>{try{onRecall(await requestServer('chat-recall',{id:message.id}));}catch(error){toast(error.message,'error');}}}]:[]);};
       node.append(avatar,main);nodes.set(message.id,node);queueMicrotask(()=>void paintAvatar(avatar,message));
@@ -94,14 +109,14 @@ export function initChat({state,getSocket,requestServer}) {
     const prepend=newMessages.some(message=>message.sequence<oldFirst);
     if(bottom&&!prepend)list.scrollTop=list.scrollHeight;else if(prepend)list.scrollTop+=list.scrollHeight-oldHeight;
     // Keep routine live sessions bounded; older history can be paged back in.
-    if(bottom&&!prepend&&messages.size>200)for(const message of ordered.slice(0,ordered.length-200)){videos.remove(message.id);messages.delete(message.id);nodes.get(message.id)?.remove();nodes.delete(message.id);if(urls.has(message.id)){URL.revokeObjectURL(urls.get(message.id));urls.delete(message.id);}hasMore=true;localHasMore=true;}
+    if(bottom&&!prepend&&messages.size>200)for(const message of ordered.slice(0,ordered.length-200)){videos.remove(message.id);messages.delete(message.id);nodes.get(message.id)?.remove();nodes.delete(message.id);releaseMedia(message.id);hasMore=true;localHasMore=true;}
     groupMessages();if(bottom&&!prepend)list.scrollTop=list.scrollHeight;
     $('#chatLoadOlder').disabled=loading;$('#chatLoadOlder').classList.toggle('hidden',!hasMore);
   }
   function updateInfo(info) {
     if(!settingsDirty){$('#serverChatDays').value=info.settings.days;$('#serverChatMB').value=info.settings.maxMB;}
     $('#serverChatUsage').textContent=`${info.count} 条消息 · ${sizeLabel(info.bytes)}`;
-    serverLimit=info.settings.maxMB;$('#serverChatHelp').dataset.tooltip='0 表示不限制，超过任一上限时删除最早的记录及附件。\n'+$('#serverChatUsage').textContent;
+    serverMaxAttachments=info.maxAttachments||1;serverLimit=info.settings.maxMB;$('#serverChatHelp').dataset.tooltip='0 表示不限制，超过任一上限时删除最早的记录及附件。\n'+$('#serverChatUsage').textContent;
   }
   async function loadHistory(older=false) {
     if(!context||loading)return;const token=generation,revision=historyRevision;loading=true;$('#chatLoadOlder').disabled=true;
@@ -125,7 +140,7 @@ export function initChat({state,getSocket,requestServer}) {
     void cache(mergeChatCache(context.serverId,context.name,epoch,[]));updateInfo(info);
   };
   const onReset=info=>{historyRevision++;loading=false;epoch=info.epoch;hasMore=localHasMore;$('#chatLoadOlder').disabled=false;$('#chatLoadOlder').classList.toggle('hidden',!hasMore);if(context)void cache(mergeChatCache(context.serverId,context.name,epoch,[]));updateInfo(info);status('');};
-  function removeMessage(id){videos.remove(id);recalled.add(id);messages.delete(id);nodes.get(id)?.remove();nodes.delete(id);groupMessages();for(const dialog of document.querySelectorAll('.chat-image-dialog'))if(dialog.dataset.messageId===id)dialog.remove();if(urls.has(id)){URL.revokeObjectURL(urls.get(id));urls.delete(id);}if(!messages.size&&!list.querySelector('.chat-empty')){const empty=document.createElement('p');empty.className='chat-empty';empty.textContent='发送第一条消息，开始聊天';list.append(empty);}}
+  function removeMessage(id){videos.remove(id);recalled.add(id);messages.delete(id);nodes.get(id)?.remove();nodes.delete(id);groupMessages();for(const dialog of document.querySelectorAll('.chat-image-dialog'))if(dialog.dataset.messageId===id)dialog.remove();releaseMedia(id);if(!messages.size&&!list.querySelector('.chat-empty')){const empty=document.createElement('p');empty.className='chat-empty';empty.textContent='发送第一条消息，开始聊天';list.append(empty);}}
   const onRecall=event=>{if(!context)return;historyRevision++;loading=false;$('#chatLoadOlder').disabled=false;removeMessage(event.id);void cache(recallChatMessages(context.serverId,[event.id]));};
   function detach(){if(connection){connection.off('chat-message',onMessage);connection.off('chat-trim',onTrim);connection.off('chat-reset',onReset);connection.off('chat-recalled',onRecall);}connection=null;}
   document.addEventListener('chat-context',event=>{
@@ -133,26 +148,27 @@ export function initChat({state,getSocket,requestServer}) {
     const current=getSocket(),changed=context?.serverId!==next.serverId||connection!==current;context=next;
     requestAnimationFrame(layout);for(const message of messages.values())void paintAvatar(nodes.get(message.id).querySelector('.chat-message-avatar'),message);
     if(!changed)return;detach();connection=current;connection.on('chat-message',onMessage);connection.on('chat-trim',onTrim);connection.on('chat-reset',onReset);connection.on('chat-recalled',onRecall);
-    const token=++generation;epoch=null;recalled.clear();avatars.clear();loading=false;hasMore=false;localHasMore=false;cacheFailed=false;settingsDirty=false;clearView();status('同步中…');
+    const token=++generation;epoch=null;recalled.clear();avatars.clear();loading=false;hasMore=false;localHasMore=false;cacheFailed=false;settingsDirty=false;serverMaxAttachments=1;clearView();status('同步中…');
     void(async()=>{try{const stored=await readChatCache(next.serverId);if(token!==generation)return;epoch=epoch||stored.epoch;localHasMore=stored.messages.length===40;hasMore=localHasMore;render(stored.messages);}catch(error){console.error(error);}if(token===generation)await loadHistory();})();
   });
   new MutationObserver(()=>{if(!$('#room').classList.contains('active')){generation++;detach();context=null;epoch=null;loading=false;clearView();draftChanged();input.value='';sizeInput();pendingSend=null;panel.classList.add('hidden');root.classList.remove('chat-enabled','chat-outside');}}).observe($('#room'),{attributes:true,attributeFilter:['class']});
   $('#chatLoadOlder').onclick=()=>void loadHistory(true);
-  async function choose(file) {
-    if(!file)return;if(serverLimit&&file.size+2048>serverLimit*1048576)return toast('文件超过服务器聊天存储上限','error');
-    const token=generation;
+  async function choose(file,token) {
+    if(token!==generation)return;
+    if(!file)return;if(draft.length>=32)return toast('每条消息最多32个附件','error');if(serverLimit&&file.size+2048>serverLimit*1048576)return toast('文件超过服务器聊天存储上限','error');
     try{const type=chatImageType(new Uint8Array(await file.slice(0,16).arrayBuffer()));if(token!==generation)return;
-      if(!type||file.size>20*1048576){draftChanged({name:file.name||'文件',file});return;}
+      if(!type||file.size>20*1048576){draftChanged([...draft,{name:file.name||'文件',file}]);return;}
       const extension=type==='image/jpeg'?'jpg':type.slice(6),name=(file.name||'图片').replace(/\.[^./\\]+$/,'')+'.'+extension;
-      const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('图片读取失败'));reader.readAsDataURL(file.slice(0,file.size,type));});if(token===generation)draftChanged({name,data,file:file.slice(0,file.size,type),imageType:type});}catch(error){toast(error.message,'error');}
+      const imageFile=file.slice(0,file.size,type);draftChanged([...draft,{name,file:imageFile,preview:URL.createObjectURL(imageFile),imageType:type}]);}catch(error){if(token===generation)toast(error.message,'error');}
   }
-  $('#chatChooseImage').onclick=()=>$('#chatImageInput').click();$('#chatImageInput').onchange=event=>void choose(event.target.files[0]);$('#chatRemoveAttachment').onclick=()=>{activeUpload?.abort();draftChanged();};
-  $('#chatComposer').addEventListener('paste',event=>{const file=[...event.clipboardData.items].find(item=>item.kind==='file')?.getAsFile();if(file){event.preventDefault();void choose(file);}});
-  $('#chatComposer').ondragover=event=>event.preventDefault();$('#chatComposer').ondrop=event=>{event.preventDefault();void choose(event.dataTransfer.files[0]);};
+  function chooseFiles(files){const selected=[...files],token=generation;selectionQueue=selectionQueue.then(async()=>{for(const file of selected)await choose(file,token);});}
+  $('#chatChooseImage').onclick=()=>$('#chatImageInput').click();$('#chatImageInput').onchange=event=>{chooseFiles(event.target.files);event.target.value='';};
+  $('#chatComposer').addEventListener('paste',event=>{const files=[...event.clipboardData.items].filter(item=>item.kind==='file').map(item=>item.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();chooseFiles(files);const text=event.clipboardData.getData('text/plain');if(text)insert(text);}});
+  $('#chatComposer').ondragover=event=>event.preventDefault();$('#chatComposer').ondrop=event=>{event.preventDefault();chooseFiles(event.dataTransfer.files);};
   let composing=false;input.addEventListener('compositionstart',()=>{composing=true;});input.addEventListener('compositionend',()=>{composing=false;});
   input.addEventListener('keydown',event=>{if(composing||event.isComposing||event.keyCode===229)return;
     if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();if(!event.repeat)$('#chatComposer').requestSubmit();return;}
-    if(['Backspace','Delete'].includes(event.key)&&!input.value&&draft){event.preventDefault();draftChanged();}if(event.key==='Escape')$('#chatLinkFields').classList.add('hidden');});
+    if(['Backspace','Delete'].includes(event.key)&&!input.value&&draft.length){event.preventDefault();const image=draft.at(-1);if(activeUpload?.images.includes(image))activeUpload.abort();draftChanged(draft.slice(0,-1));}if(event.key==='Escape')$('#chatLinkFields').classList.add('hidden');});
   function insert(before,after='') {const start=input.selectionStart,selected=input.value.slice(start,input.selectionEnd);input.setRangeText(before+selected+after,start,input.selectionEnd,'end');if(!selected&&after)input.setSelectionRange(start+before.length,start+before.length);sizeInput();input.focus();}
   for(const button of panel.querySelectorAll('[data-before]'))button.onclick=()=>insert(button.dataset.before,button.dataset.after||'');
   $('#chatInsertLink').onclick=()=>{$('#chatLinkFields').classList.toggle('hidden');if(!$('#chatLinkFields').classList.contains('hidden'))$('#chatLinkInput').focus();};
@@ -165,34 +181,49 @@ export function initChat({state,getSocket,requestServer}) {
   list.onclick=event=>{const link=event.target.closest('a');if(link){event.preventDefault();const url=safeChatLink(link.href);if(url)window.electronAPI.openWebLink(url).catch(error=>toast(error.message,'error'));}};
   $('#chatCancelUpload').onclick=()=>activeUpload?.abort();
   $('#chatComposer').onsubmit=async event=>{
-    event.preventDefault();if(!context||$('#chatSend').disabled||!input.value.trim()&&!draft)return;
-    const token=generation,text=input.value,image=draft,connection=getSocket();let task=null;
-    if(!pendingSend||pendingSend.text!==text||pendingSend.image!==image)pendingSend={clientId:crypto.randomUUID(),text,image};
-    const payload={...pendingSend};$('#chatSend').disabled=true;
-    try{if(image?.file){
-        delete payload.image;
-        task={connection,id:null,cancelled:false,cancelPromise:null};
-        const cancelRemote=()=>{if(task.id&&!task.cancelPromise)task.cancelPromise=requestServer('chat-upload-cancel',{uploadId:task.id},connection).catch(error=>console.error('Cancel upload:',error));};
-        const stopped=new Promise((_,reject)=>{task.abort=()=>{if(task.cancelled)return;task.cancelled=true;reject(Error('上传已取消'));cancelRemote();};});
+    event.preventDefault();if(!context||$('#chatSend').disabled)return;
+    const token=generation,connection=getSocket();let task=null;
+    $('#chatSend').disabled=true;
+    try{
+      await selectionQueue;if(token!==generation||!context)return;
+      const text=input.value,images=[...draft];if(!text.trim()&&!images.length)return;
+      if(images.length>serverMaxAttachments)throw Error('当前服务器不支持这么多附件，请更新服务端；每条消息最多32个附件');
+      if(serverLimit&&images.reduce((sum,image)=>sum+image.file.size,2048+text.length*4)>serverLimit*1048576)throw Error('这条消息超过服务器聊天存储上限');
+      if(!pendingSend||pendingSend.text!==text||pendingSend.images.length!==images.length||images.some((image,index)=>image!==pendingSend.images[index]))pendingSend={clientId:crypto.randomUUID(),text,images};
+      const payload={clientId:pendingSend.clientId,text};
+      if(images.length){
+        task={connection,images,ids:new Set(),cancelled:false};
+        const cancel=id=>void requestServer('chat-upload-cancel',{uploadId:id},connection).catch(()=>{});
+        const stopped=new Promise((_,reject)=>{task.abort=()=>{if(task.cancelled)return;task.cancelled=true;reject(Error('上传已取消'));for(const id of task.ids)cancel(id);};});
         const wait=promise=>Promise.race([promise,stopped]);
-        activeUpload=task;$('#chatCancelUpload').classList.remove('hidden');status('上传 0%');
-        const starting=requestServer('chat-upload-start',{name:image.name,bytes:image.file.size,imageType:image.imageType},connection);
-        void starting.then(upload=>{task.id=upload.uploadId;if(task.cancelled)cancelRemote();}).catch(()=>{});
-        const upload=await wait(starting);payload.uploadId=upload.uploadId;
-        for(let offset=0;offset<image.file.size;offset+=1048576){
+        activeUpload=task;$('#chatCancelUpload').classList.remove('hidden');
+        let sent=0;const total=images.reduce((sum,image)=>sum+image.file.size,0),ids=[];
+        for(const image of images){
           if(token!==generation)throw Error('连接已变更，请重新发送文件');
-          const data=await wait(image.file.slice(offset,offset+1048576).arrayBuffer());
-          await wait(requestServer('chat-upload-chunk',{uploadId:upload.uploadId,offset,data},connection,180000));
-          status('上传 '+Math.min(100,Math.round((offset+data.byteLength)/image.file.size*100))+'%');
+          status('上传 '+(ids.length+1)+'/'+images.length+' · '+(total?Math.round(sent/total*100):0)+'%');
+          const starting=requestServer('chat-upload-start',{name:image.name,bytes:image.file.size,imageType:image.imageType},connection);
+          void starting.then(upload=>{task.ids.add(upload.uploadId);if(task.cancelled)cancel(upload.uploadId);}).catch(()=>{});
+          const upload=await wait(starting);ids.push(upload.uploadId);
+          for(let offset=0;offset<image.file.size;offset+=1048576){
+            if(token!==generation)throw Error('连接已变更，请重新发送文件');
+            const data=await wait(image.file.slice(offset,offset+1048576).arrayBuffer());
+            await wait(requestServer('chat-upload-chunk',{uploadId:upload.uploadId,offset,data},connection,180000));sent+=data.byteLength;
+            status('上传 '+ids.length+'/'+images.length+' · '+Math.min(100,Math.round(sent/total*100))+'%');
+          }
         }
         if(task.cancelled)throw Error('上传已取消');
-        // Cancellation ends before the server is asked to publish the message.
+        if(ids.length===1)payload.uploadId=ids[0];else payload.uploadIds=ids;
         activeUpload=null;$('#chatCancelUpload').classList.add('hidden');status('发送中…');
       }
-      const result=await requestServer('chat-send',payload,connection,180000);if(token!==generation)return;onMessage(result);if(input.value===text){input.value='';sizeInput();}if(draft===image)draftChanged();pendingSend=null;status('');list.scrollTop=list.scrollHeight;
+      let result;for(let attempt=0;;attempt++){
+        if(token!==generation)return;
+        try{result=await requestServer('chat-send',payload,connection,180000);break;}
+        catch(error){if(attempt>=2||!error.message.includes('发送过于频繁'))throw error;await new Promise(resolve=>setTimeout(resolve,550));}
+      }
+      if(token!==generation)return;onMessage(result);if(input.value===text){input.value='';sizeInput();}draftChanged(draft.filter(image=>!images.includes(image)));pendingSend=null;status('');list.scrollTop=list.scrollHeight;
     }catch(error){
-      if(task&&!task.cancelled){task.cancelled=true;if(task.id)void requestServer('chat-upload-cancel',{uploadId:task.id},connection).catch(()=>{});}
-      if(token===generation)status(task?.cancelled&&error.message==='上传已取消'?'上传已取消':error.message+'；可再次点击发送重试');
+      task?.abort();
+      if(token===generation)status(error.message==='上传已取消'?'上传已取消':error.message+'；可再次点击发送重试');
     }finally{if(activeUpload===task)activeUpload=null;if(token===generation){$('#chatSend').disabled=false;$('#chatCancelUpload').classList.add('hidden');}}
   };
   $('#serverChatSettingsForm').oninput=()=>{settingsDirty=true;};

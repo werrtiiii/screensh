@@ -14,6 +14,8 @@ ipcMain.handle('get-screens',()=>{
 });
 let pingCalls=0;
 ipcMain.handle('ping-member',(_event,ip)=>{pingCalls++;return {ip,rttMs:ip.endsWith('.2')?32:null}});
+let routeCalls=0;
+ipcMain.handle('get-member-routes',()=>{routeCalls++;return {available:true,rows:[{ip:'10.144.11.2',route:routeCalls===1?'p2p':'relay(2)',protocol:routeCalls===1?'tcp6':'udp'},{ip:'10.144.11.3',route:'relay(2)',protocol:'—'}]}});
 app.whenReady().then(async()=>{
  const {server,io}=createSignalingServer({initialPeers:'test.example:11010'});let win,memberWin;const clients=[];
  try{
@@ -87,18 +89,20 @@ app.whenReady().then(async()=>{
   await wait(`document.querySelectorAll('.channel-section')[1].querySelector('.channel-member-name')?.textContent==='First'`);
   await run(`document.querySelector('#btnMemberNetwork').click()`);
   assert.equal(await run(`!!document.querySelector('#memberNetworkDialog #voiceDiagnostics') && !document.querySelector('#settingsModal #voiceDiagnostics')`),true,'voice diagnostics are below the member network table');
-  await wait(`document.querySelectorAll('#memberNetworkRows tr').length===2 && document.querySelector('#memberNetworkRows').textContent.includes('32 ms')`);
-  assert.equal(await run(`document.querySelector('#memberNetworkRows').textContent.includes('未响应') && !document.querySelector('#memberNetworkRows').textContent.includes('Owner')`),true,'network panel includes other channels and excludes self');
+  await wait(`document.querySelectorAll('#memberNetworkRows tr').length===3 && document.querySelector('#memberNetworkRows').textContent.includes('32 ms') && document.querySelector('#memberNetworkRows').textContent.includes('tcp6')`);
+  assert.equal(await run(`document.querySelector('#memberNetworkRows').textContent.includes('未响应') && document.querySelector('#memberNetworkRows').textContent.includes('Owner') && document.querySelector('#memberNetworkRows tr td:nth-child(4)').textContent==='本机'`),true,'network panel includes other channels and marks self as local');
+  assert.deepEqual(await run(`[...document.querySelectorAll('.member-network-table th')].map(th=>th.textContent)`),['成员','虚拟 IP','延迟','路由','协议']);
   assert.equal(pingCalls,2);
   assert.equal(await run(`getComputedStyle(document.querySelector('.member-virtual-ip')).userSelect`),'text');
   await run(`window.copiedIps=[];navigator.clipboard.writeText=async text=>copiedIps.push(text);document.querySelector('.member-virtual-ip').click()`);
-  assert.deepEqual(await run(`copiedIps`),['10.144.11.2'],'click copies the selected member IP');
+  assert.deepEqual(await run(`copiedIps`),['10.144.11.1'],'click copies the selected member IP');
   await run(`(()=>{const ip=document.querySelector('.member-virtual-ip'),range=document.createRange();range.selectNodeContents(ip);window.getSelection().removeAllRanges();window.getSelection().addRange(range);ip.click();window.selectedIpNode=ip.firstChild;})()`);
   assert.equal(await run(`copiedIps.length`),1,'selecting text does not trigger click-to-copy');
   const clockBefore=await run(`document.querySelector('#serverInfoBeijing').textContent`);
   await new Promise(resolve=>setTimeout(resolve,3200));
+  await wait(`document.querySelector('#memberNetworkRows tr:nth-child(2) td:nth-child(4)').textContent==='relay(2)' && document.querySelector('#memberNetworkRows tr:nth-child(2) td:nth-child(5)').textContent==='udp'`);
   assert.notEqual(await run(`document.querySelector('#serverInfoBeijing').textContent`),clockBefore,'Beijing clock advances without server polling');
-  assert.equal(await run(`window.getSelection().toString()==='10.144.11.2' && document.querySelector('.member-virtual-ip').firstChild===selectedIpNode`),true,'Ping refresh preserves selected IP text');
+  assert.equal(await run(`window.getSelection().toString()==='10.144.11.1' && document.querySelector('.member-virtual-ip').firstChild===selectedIpNode`),true,'Ping refresh preserves selected IP text');
   await run(`window.getSelection().removeAllRanges()`);
   assert.equal(await run(`(()=>{const button=document.querySelector('#btnMemberNetwork'),settings=document.querySelector('#btnServerSettings');return button.nextElementSibling===settings&&button.parentElement.classList.contains('room-actions')})()`),true,'network button stays immediately left of server settings');
   await new Promise(resolve=>setTimeout(resolve,150));

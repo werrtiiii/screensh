@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.4.15",
+  "version": "1.5.0",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
