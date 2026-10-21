@@ -56,6 +56,7 @@ function getLolPing() {
   if (!lolping) {
     const { LolPingRuntime } = require('./lolping/runtime.cjs');
     lolping = new LolPingRuntime({ file: path.join(app.getPath('userData'), 'lolping.json'), helper: resource('lolping-hook-helper.exe'),
+      transportFactory:options=>new (require('./lolping/easytier.cjs').EasyTierLolPing)({...options,forwarder:tunnelForwarder}),
       send: (channel, data) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data); } });
   }
   return lolping;
@@ -63,7 +64,7 @@ function getLolPing() {
 function requireMainWindow(event) { if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('无效的窗口'); }
 ipcMain.handle('lolping-get', (event, serverId) => { requireMainWindow(event); return getLolPing().get(serverId); });
 ipcMain.handle('lolping-save', (event, serverId, config) => { requireMainWindow(event); return getLolPing().save(serverId, config); });
-ipcMain.handle('lolping-sync', (event, context) => { requireMainWindow(event); return context ? getLolPing().sync({ ...context, virtualIp }) : lolping?.stop(); });
+ipcMain.handle('lolping-sync', (event, context) => { requireMainWindow(event); return context ? getLolPing().sync({ ...context, virtualIp, noTun:!!easytierRpc?.noTun }) : lolping?.stop(); });
 ipcMain.handle('lolping-preview', (event, kind, id) => { requireMainWindow(event); return getLolPing().preview(kind,id); });
 ipcMain.handle('lolping-input-suspend', (event, on) => { requireMainWindow(event); getLolPing().suspendInput(on); });
 function failure(message) {
@@ -74,10 +75,16 @@ const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
-ipcMain.handle('ping-member', (_event, ip) => memberPinger.ping(ip));
+ipcMain.handle('ping-member', async (_event, ip) => {if(easytierRpc?.noTun){const result=await memberRoutes.read(),row=result.rows.find(row=>row.ip===ip);return {ip,rttMs:row?.rttMs??null,noTun:true};}return memberPinger.ping(ip);});
 let easytierRpc=null;
 const {allocateRpcPortal,createMemberRoutes}=require('./main/member-routes.cjs');
 const memberRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
+const tunnelForwarder=require('./main/tunnel-forwarder.cjs').createTunnelForwarder({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
+ipcMain.handle('get-tunnel-mode',event=>{requireMainWindow(event);return easytierRpc?.noTun?'no-tun':'tun';});
+ipcMain.handle('open-tunnel-scope',(event,ip)=>{requireMainWindow(event);return tunnelForwarder.open(ip);});
+ipcMain.handle('forward-tunnel-port',(event,id,protocol,port)=>{requireMainWindow(event);return tunnelForwarder.forward(id,protocol,port);});
+ipcMain.handle('expose-tunnel-port',(event,id,host,port)=>{requireMainWindow(event);return tunnelForwarder.expose(id,host,port);});
+ipcMain.handle('close-tunnel-scope',(event,id)=>{requireMainWindow(event);return tunnelForwarder.close(id);});
 ipcMain.handle('get-member-routes',event=>{requireMainWindow(event);return memberRoutes.read();});
 const savedPasswords = require('./main/saved-passwords.cjs').createSavedPasswords(path.join(app.getPath('userData'), 'server-passwords.json'), safeStorage);
 const loginStartup = require('./main/login-startup.cjs').createLoginStartup({ exe: process.execPath, appPath: __dirname, packaged: app.isPackaged });
@@ -188,7 +195,8 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   const { normalizePeers } = await import('./renderer/easytier-peers.mjs');
   const peers = normalizePeers(configuredPeers);
   const {easyTierAdvancedArgs,EASYTIER_CONNECTION_ARGS}=await import('./renderer/easytier-options.mjs');
-  const advancedArgs=easyTierAdvancedArgs((await getEasyTierSettings()).get());
+  const advancedConfig=(await getEasyTierSettings()).get(),advancedArgs=easyTierAdvancedArgs(advancedConfig);
+  await tunnelForwarder.clear();
   easytierRpc=null;
   await easytier.stop();
   virtualIp = null;
@@ -201,9 +209,12 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   let ip;
   do { ip = `10.144.${randomInt(1, 255)}.${randomInt(1, 255)}`; } while (addresses().includes(ip));
   const exe = resource('easytier-core.exe');
-  if (!fs.existsSync(resource('wintun.dll'))) throw new Error('缺少 Wintun：请把匹配 Windows x64 的 wintun.dll 放到 app/res 目录');
+  if (!advancedConfig.noTun&&!fs.existsSync(resource('wintun.dll'))) throw new Error('缺少 Wintun：请把匹配 Windows x64 的 wintun.dll 放到 app/res 目录');
+  let readyPoll;
   try {
-    easytierRpc={portal:await allocateRpcPortal(),instance:'screensh-'+randomUUID()};
+    easytierRpc={portal:await allocateRpcPortal(),instance:'screensh-'+randomUUID(),noTun:advancedConfig.noTun,virtualIp:ip};
+    let rpcReady=false,checking=false;
+    if(advancedConfig.noTun){const probeRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytierRpc});readyPoll=setInterval(async()=>{if(checking)return;checking=true;try{const result=await probeRoutes.read();rpcReady=result.available&&result.rows.some(row=>row.ip===ip&&row.route==='本机');}finally{checking=false;}},200);}
     // Addresses span 10.144.0.0/16. Without a prefix EasyTier defaults to /24,
     // sending other members' virtual IPs through the physical default gateway.
     await easytier.start(exe, ['-i', `${ip}/16`, '--network-name', `screensh-${roomId}`,
@@ -211,7 +222,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
     '--rpc-portal',easytierRpc.portal,'--instance-name',easytierRpc.instance,
     ...EASYTIER_CONNECTION_ARGS,...advancedArgs, '-p', ...peers], {
     cwd: path.dirname(exe),
-    probe: () => Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && i.cidr === `${ip}/16`),
+    probe: () => advancedConfig.noTun?rpcReady:Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && i.cidr === `${ip}/16`),
     timeout: 20000,
   });
   } catch (error) {
@@ -222,6 +233,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
     }
     throw error;
   }
+  finally{clearInterval(readyPoll);}
   return virtualIp = ip;
 });
 
@@ -283,9 +295,9 @@ ipcMain.handle('start-sharing', async (_event, config) => {
       const exe = resource('mediamtx.exe');
       await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml")], {
         cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
-        env: { ...process.env, MTX_RTSP: 'false', MTX_RTMP: 'false', MTX_HLS: 'false', MTX_SRT: 'false', MTX_API: 'false', MTX_METRICS: 'false', MTX_PPROF: 'false', MTX_PLAYBACK: 'false', MTX_WEBRTCADDITIONALHOSTS: virtualIp,
-          MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${virtualIp}:8189`,
-          MTX_WEBRTCLOCALTCPADDRESS: `${virtualIp}:8189` },
+        env: { ...process.env, MTX_RTSP: 'false', MTX_RTMP: 'false', MTX_HLS: 'false', MTX_SRT: 'false', MTX_API: 'false', MTX_METRICS: 'false', MTX_PPROF: 'false', MTX_PLAYBACK: 'false', MTX_WEBRTCADDITIONALHOSTS: easytierRpc?.noTun?`${virtualIp},127.0.0.1`:virtualIp,
+          MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${easytierRpc?.noTun?'127.0.0.1':virtualIp}:8189`,
+          MTX_WEBRTCLOCALTCPADDRESS: `${easytierRpc?.noTun?'127.0.0.1':virtualIp}:8189` },
       });
       if (current !== generation) throw new Error('共享启动已取消');
       const result = await obs.start(config);
@@ -308,13 +320,14 @@ ipcMain.handle('stop-sharing', stopShare);
 function leaveRuntime() {
   if (runtimeLeave) return runtimeLeave;
   // Invalidate room access before any asynchronous cleanup can fail.
+  const forwardCleanup=tunnelForwarder.clear();
   virtualIp = null;
   runtimeLeave = Promise.allSettled([
     Promise.resolve().then(() => lolping?.stop()),
     stopShare(),
     Promise.resolve().then(() => voiceRuntime?.stop()),
     Promise.resolve().then(() => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()])),
-    Promise.resolve().then(() => easytier.stop()),
+    forwardCleanup.then(() => easytier.stop()),
   ]).then(results => checkCleanup(results, ['lolPing', '媒体', '语音', '伴奏', '虚拟网络']))
     .finally(() => { virtualIp = null; runtimeLeave = null; });
   return runtimeLeave;

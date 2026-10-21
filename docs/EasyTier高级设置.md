@@ -12,7 +12,9 @@
 
 ## 当前限制
 
-- 无 TUN 模式显示为不可用：语音、屏幕共享和 lolPing 同步依赖虚拟 IP，启动流程也需要等待虚拟网卡就绪。仅关闭 TUN 无法让这些功能正常运行。
+- 无 TUN 模式默认关闭，可以在高级设置启用，保存后重新连接服务器生效。此模式不创建虚拟网卡，通过 EasyTier 动态 TCP/UDP 端口转发接通语音、屏幕共享和频道内 lolPing；不提供供其他软件直接访问的系统虚拟网卡。
+- 无 TUN 模式保留 UDP 媒体传输，增加本机回环转发开销；具体延迟取决于设备和网络。软件安装包仍要求管理员启动，此选项不会更改程序权限清单。IP 面板延迟使用 EasyTier 直连节点报告值，中转时无可靠值则显示“—”。
+- 无 TUN 模式启动时不应用“仅使用物理网卡”和“系统转发”，避免绕过用户态转发路径；这两个选项的保存值不变。为兼容内置 2.6.4 的转发栈生命周期，连接服务器期间保留一条不承载业务的回环 TCP 规则，退出服务器时清理。参考[内置版本实现](https://github.com/EasyTier/EasyTier/blob/v2.6.4/easytier/src/gateway/socks5.rs)。
 - KCP 和 QUIC 代理处理虚拟网中的 TCP 连接，不直接优化 UDP 语音、视频。内置版本同时开启时优先使用 QUIC。
 - 系统转发需要预先配置操作系统转发、路由和防火墙；此开关不会自动配置这些规则。
 - 禁用加密需要通信双方保持一致；魔法 DNS 会调整 Windows DNS 配置。
@@ -61,8 +63,15 @@ npm test
 node scripts/run-electron.cjs smoke-easytier-settings.cjs
 node scripts/run-electron.cjs smoke-channel-ui.cjs
 node tests/integration/smoke-member-routes.cjs
+node scripts/run-electron.cjs smoke-no-tun.cjs
 ```
 
 单元测试会用内置程序的 `--config-file - --check-config` 检查全部参数；此检查不启动网络，也不创建虚拟网卡。界面测试验证本地保存、失败处理、恢复默认、提示位置和小窗口滚动。
 
 成员网络原生测试在回环地址上创建五个无 TUN 节点，验证本机、TCP 直连、TCP6 直连和两跳中转；不会创建虚拟网卡或连接公共节点。
+
+无 TUN 媒体测试创建三个独立 EasyTier 实例，验证三组成员的双向音频解码、关闭语音后加密 lolPing 收发、OBS 发布共享、远端与本机 WHEP 视频解码，以及结束后管理 RPC 中转发规则为空。此测试只连接本机回环节点，不代表所有公网 NAT 和防火墙环境均已验证。
+
+混合模式专项测试：在 Windows 管理员终端中进入 `app` 目录运行 `npm run test:mixed-tun`。测试创建一个唯一命名的临时 TUN 网卡，使用空闲测试地址段 `10.144.242.0/30`，另一端关闭 TUN；交换语音发起方、分别核对两端音频包和解码数据，并验证双向共享、各自预览、加密 lolPing 双向收发和转发规则清理。结束时关闭测试创建的 EasyTier 进程。不会使用现有 EasyTier 实例、公共节点或修改默认路由。
+
+混用时无 TUN 一方的 UDP 转发会改变源端口。TUN 接收端须使用本次更新后的客户端，按成员虚拟地址及加密密钥验证该流，仍执行消息身份、频道隔离和防重放检查。旧版本 TUN 客户端的 lolPing 接收端不具备此兼容处理。

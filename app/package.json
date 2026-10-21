@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -16,6 +16,8 @@
     "test:media": "node scripts/run-electron.cjs smoke-electron.cjs",
     "test:ui": "node scripts/run-electron.cjs smoke-ui.cjs",
     "test:voice": "node scripts/run-electron.cjs smoke-voice.cjs",
+    "test:no-tun": "node scripts/run-electron.cjs smoke-no-tun.cjs",
+    "test:mixed-tun": "node scripts/run-electron.cjs smoke-mixed-tun.cjs",
     "test:mic-meter": "node scripts/run-electron.cjs smoke-mic-meter.cjs",
     "test:speaking": "node scripts/run-electron.cjs smoke-speaking.cjs",
     "test:voice-ui": "node scripts/run-electron.cjs smoke-voice-ui.cjs",

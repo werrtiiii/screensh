@@ -13,7 +13,8 @@ function parsePeerRows(output){
     const route=local?'本机':row.cost==='p2p'?'p2p':/^relay\(\d+\)$/.test(row.cost)?row.cost:'—';
     // Preserve IPv4/IPv6 tunnel labels reported by EasyTier (e.g. tcp6).
     const protocol=typeof row.tunnel_proto==='string'&&/^[a-z0-9,+ _-]{1,100}$/i.test(row.tunnel_proto)&&row.tunnel_proto!=='-'?row.tunnel_proto:'—';
-    return [{ip:row.ipv4,route,protocol:local?'—':protocol}];
+    const latency=Number(row.lat_ms);
+    return [{ip:row.ipv4,route,protocol:local?'—':protocol,...(route==='p2p'&&latency>0&&Number.isFinite(latency)?{rttMs:latency}:{})}];
   });
 }
 function createMemberRoutes({exe,getContext,execute=execFile,now=Date.now}){

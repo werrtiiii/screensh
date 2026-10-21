@@ -4,6 +4,7 @@ import { socket, roomUsers } from './signaling.js';
 import { WhepSession } from './whep.mjs';
 import { attachVideoStats } from './video-stats.mjs';
 import { createShareAdaptation, watchNetwork } from './share-adaptation.mjs';
+import { createMediaTunnel } from './media-tunnel.mjs';
 
 let session = null, sharingGeneration = 0;
 let stoppingPromise = null;
@@ -219,7 +220,7 @@ export async function displayRemoteVideo(targetSocketId) {
       const activeVideo = context.video; if (!activeVideo) return;
       activeVideo.srcObject = context.stream;
       activeVideo.play().catch(() => { if (context.video === activeVideo) toast('请点击视频播放按钮'); });
-    }, fail);
+    }, fail,state.noTun?{tunnel:createMediaTunnel(context.isSelf?state.virtualIp:context.host,true),virtualIp:state.virtualIp}:{});
     session = current;
     context.startFeedback = () => {
       if (context.isSelf || context.feedbackStop || watchContext !== context || state.watchingId !== context.target) return;

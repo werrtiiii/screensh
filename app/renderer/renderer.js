@@ -110,6 +110,7 @@ async function joinServer() {
       Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join(''));
     rememberJoinCredentials({ userName, identity, password });
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
+    state.noTun = (await window.electronAPI.getTunnelMode()) === 'no-tun';
     const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;

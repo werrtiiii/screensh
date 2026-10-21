@@ -11,6 +11,7 @@ ipcMain.handle('voice-start', () => 'test-track');
 ipcMain.handle('voice-stop', () => true);
 ipcMain.handle('voice-devices', () => [{ id: 'default', name: '测试信号' }]);
 ipcMain.handle('get-hardware-acceleration', () => false);
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', () => '10.144.1.1');
 app.whenReady().then(async () => {
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });

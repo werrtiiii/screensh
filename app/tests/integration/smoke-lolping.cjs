@@ -15,7 +15,8 @@ app.whenReady().then(async () => {
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
   const runtime = event => runtimes.get(event.sender.id);
   ipcMain.handle('get-hardware-acceleration', () => false); ipcMain.handle('get-login-startup', () => false); ipcMain.handle('save-server-password', () => {});
-  ipcMain.handle('start-easytier', event => '127.0.0.' + (windows.findIndex(w=>w.webContents.id===event.sender.id)+2));
+  ipcMain.handle('get-tunnel-mode',()=> 'tun');
+ipcMain.handle('start-easytier', event => '127.0.0.' + (windows.findIndex(w=>w.webContents.id===event.sender.id)+2));
   ipcMain.handle('stop-sharing', () => {}); ipcMain.handle('leave-runtime', event => runtime(event).stop());
   ipcMain.handle('lolping-get', (event,id) => runtime(event).get(id));
   ipcMain.handle('lolping-save', (event,id,config) => runtime(event).save(id,config));

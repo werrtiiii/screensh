@@ -6,6 +6,7 @@ app.disableHardwareAcceleration(); app.setPath('userData', path.join(root, '.run
 app.on('window-all-closed', () => {});
 let sourceId, stops = 0, pcmTimer, phase = 0;
 ipcMain.handle('get-hardware-acceleration', () => false);
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', () => '10.144.1.1');
 ipcMain.handle('voice-start', () => 'http://127.0.0.1/microphone'); ipcMain.handle('voice-stop', () => {});
 ipcMain.handle('voice-devices', () => [{ id: 'default', name: 'Test microphone' }]);

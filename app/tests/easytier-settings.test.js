@@ -1,12 +1,19 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const {createEasyTierSettings}=require('../main/easytier-settings.cjs');
 const schema=()=>import('../renderer/easytier-options.mjs');
+test('no TUN applies compatible forwarding flags without overwriting saved choices',async()=>{
+  const {normalizeEasyTierSettings,easyTierAdvancedArgs}=await schema();
+  const saved=normalizeEasyTierSettings({noTun:true,bindDevice:true,proxyForwardBySystem:true});
+  const args=easyTierAdvancedArgs(saved);
+  for(const flag of ['--bind-device','--proxy-forward-by-system'])assert.equal(args[args.indexOf(flag)+1],'false');
+  assert.equal(args[args.indexOf('--no-tun')+1],'true');assert.equal(saved.bindDevice,true);assert.equal(saved.proxyForwardBySystem,true);
+});
 test('advanced settings persist locally and reject values that could break the tunnel or inject arguments',async t=>{
   const {normalizeEasyTierSettings,easyTierAdvancedArgs,EASYTIER_OPTIONS}=await schema();const directory=fs.mkdtempSync(path.join(os.tmpdir(),'et-settings-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const file=path.join(directory,'settings.json'),create=()=>createEasyTierSettings({file,normalize:normalizeEasyTierSettings}),store=create();
   assert.equal(store.get().multiThread,true);assert.equal(EASYTIER_OPTIONS.length,19);assert.equal(store.get().noTun,false);
   const settings=store.set({latencyFirst:true,multiThread:false,acceptDns:true});assert.deepEqual(create().get(),settings);
-  assert.throws(()=>store.set({disableP2p:'--no-tun'}),/布尔/);assert.throws(()=>store.set({noTun:true}),/TUN/);assert.deepEqual(store.get(),settings);
+  assert.throws(()=>store.set({disableP2p:'--no-tun'}),/布尔/);assert.deepEqual(store.get(),settings);assert.equal(store.set({...settings,noTun:true}).noTun,true);
   const args=easyTierAdvancedArgs({...settings,untrusted:'--network-secret hacked'});assert.equal(args.length,38);assert.equal(args[args.indexOf('--latency-first')+1],'true');assert.equal(args[args.indexOf('--multi-thread')+1],'false');assert.equal(args[args.indexOf('--no-tun')+1],'false');assert.ok(!args.some(value=>value.includes('hacked')));
   fs.writeFileSync(file,'{broken');assert.throws(()=>store.get(),/无法读取/);assert.equal(fs.readFileSync(file,'utf8'),'{broken');
 });

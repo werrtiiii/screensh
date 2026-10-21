@@ -17,6 +17,18 @@ async function deliver(a,b,bytes) {
   const arrived=once(b.transport.socket,'message');
   a.transport.socket.send(bytes,b.transport.endpoint.port,b.context.virtualIp); await arrived;
 }
+
+test('TUN receivers authenticate translated source ports without accepting foreign addresses, tampering or replays',async t=>{
+  const a=await create(t,'forwarded'),b=await create(t,'tun');
+  a.transport.updatePeers([b.peer]);b.transport.updatePeers([a.peer]);
+  let wire;a.transport.socket.send=bytes=>{wire=Buffer.from(bytes);};a.transport.send(event);
+  const remote={address:a.context.virtualIp,port:a.transport.endpoint.port===45000?45001:45000};
+  b.transport.read(wire,{...remote,address:'127.0.0.2'});assert.equal(b.packets.length,0,'only authenticated member addresses may identify flows');
+  const altered=Buffer.from(wire);altered[20]^=1;b.transport.read(altered,remote);assert.equal(b.packets.length,0);
+  b.transport.read(wire,remote);assert.equal(b.packets.length,1,'changed UDP source port remains interoperable');
+  b.transport.read(wire,{...remote,port:remote.port+2});assert.equal(b.packets.length,1,'port changes cannot bypass replay protection');
+  b.transport.updatePeers([]);b.transport.read(wire,remote);assert.equal(b.packets.length,1);
+});
 test('UDP events are encrypted directly between peers; altered and replayed packets cannot render twice', async t=>{
   const a=await create(t,'alice'),b=await create(t,'bob');
   a.transport.updatePeers([b.peer]);b.transport.updatePeers([a.peer]);

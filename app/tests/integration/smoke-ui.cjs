@@ -18,6 +18,7 @@ ipcMain.handle('voice-stop', () => true);
 ipcMain.handle('voice-devices', () => [{ id: 'default', name: '测试麦克风' }]);
 ipcMain.handle('get-hardware-acceleration', () => hardwareAcceleration);
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => { hardwareAcceleration = enabled; return enabled; });
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', (_event, _roomId, peers) => { networkPeers = peers; return '10.144.1.1'; });
 ipcMain.handle('get-screens', () => [{ id: 'window-test', type: 'window', name: 'Test window' }]);
 ipcMain.handle('start-sharing', (_event, config) => {

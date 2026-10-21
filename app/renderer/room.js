@@ -405,6 +405,7 @@ export async function leaveRoom() {
   state.roomId = null; state.channelId = null; state.channels = []; state.serverUsers = [];
   state.serverName = '0091 Server';
   state.virtualIp = null;
+  state.noTun = false;
   state.activeSharerId = null;
   state.selectedSourceId = null;
   $('#screenPicker').classList.add('hidden');

@@ -2,7 +2,7 @@ const fs = require('node:fs'), path = require('node:path');
 const { isIPv4 } = require('node:net');
 const { EasyTierLolPing } = require('./easytier.cjs');
 const { LolPingRoom, roomEventValid } = require('./room.cjs');
-const contextKey = context => context && JSON.stringify([context.serverId,context.channelId,context.socketId,context.virtualIp]);
+const contextKey = context => context && JSON.stringify([context.serverId,context.channelId,context.socketId,context.virtualIp,!!context.noTun]);
 const serverIdValid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
 const GLOBAL_CONFIG_ID = '00000000-0000-0000-0000-000000000000';
 const CONFIG_KEYS = ['trigger', 'dragThresholdPx', 'clickPing', 'clickPingId', 'gameCheck', 'wheelSizePx', 'wheel',
@@ -53,7 +53,7 @@ class LolPingRuntime {
   async sync(raw) {
     const context = raw && serverIdValid(raw.serverId) && (raw.channelId === null || typeof raw.channelId === 'string' && raw.channelId.length > 0 && raw.channelId.length <= 80)
       && typeof raw.socketId === 'string' && raw.socketId.length > 0 && raw.socketId.length <= 100 && (raw.channelId === null || isIPv4(raw.virtualIp)) && raw.connected === true ?
-      { serverId: raw.serverId, channelId: raw.channelId, socketId: raw.socketId, name: String(raw.name || '').slice(0,40), virtualIp: isIPv4(raw.virtualIp)?raw.virtualIp:null, peers: raw.channelId === null ? [] : raw.peers, connected: true } : null;
+      { serverId: raw.serverId, channelId: raw.channelId, socketId: raw.socketId, name: String(raw.name || '').slice(0,40), virtualIp: isIPv4(raw.virtualIp)?raw.virtualIp:null, noTun:raw.noTun===true, peers: raw.channelId === null ? [] : raw.peers, connected: true } : null;
     this.context = context;
     const key = context && this.get(context.serverId).config.enabled ? contextKey(context) : null;
     const revision = ++this.revision;

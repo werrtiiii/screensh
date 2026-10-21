@@ -5,6 +5,7 @@ const root = path.resolve(__dirname, "../..");
 app.disableHardwareAcceleration(); app.setPath('userData', path.join(root, '.runtime-probe', 'reconnect-' + process.pid));
 app.on('window-all-closed', () => {});
 ipcMain.handle('get-hardware-acceleration', () => false);
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', () => '10.144.1.1');
 ipcMain.handle('stop-sharing', () => {}); ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('voice-stop', () => {});
 app.whenReady().then(async () => {

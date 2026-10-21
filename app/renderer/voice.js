@@ -6,6 +6,7 @@ import { toast } from './toast.js';
 import { channelVoiceBitrate, allowOpusStereo, setVoiceBitrate } from './voice-encoding.mjs';
 import { preferVoicePacketTime, preferVoiceReceiveLatency } from './voice-latency.mjs';
 import { voiceIcon } from './voice-icons.mjs';
+import { createMediaTunnel } from './media-tunnel.mjs';
 
 const voice = { enabled: false, busy: false, muted: localStorage.getItem('voiceMuted') === 'true', deafened: localStorage.getItem('voiceDeafened') === 'true', testing: false, channel: null };
 const peers = new Map(), levels = new Map(), volumes = new Map();
@@ -104,6 +105,7 @@ async function route(audio) {
 function closePeer(id) {
   const peer = peers.get(id); if (!peer) return;
   peers.delete(id); peer.disposeMeter?.(); peer.pc.close(); peer.audio.pause(); peer.audio.srcObject = null; peer.audio.remove(); speaking(id, false);
+  return peer.tunnel?.close();
 }
 function applyMute() {
   const me = state.serverUsers.find(u => u.socketId === socket?.id);
@@ -200,10 +202,10 @@ function ensurePeer(user) {
   if (peers.has(user.socketId)) return peers.get(user.socketId);
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
   const audio = document.createElement('audio'); audio.autoplay = true; audio.hidden = true; document.body.append(audio);
-  const peer = { pc, audio, queued: [], chain: Promise.resolve() }; peers.set(user.socketId, peer);
+  const peer = { pc, audio, tunnel:createMediaTunnel(user.virtualIp,state.noTun), queued: [], chain: Promise.resolve() }; peers.set(user.socketId, peer);
   outgoing.getAudioTracks().forEach(track => pc.addTrack(track, outgoing));
   pc.onicecandidate = event => {
-    if (event.candidate && candidateAllowed(event.candidate.candidate, state.virtualIp)) signal(user.socketId, { candidate: event.candidate.toJSON() }).catch(announce);
+    if(event.candidate)void peer.tunnel.localCandidate(event.candidate.toJSON(),state.virtualIp).then(candidate=>{if(candidate&&peers.get(user.socketId)===peer)return signal(user.socketId,{candidate});}).catch(announce);
   };
   pc.ontrack = async event => {
     if (event.track.kind !== 'audio' || peers.get(user.socketId) !== peer) return;
@@ -254,7 +256,7 @@ async function applyPeerBitrate(peer) {
 }
 async function offer(user) {
   const peer = ensurePeer(user);
-  try { const description = await peer.pc.createOffer(); description.sdp = preferVoicePacketTime(allowOpusStereo(description.sdp)); await peer.pc.setLocalDescription(description); await signal(user.socketId, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) }); }
+  try { const description = await peer.pc.createOffer(); description.sdp = preferVoicePacketTime(allowOpusStereo(description.sdp)); await peer.pc.setLocalDescription(description); await signal(user.socketId, { description: await peer.tunnel.localDescription(state.noTun?peer.pc.localDescription:onlyVirtualSDP(peer.pc.localDescription,state.virtualIp), state.virtualIp) }); }
   catch (error) { if (peers.get(user.socketId) === peer) { closePeer(user.socketId); announce(error); schedulePeerRetry(user); } }
 }
 export function receiveVoice({ from, data }) {
@@ -265,16 +267,17 @@ export function receiveVoice({ from, data }) {
   peer.chain = peer.chain.then(async () => {
     if (data.description) {
       if (!['offer', 'answer'].includes(data.description.type) || typeof data.description.sdp !== 'string') return;
-      await peer.pc.setRemoteDescription(onlyVirtualSDP(data.description, user.virtualIp));
+      await peer.pc.setRemoteDescription(await peer.tunnel.remoteDescription(onlyVirtualSDP(data.description,user.virtualIp)));
       for (const candidate of peer.queued.splice(0)) await peer.pc.addIceCandidate(candidate);
       if (data.description.type === 'offer') {
         const description = await peer.pc.createAnswer(); description.sdp = preferVoicePacketTime(allowOpusStereo(description.sdp));
         await peer.pc.setLocalDescription(description);
-        await signal(from, { description: onlyVirtualSDP(peer.pc.localDescription, state.virtualIp) });
+        await signal(from, { description: await peer.tunnel.localDescription(state.noTun?description:onlyVirtualSDP(peer.pc.localDescription,state.virtualIp),state.virtualIp) });
       }
       await applyPeerBitrate(peer);
     } else if (data.candidate && candidateAllowed(data.candidate.candidate, user.virtualIp)) {
-      if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(data.candidate); else peer.queued.push(data.candidate);
+      const candidate=await peer.tunnel.remoteCandidate(data.candidate);if(!candidate)return;
+      if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(candidate); else peer.queued.push(candidate);
     }
   }).catch(error => { if (peers.get(from) === peer) announce(error); });
 }
@@ -371,11 +374,11 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   attemptedChannel = null; if (!preserveCapture) generation++; announcedSpeaking = null;
   for (const timer of peerRetries.values()) clearTimeout(timer); peerRetries.clear(); peerRetryCounts.clear();
   const wasEnabled = voice.enabled; voice.enabled = false; voice.busy = false; voice.channel = null;
-  for (const id of [...peers.keys()]) closePeer(id);
+  const closingPeers=[...peers.keys()].map(closePeer);
   localMeter?.(); localMeter = null;
   if (preserveCapture) {
     testOwnsCapture = true; applyMute(); paintControls();
-    return Promise.all([stoppingAccompaniment, wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]);
+    return Promise.all([...closingPeers,stoppingAccompaniment, wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]);
   }
   captureController?.abort();
   const pendingCapture = capturePending;
@@ -385,7 +388,7 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   const closing = context?.close(); context = null;
   if (!voice.testing && $('#microphoneLevel')) $('#microphoneLevel').value = 0;
   paintControls();
-  cleanup = Promise.allSettled([stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
+  cleanup = Promise.allSettled([...closingPeers,stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
     const failed = results.find(r => r.status === 'rejected'); if (failed) announce(failed.reason);
   }).finally(() => { cleanup = null; });
   return cleanup;

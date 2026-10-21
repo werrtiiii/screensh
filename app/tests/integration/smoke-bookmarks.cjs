@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, "../..");
 app.disableHardwareAcceleration(); app.setPath('userData', path.join(root, '.runtime-probe', 'bookmarks-' + process.pid));
 app.on('window-all-closed', () => {});
 ipcMain.handle('get-hardware-acceleration', () => false);
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', () => '10.144.9.2');
 for (const event of ['stop-sharing', 'leave-runtime', 'voice-stop']) ipcMain.handle(event, () => {});
 app.whenReady().then(async () => {

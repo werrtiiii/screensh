@@ -10,6 +10,7 @@ let login=false,starts=0;
 ipcMain.handle('get-hardware-acceleration',()=>false);
 ipcMain.handle('get-login-startup',()=>login);ipcMain.handle('set-login-startup',(_e,value)=>(login=value));
 ipcMain.handle('get-saved-server-password',(_e,url,id)=>vault.get(url,id));ipcMain.handle('save-server-password',(_e,url,id,password)=>vault.set(url,id,password));
+ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier',()=>{starts++;return '10.144.19.2';});ipcMain.handle('leave-runtime',()=>{});ipcMain.handle('stop-sharing',()=>{});
 app.whenReady().then(async()=>{
  const {server,io}=createSignalingServer({initialPeers:'test.example:11010'});let win,owner;

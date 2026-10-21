@@ -11,9 +11,10 @@ const virtualIpValid = (ip, loopback) => isIPv4(ip) && (/^10\.144\./.test(ip) ||
 // Membership is supplied by the authenticated channel server. All event data
 // goes directly over sockets bound to the EasyTier interface, never broadcast.
 class EasyTierLolPing {
-  constructor({ context, onPacket, onError, validEvent, allowLoopback = false }) {
+  constructor({ context, onPacket, onError, validEvent, allowLoopback = false, forwarder }) {
     if (!virtualIpValid(context.virtualIp, allowLoopback)) throw Error('lolPing 需要有效的 EasyTier 虚拟 IP');
     this.context = context; this.onPacket = onPacket; this.onError = onError; this.validEvent = validEvent; this.allowLoopback = allowLoopback;
+    this.forwarder=forwarder;this.forwardScopes=new Map();this.forwardFlows=new Map();this.identifyTokens=40;this.identifyRefill=Date.now();
     const keys = generateKeyPairSync('x25519'); this.privateKey = keys.privateKey;
     this.publicKey = keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
     this.aad = Buffer.from(JSON.stringify(['ScreenSh/lolPing/EasyTier/1', context.serverId, context.channelId]));
@@ -28,7 +29,7 @@ class EasyTierLolPing {
       const failed = error => { socket.removeListener('listening', ready); reject(error); };
       const ready = () => { socket.removeListener('error', failed); resolve(); };
       socket.once('error', failed); socket.once('listening', ready);
-      socket.bind(0, this.context.virtualIp);
+      socket.bind(0, this.context.noTun?'127.0.0.1':this.context.virtualIp);
     }).catch(() => { throw Error('lolPing 无法绑定 EasyTier 虚拟网卡，请确认虚拟网络已连接'); });
     socket.on('error', error => { if (!this.closed) this.onError(error); });
     this.endpoint = { port: socket.address().port, publicKey: this.publicKey };
@@ -54,6 +55,13 @@ class EasyTierLolPing {
       } catch {} // Invalid public keys cannot participate or stop other peers.
     }
     this.peers = peers;
+    if(this.context.noTun){
+      for(const [key,entry] of this.forwardScopes)if(![...peers.values()].some(peer=>peer.socketId===key&&peer.publicKey===entry.key&&peer.ip===entry.ip&&peer.port===entry.port)){this.forwardScopes.delete(key);void this.forwarder.close(entry.id);}
+      for(const peer of peers.values())if(!this.forwardScopes.has(peer.socketId)){
+        const scope=this.forwarder.open(peer.ip),entry={id:scope.id,key:peer.publicKey,ip:peer.ip,port:peer.port};this.forwardScopes.set(peer.socketId,entry);
+        void this.forwarder.forward(scope.id,'udp',peer.port,false).then(target=>{if(this.closed||this.forwardScopes.get(peer.socketId)!==entry)return this.forwarder.close(scope.id);peer.sendIp=target.host;peer.sendPort=target.port;}).catch(error=>{if(!this.closed)this.onError(error);});
+      }
+    }
   }
   send(event) {
     if (this.closed || !this.endpoint || !this.validEvent(event)) return;
@@ -66,11 +74,24 @@ class EasyTierLolPing {
     for (const peer of this.peers.values()) {
       const nonce = randomBytes(12), cipher = createCipheriv('aes-256-gcm', peer.key, nonce); cipher.setAAD(this.aad);
       const packet = Buffer.concat([Buffer.from([VERSION]), nonce, cipher.update(body), cipher.final(), cipher.getAuthTag()]);
-      this.socket.send(packet, peer.port, peer.ip, () => {}); // Unreachable peers never interrupt local input.
+      if(this.context.noTun&&!peer.sendPort)continue;
+      this.socket.send(packet, peer.sendPort||peer.port, peer.sendIp||peer.ip, () => {}); // Unreachable peers never interrupt local input.
     }
   }
   read(bytes, remote) {
     if (this.closed || bytes.length < 29 || bytes.length > MAX_PACKET || bytes[0] !== VERSION) return;
+    // A no-TUN sender's userspace forward changes its UDP source port.
+    // Identify that flow by its authenticated member key, never by port alone.
+    if(this.context.noTun||!this.peers.has(`${remote.address}:${remote.port}`)){
+      if(this.context.noTun?remote.address!=='127.0.0.1':![...this.peers.values()].some(peer=>peer.ip===remote.address))return;
+      const flowKey=remote.address+':'+remote.port;let address=this.forwardFlows.get(flowKey);
+      if(!address||!this.peers.has(address)){
+        const now=Date.now();this.identifyTokens=Math.min(40,this.identifyTokens+Math.max(0,now-this.identifyRefill)/50);this.identifyRefill=now;if(this.identifyTokens<1)return;this.identifyTokens--;
+        for(const [key,peer] of this.peers){if(!this.context.noTun&&peer.ip!==remote.address)continue;try{const decipher=createDecipheriv('aes-256-gcm',peer.key,bytes.subarray(1,13));decipher.setAAD(this.aad);decipher.setAuthTag(bytes.subarray(-16));const packet=JSON.parse(Buffer.concat([decipher.update(bytes.subarray(13,-16)),decipher.final()]).toString('utf8'));if(packet.from===peer.socketId){address=key;break;}}catch{}}
+        if(!address)return;if(this.forwardFlows.size>=1024)this.forwardFlows.clear();this.forwardFlows.set(flowKey,address);
+      }
+      const peer=this.peers.get(address);remote={address:peer.ip,port:peer.port};
+    }
     const peer = this.peers.get(`${remote.address}:${remote.port}`); if (!peer) return;
     const now = Date.now();
     this.receiveTokens = Math.min(400, this.receiveTokens + Math.max(0, now - this.receiveRefill) / 5); this.receiveRefill = now;
@@ -90,9 +111,10 @@ class EasyTierLolPing {
   }
   stop() {
     this.closed = true; this.endpoint = null; this.peers.clear(); this.peerCache.clear();
+    const closing=[...this.forwardScopes.values()].map(entry=>this.forwarder.close(entry.id));this.forwardScopes.clear();this.forwardFlows.clear();
     const socket = this.socket; this.socket = null;
-    if (!socket) return Promise.resolve();
-    return new Promise(resolve => { try { socket.close(resolve); } catch { resolve(); } });
+    if (socket) closing.push(new Promise(resolve => { try { socket.close(resolve); } catch { resolve(); } }));
+    return Promise.allSettled(closing);
   }
 }
 module.exports = { EasyTierLolPing, publicKeyValid };

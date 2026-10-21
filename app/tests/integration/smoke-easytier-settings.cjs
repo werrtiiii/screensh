@@ -17,7 +17,7 @@ app.whenReady().then(async()=>{let win;
     await win.loadFile(path.join(root,'renderer/index.html'));await run(`(async()=>{await import('./renderer.js');document.querySelector('#btnSettings').click();document.querySelector('#btnEasyTierAdvanced').click();})()`);
     await wait(`!document.querySelector('#easyTierSave').disabled`);win.show();win.focus();await new Promise(resolve=>setTimeout(resolve,260));
     assert.equal(await run(`document.querySelectorAll('[data-easytier-option]').length`),19);
-    assert.equal(await run(`document.querySelector('#easyTier-multiThread').checked&&!document.querySelector('#easyTier-latencyFirst').checked&&document.querySelector('#easyTier-noTun').disabled`),true);
+    assert.equal(await run(`document.querySelector('#easyTier-multiThread').checked&&!document.querySelector('#easyTier-latencyFirst').checked&&!document.querySelector('#easyTier-noTun').disabled&&!document.querySelector('#easyTier-noTun').checked`),true);
     await run(`document.querySelector('.easytier-option .help-tip').focus()`);
     assert.equal(await run(`(()=>{const rect=document.querySelector('#easyTierHelpTooltip').getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth&&rect.top>=0&&rect.bottom<=innerHeight&&document.querySelector('#easyTierHelpTooltip').textContent.includes('延迟')})()`),true,'help stays within the viewport');
     await run(`document.querySelector('#easyTier-latencyFirst').click();document.querySelector('#easyTier-disableUdpHolePunching').click();document.querySelector('#easyTier-multiThread').click();document.querySelector('#easyTierSettingsForm').requestSubmit()`);

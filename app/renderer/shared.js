@@ -14,6 +14,7 @@ export const state = {
   switchingChannel: false,
   userName: null,
   virtualIp: null, // 当前本机的 EasyTier VIP
+  noTun: false,
   isSharing: false,
   startingShare: false,
   stoppingShare: false,

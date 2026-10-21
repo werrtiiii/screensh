@@ -12,7 +12,7 @@ export const EASYTIER_OPTIONS = [
   ['disableQuicInput','disable-quic-input','禁用 QUIC 输入','不接受其他节点通过 QUIC 代理访问本机的 TCP 连接，对方会改用其他可用方式。'],
   ['disableP2p','disable-p2p','禁用 P2P','禁用普通的自动 P2P 直连，通常改走已连接节点中转；明确标记为需要 P2P 的节点仍可能建立直连。'],
   ['bindDevice','bind-device','仅使用物理网卡','将 EasyTier 连接器的套接字绑定到物理设备，减少虚拟网卡或代理网段带来的路由冲突；不是指定某一张网卡。'],
-  ['noTun','no-tun','无 TUN 模式','不创建虚拟网卡，主要用于子网代理。当前软件的语音、屏幕共享和 lolPing 同步依赖虚拟网卡，暂不可启用。'],
+  ['noTun','no-tun','无 TUN 模式','不创建系统虚拟网卡，通过本地端口转发传输语音、共享和 lolPing。下次连接生效；兼容模式会增加本地转发开销，建议优先使用默认 TUN 模式。'],
   ['enableExitNode','enable-exit-node','启用出口节点','允许其他节点选择本机作为互联网流量出口，可能增加本机带宽占用；开启此项不会让本机改用别人的出口。'],
   ['relayAllPeerRpc','relay-all-peer-rpc','转发 RPC 包','允许转发网络白名单之外节点的控制 RPC 数据包，帮助发现节点和建立 P2P；不是开放本机的管理 RPC 端口。'],
   ['multiThread','multi-thread','启用多线程','使用多线程运行时处理网络任务，提高多核并发能力，CPU 和内存开销可能增加；关闭后使用单线程。'],
@@ -22,7 +22,7 @@ export const EASYTIER_OPTIONS = [
   ['disableSymHolePunching','disable-sym-hole-punching','禁用对称 NAT 打洞','关闭基于生日碰撞的对称 NAT UDP 打洞，减少相关探测流量，但可能降低复杂 NAT 下的直连成功率。'],
   ['acceptDns','accept-dns','启用魔法 DNS','通过“主机名.et.net”访问其他节点，无需记住虚拟 IP；在 Windows 上会调整 DNS 配置，可能影响现有 DNS 解析。'],
   ['privateMode','private-mode','启用私有模式','限制外部网络借本机接入或转发，拒绝无法验证相同网络密钥或受信凭据的外部节点；不能代替服务器加入密码。'],
-].map(([key,flag,label,help])=>({key,flag:'--'+flag,label,help,defaultValue:key==='multiThread',unavailable:key==='noTun'}));
+].map(([key,flag,label,help])=>({key,flag:'--'+flag,label,help,defaultValue:key==='multiThread',unavailable:false}));
 
 export function normalizeEasyTierSettings(value={}) {
   if(!value||typeof value!=='object'||Array.isArray(value))throw Error('EasyTier 高级设置无效');
@@ -34,4 +34,4 @@ export function normalizeEasyTierSettings(value={}) {
   }
   return result;
 }
-export function easyTierAdvancedArgs(value){const config=normalizeEasyTierSettings(value);return EASYTIER_OPTIONS.flatMap(option=>[option.flag,String(config[option.key])]);}
+export function easyTierAdvancedArgs(value){const config=normalizeEasyTierSettings(value);if(config.noTun){config.bindDevice=false;config.proxyForwardBySystem=false;}return EASYTIER_OPTIONS.flatMap(option=>[option.flag,String(config[option.key])]);}

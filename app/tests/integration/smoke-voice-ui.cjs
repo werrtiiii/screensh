@@ -17,7 +17,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('lolping-get', () => ({ config: { enabled: false } }));
   ipcMain.handle('lolping-sync', () => {});
   ipcMain.handle('ping-member', (_event, ip) => ({ ip, rttMs: 1 }));
-  ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
+  ipcMain.handle('get-tunnel-mode',()=> 'tun');
+ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
   ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('stop-sharing', () => {});
   const run = (w, code) => w.webContents.executeJavaScript(code, true);
   const wait = async (w, condition) => {
