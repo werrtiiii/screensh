@@ -21,7 +21,12 @@ export async function setVoiceBitrate(pc, kbps) {
     if (sender.track?.kind !== 'audio') continue;
     const parameters = sender.getParameters();
     if (!parameters.encodings?.length) continue;
-    for (const encoding of parameters.encodings) encoding.maxBitrate = kbps * 1000;
+    for (const encoding of parameters.encodings) {
+      // This is a ceiling for adaptive Opus, not a constant wire bitrate.
+      encoding.maxBitrate = kbps * 1000;
+      encoding.priority = 'high';
+      encoding.networkPriority = 'high';
+    }
     await sender.setParameters(parameters);
   }
 }

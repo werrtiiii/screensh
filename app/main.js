@@ -51,6 +51,8 @@ let mainWindow, obs, virtualIp, generation = 0, quitting = false;
 let trayController, quitReady = false, quitPromise;
 let shareStart = null, shareStop = null, shareCleanup = null, runtimeLeave = null;
 const resource = name => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, "./res"), name);
+const audioTiming=require('./main/audio-timing.cjs').createAudioTiming({exe:resource('screensh-media-udp.exe'),getProcesses:()=>app.getAppMetrics()});
+ipcMain.handle('set-voice-timing',(event,active)=>{requireMainWindow(event);return audioTiming.setActive(active);});
 let lolping;
 function getLolPing() {
   if (!lolping) {
@@ -73,6 +75,7 @@ function failure(message) {
 }
 const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
+let sharePacer=null;
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
 ipcMain.handle('ping-member', async (_event, ip) => {if(easytierRpc?.noTun){const result=await memberRoutes.read(),row=result.rows.find(row=>row.ip===ip);return {ip,rttMs:row?.rttMs??null,noTun:true};}return memberPinger.ping(ip);});
@@ -163,7 +166,7 @@ ipcMain.handle('accompaniment-start', (_event, sourceId) => {
 });
 ipcMain.handle('accompaniment-stop', () => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()]));
 // Expose virtual adapter candidates for the channel voice mesh.
-app.commandLine?.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+require('./main/realtime-policy.cjs').configureRealtimeScheduling(app.commandLine);
 
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -269,7 +272,8 @@ function stopShareResources() {
   shareCleanup = Promise.allSettled([
     Promise.resolve().then(() => obs?.stop()),
     Promise.resolve().then(() => mediamtx.stop()),
-  ]).then(results => checkCleanup(results, ['OBS', 'MediaMTX']))
+    Promise.resolve().then(async()=>{const pacer=sharePacer;sharePacer=null;await pacer?.stop();}),
+  ]).then(results => checkCleanup(results, ['OBS', 'MediaMTX', '媒体 UDP']))
     .finally(() => { shareCleanup = null; });
   return shareCleanup;
 }
@@ -293,10 +297,11 @@ ipcMain.handle('start-sharing', async (_event, config) => {
   shareStart = (async () => {
     try {
       const exe = resource('mediamtx.exe');
+      if(easytierRpc?.noTun){sharePacer=require('./main/media-udp-pacer.cjs').createMediaUdpPacer({port:8189,exe:resource('screensh-media-udp.exe'),onFailure:failure});await sharePacer.start();}
       await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml")], {
         cwd: path.dirname(exe), ready: log => /\[WebRTC\] listener opened/.test(log),
         env: { ...process.env, MTX_RTSP: 'false', MTX_RTMP: 'false', MTX_HLS: 'false', MTX_SRT: 'false', MTX_API: 'false', MTX_METRICS: 'false', MTX_PPROF: 'false', MTX_PLAYBACK: 'false', MTX_WEBRTCADDITIONALHOSTS: easytierRpc?.noTun?`${virtualIp},127.0.0.1`:virtualIp,
-          MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${easytierRpc?.noTun?'127.0.0.1':virtualIp}:8189`,
+          MTX_WEBRTCIPSFROMINTERFACES: 'false', MTX_WEBRTCLOCALUDPADDRESS: `${easytierRpc?.noTun?'127.0.0.2':virtualIp}:8189`,
           MTX_WEBRTCLOCALTCPADDRESS: `${easytierRpc?.noTun?'127.0.0.1':virtualIp}:8189` },
       });
       if (current !== generation) throw new Error('共享启动已取消');
@@ -326,9 +331,10 @@ function leaveRuntime() {
     Promise.resolve().then(() => lolping?.stop()),
     stopShare(),
     Promise.resolve().then(() => voiceRuntime?.stop()),
+    audioTiming.setActive(false),
     Promise.resolve().then(() => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()])),
     forwardCleanup.then(() => easytier.stop()),
-  ]).then(results => checkCleanup(results, ['lolPing', '媒体', '语音', '伴奏', '虚拟网络']))
+  ]).then(results => checkCleanup(results, ['lolPing', '媒体', '语音', '语音计时', '伴奏', '虚拟网络']))
     .finally(() => { virtualIp = null; runtimeLeave = null; });
   return runtimeLeave;
 }

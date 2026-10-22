@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
-  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
+  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node']) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
 }
@@ -21,13 +21,25 @@ const helper = spawnSync(path.join(resources,'lolping-hook-helper.exe'), ['--sim
 });
 if(helper.error || helper.status!==0 || !helper.stdout.includes('"type":"ready"'))throw helper.error || new Error('Packaged lolPing input helper failed: '+helper.stderr);
 console.log('PACKAGED_LOLPING_HELPER_OK');
+const mediaPacer=spawnSync(path.join(resources,'screensh-media-udp.exe'),['0','12345'],{windowsHide:true,encoding:'utf8',timeout:500});
+if(mediaPacer.error?.code!=='ETIMEDOUT'||!mediaPacer.stdout.includes('"type":"ready"'))throw Error('Packaged media UDP helper failed: '+mediaPacer.stderr);
+console.log('PACKAGED_MEDIA_UDP_OK');
+const timingApply=spawnSync(path.join(resources,'screensh-media-udp.exe'),['--audio-policy','apply',String(process.pid)],{windowsHide:true,encoding:'utf8',timeout:5000});
+if(timingApply.status!==0)throw Error('Packaged audio timing helper failed');
+const timingState=JSON.parse(timingApply.stdout);
+if(timingState.applied){
+  const token=`${timingState.pid}:${timingState.created}:${timingState.control}:${timingState.state}`;
+  const restored=spawnSync(path.join(resources,'screensh-media-udp.exe'),['--audio-policy','restore',token],{windowsHide:true,encoding:'utf8',timeout:5000});
+  if(restored.status!==0||!JSON.parse(restored.stdout).applied)throw Error('Packaged audio timing policy restoration failed');
+}
+console.log('PACKAGED_AUDIO_TIMING_OK');
 const probe = `
   const { createRequire } = require('node:module');
   const load = createRequire(${JSON.stringify(manifest)});
   const fs = require('node:fs'), path = require('node:path'), root = path.dirname(${JSON.stringify(manifest)});
   for (const file of ['main/saved-passwords.cjs','main/login-startup.cjs','main/capture-sources.js','renderer/ui.css','renderer/ui.js','renderer/app-presence.mjs','renderer/channel-sound-tracker.mjs',
     'renderer/chat.js','renderer/chat.css','renderer/chat-cache.mjs','renderer/chat-image-type.mjs','renderer/chat-markup.mjs','renderer/chat-video.mjs',
-    'main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','main/tunnel-forwarder.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
+    'main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','main/tunnel-forwarder.cjs','main/media-udp-pacer.cjs','main/audio-timing.cjs','main/realtime-policy.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
     'lolping/runtime.cjs','lolping/room.cjs','lolping/easytier.cjs','lolping/windows.cjs',
     'lolping/dist/main/core.cjs','lolping/dist/preload/overlay.cjs','lolping/dist/ui/preload.cjs','lolping/dist/settings-tools.mjs',
     'lolping/dist/renderer/overlay/index.html','lolping/dist/renderer/overlay/main.js','lolping/dist/renderer/overlay/main.css',

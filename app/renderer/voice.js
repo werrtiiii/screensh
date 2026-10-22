@@ -29,6 +29,7 @@ const microphone = () => localStorage.getItem('voiceMicrophone') || 'default';
 if (microphone().startsWith('{')) localStorage.setItem('voiceMicrophone', 'default');
 const speaker = () => localStorage.getItem('voiceSpeaker') || 'default';
 function announce(error) { if (error?.code !== 'REQUEST_CANCELLED') toast(error.message || String(error), 'error'); }
+async function voiceTiming(active){try{await window.electronAPI?.setVoiceTiming?.(active);}catch(error){console.warn('[Audio timing]',error.message);}}
 function createVoiceAudioContext() {
   try { return new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 }); }
   catch { return new AudioContext({ latencyHint: 'interactive' }); }
@@ -309,7 +310,7 @@ async function capture() {
   } catch (error) { stream?.getTracks().forEach(track => track.stop()); throw error; }
   finally { if (captureController === controller) captureController = null; }
   rawStream = stream;
-  applyMute(); await updateOutgoing(); return outgoing;
+  applyMute(); await updateOutgoing(); await voiceTiming(true); return outgoing;
 }
 function ensureCapture() {
   if (rawStream && context?.state !== 'closed') return Promise.resolve(outgoing);
@@ -390,7 +391,7 @@ export function stopVoice({ keepTest = false, releaseCapture = false } = {}) {
   paintControls();
   cleanup = Promise.allSettled([...closingPeers,stoppingTest, stoppingAccompaniment, closing, pendingCapture?.catch(() => {}), wasEnabled && socket?.connected && !state.leaving ? requestServer('set-voice-state', { enabled: false, deafened: voice.deafened }) : Promise.resolve()]).then(results => {
     const failed = results.find(r => r.status === 'rejected'); if (failed) announce(failed.reason);
-  }).finally(() => { cleanup = null; });
+  }).then(()=>voiceTiming(false)).finally(() => { cleanup = null; });
   return cleanup;
 }
 async function changeVoicePreference(mode) {

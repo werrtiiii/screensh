@@ -11,12 +11,14 @@ app.whenReady().then(async () => {
   const ips = Object.values(os.networkInterfaces()).flat().filter(i => i.family === 'IPv4' && !i.internal && !i.address.startsWith('169.254.')).map(i => i.address);
   const windows = [], addresses = new Map();
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
+  ipcMain.handle('set-voice-timing',()=>{});
   let nativeVoiceCalls = 0;
   for (const name of ['voice-start', 'voice-stop', 'voice-devices']) ipcMain.handle(name, () => { nativeVoiceCalls++; throw Error('Direct capture must not use OBS voice IPC'); });
   ipcMain.handle('get-hardware-acceleration', () => false);
   ipcMain.handle('lolping-get', () => ({ config: { enabled: false } }));
   ipcMain.handle('lolping-sync', () => {});
   ipcMain.handle('ping-member', (_event, ip) => ({ ip, rttMs: 1 }));
+  ipcMain.handle('get-member-routes',()=>({rows:[]}));
   ipcMain.handle('get-tunnel-mode',()=> 'tun');
 ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
   ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('stop-sharing', () => {});
@@ -92,6 +94,7 @@ ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
     for(const kbps of [24,32,64,96]) {
       await run(host,`document.querySelector('#channelBitrateSelect').value='${kbps}';document.querySelector('#channelBitrateForm').requestSubmit()`);
       for(const win of windows) await wait(win,`voicePCs.filter(pc=>pc.connectionState==='connected').every(pc=>pc.getSenders().filter(s=>s.track?.kind==='audio').every(s=>s.getParameters().encodings[0].maxBitrate===${kbps*1000}))`);
+      for(const win of windows) assert.equal(await run(win,`voicePCs.filter(pc=>pc.connectionState==='connected').every(pc=>pc.getSenders().filter(s=>s.track?.kind==='audio').every(s=>s.getParameters().encodings[0].priority==='high'&&s.getParameters().encodings[0].networkPriority==='high'))`),true,'Chromium accepts high audio priority');
     }
     assert.equal(await run(host,'voicePCs.length'),peerCountBeforeEncoding,'bitrate updates do not recreate peers');
     await run(host,`(async()=>{const {requestServer}=await import('./signaling.js');await requestServer('set-channel-voice-bitrate',{channelId:'main',bitrate:32});})()`);
@@ -200,7 +203,7 @@ ipcMain.handle('start-easytier', event => addresses.get(event.sender.id));
     await wait(guest, `document.querySelector('.voice-diagnostics-body').textContent.includes('audio/opus') && !document.querySelector('.voice-diagnostics-body').textContent.includes('RTT—')`);
     await wait(guest, `['接收缓冲延迟（区间）','音频接收码率'].every(label=>[...document.querySelectorAll('.voice-diagnostics-row')].some(row=>row.querySelector('span').textContent===label && row.querySelector('strong').textContent!=='—'))`);
     const diagnostics=await run(guest, `document.querySelector('.voice-diagnostics-body').textContent`);
-    assert.ok(diagnostics.includes('音频接收码率') && diagnostics.includes('接收缓冲延迟（区间）'));
+    for(const label of ['音频接收码率','接收缓冲延迟（区间）','接收丢包率（区间）','丢包补偿采样占比','接收缓冲目标','网络所需最小缓冲','本机发送排队','音频发送码率'])assert.ok(diagnostics.includes(label),label);
     guest.show();await run(guest, `document.querySelector('#voiceDiagnostics').scrollIntoView({block:'end'})`);await new Promise(r=>setTimeout(r,100));
     require('node:fs').writeFileSync(path.join(root,'.runtime-probe','voice-diagnostics.png'),(await guest.webContents.capturePage()).toPNG());
     await run(guest, `document.querySelector('#btnCloseMemberNetwork').click()`);

@@ -2,6 +2,10 @@
 # The main process supplies the currently assigned IP via MTX_WEBRTCADDITIONALHOSTS.
 logLevel: info
 logDestinations: [stdout]
+# Accept keyframe bursts without overflowing the Windows UDP receive queue.
+udpReadBufferSize: 2097152
+# Leave room for the EasyTier virtual-network MTU; avoid IP fragmentation.
+udpMaxPayloadSize: 1200
 rtsp: false
 rtmp: false
 hls: false

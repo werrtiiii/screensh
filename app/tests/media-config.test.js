@@ -6,6 +6,9 @@ test('installer excludes stock MediaMTX config and copies the application config
   assert.ok(resources.find(item => item.from === 'res').filter.includes('!mediamtx.yml'));
   assert.ok(resources.some(item => item.from === 'mediamtx.yml' && item.to === 'mediamtx.yml'));
   for (const protocol of ['rtsp', 'rtmp', 'hls', 'srt']) assert.match(fs.readFileSync(require.resolve('../mediamtx.yml'), 'utf8'), new RegExp('^' + protocol + ': false\\r?$', 'm'));
+  const config=fs.readFileSync(require.resolve('../mediamtx.yml'),'utf8');
+  assert.match(config,/^udpReadBufferSize: 2097152\r?$/m);
+  assert.match(config,/^udpMaxPayloadSize: 1200\r?$/m);
 });
 test('screen and voice runtimes disable unused listener protocols independently of config file', () => {
   for (const file of ['../main.js', '../main/voice-runtime.cjs']) {

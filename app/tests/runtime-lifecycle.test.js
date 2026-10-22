@@ -48,7 +48,7 @@ function runtime() {
     }
   }
   const electron = {
-    app: { isPackaged: false, getPath: () => '.', requestSingleInstanceLock: () => true, whenReady: () => ({ then: fn => fn() }), on() {} },
+    app: { commandLine:{appendSwitch(){},getSwitchValue(){return '';}}, isPackaged: false, getPath: () => '.', requestSingleInstanceLock: () => true, whenReady: () => ({ then: fn => fn() }), on() {} },
     BrowserWindow: class { constructor() { this.webContents = { on() {}, send() {} }; } loadFile() {} },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} },
     screen: {},

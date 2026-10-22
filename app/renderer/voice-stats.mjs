@@ -88,6 +88,14 @@ export function attachVoiceStats(details, { getPeers, getCapture }) {
           row(section, '单程网络估算（RTT ÷ 2）', format(finite(sample.rtt) ? sample.rtt / 2 : null, 'ms', 1));
           row(section, '接收缓冲延迟（区间）', format(sample.buffer, 'ms', 1));
           row(section, '网络抖动', format(sample.jitter, 'ms', 1));
+          row(section, '接收丢包率（区间）', format(sample.loss, '%', 1));
+          row(section, '丢包补偿采样占比', format(sample.concealment, '%', 1));
+          row(section, '接收缓冲目标', format(sample.bufferTarget, 'ms', 1));
+          row(section, '网络所需最小缓冲', format(sample.bufferMinimum, 'ms', 1));
+          row(section, '本机发送排队', format(sample.sendQueue, 'ms', 1));
+          row(section, '音频发送码率', format(sample.sendKbps, 'kbps', 1));
+          row(section, '音频发送包速率', format(sample.sendPacketsPerSecond, '包/秒', 1));
+          row(section, '音频接收包速率', format(sample.receivePacketsPerSecond, '包/秒', 1));
           row(section, '音频接收码率', format(sample.kbps, 'kbps', 1));
           row(section, '音频编码', sample.codec || '—');
           // This describes WebRTC only; the EasyTier underlay may still relay traffic.

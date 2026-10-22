@@ -118,6 +118,13 @@ test('diagnostics render processing settings and refresh both directions only wh
   tick(); await flush();
   assert.equal(rows().get('音频接收码率'), '32.0 kbps');
   assert.equal(rows().get('接收缓冲延迟（区间）'), '0.0 ms');
+  assert.equal(rows().get('接收缓冲目标'), '20.0 ms');
+  assert.equal(rows().get('网络所需最小缓冲'), '10.0 ms');
+  assert.equal(rows().get('丢包补偿采样占比'), '1.0 %');
+  assert.equal(rows().get('本机发送排队'), '2.0 ms');
+  assert.equal(rows().get('音频发送码率'), '32.0 kbps');
+  assert.equal(rows().get('音频发送包速率'), '100.0 包/秒');
+  assert.equal(rows().get('音频接收包速率'), '100.0 包/秒');
   details.open = false; toggle(); tick(); await flush();
   assert.equal(calls, 2);
   details.open = true; toggle(); await flush();

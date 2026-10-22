@@ -4,11 +4,18 @@ const {isIPv4}=require('node:net');
 const dgram=require('node:dgram');
 const os=require('node:os');
 const {allocateRpcPortal}=require('./member-routes.cjs');
+// Screen-share keyframes arrive as UDP bursts. Windows' default socket queue
+// can overflow before the main-process event loop drains a complete burst.
+function mediaSocket(){return dgram.createSocket({type:'udp4',recvBufferSize:2*1024*1024,sendBufferSize:512*1024});}
 async function udpAddress(){const socket=dgram.createSocket('udp4');return new Promise((resolve,reject)=>{socket.once('error',reject);socket.bind(0,'127.0.0.1',()=>{const port=socket.address().port;socket.close(()=>resolve('127.0.0.1:'+port));});});}
 function localMediaHost(){const addresses=Object.values(os.networkInterfaces()).flat().filter(item=>item?.family==='IPv4'&&!item.internal&&!item.address.startsWith('169.254.'));return addresses.find(item=>!item.address.startsWith('10.144.'))?.address||addresses[0]?.address;}
 async function browserRelay(targetPort){
-  const host=localMediaHost();if(!host)throw Error('没有可用的本机 IPv4 网络');const front=dgram.createSocket('udp4'),flows=new Map();let closed=false;
-  front.on('error',()=>{});front.on('message',(bytes,remote)=>{if(closed||!Object.values(os.networkInterfaces()).flat().some(item=>item?.address===remote.address))return;const key=remote.address+':'+remote.port;let socket=flows.get(key);if(!socket){if(flows.size>=32)return;socket=dgram.createSocket('udp4');socket.on('error',()=>{});socket.on('message',(reply,source)=>{if(!closed&&source.address==='127.0.0.1'&&source.port===targetPort)front.send(reply,remote.port,remote.address,()=>{});});flows.set(key,socket);}socket.send(bytes,targetPort,'127.0.0.1',()=>{});});
+  const host=localMediaHost();if(!host)throw Error('没有可用的本机 IPv4 网络');const front=mediaSocket(),flows=new Map();let closed=false;
+  // Windows adapter enumeration can take several milliseconds. Doing it per
+  // video packet blocks voice forwarding on the same event loop. A relay is
+  // bound to one interface for its lifetime; snapshot the local allowlist once.
+  const localAddresses=new Set(Object.values(os.networkInterfaces()).flat().filter(Boolean).map(item=>item.address));
+  front.on('error',()=>{});front.on('message',(bytes,remote)=>{if(closed||!localAddresses.has(remote.address))return;const key=remote.address+':'+remote.port;let socket=flows.get(key);if(!socket){if(flows.size>=32)return;socket=mediaSocket();socket.on('error',()=>{});socket.on('message',(reply,source)=>{if(!closed&&source.address==='127.0.0.1'&&source.port===targetPort)front.send(reply,remote.port,remote.address,()=>{});});flows.set(key,socket);}socket.send(bytes,targetPort,'127.0.0.1',()=>{});});
   await new Promise((resolve,reject)=>{front.once('error',reject);front.bind(0,host,resolve);});return {host,port:front.address().port,close(){closed=true;for(const socket of flows.values())socket.close();front.close();}};
 }
 function createTunnelForwarder({exe,getContext,execute=execFile}){
@@ -23,8 +30,8 @@ function createTunnelForwarder({exe,getContext,execute=execFile}){
     if(!scope.context.noTun)return {port};
     if(!isIPv4(host)||!Object.values(os.networkInterfaces()).flat().some(item=>item?.address===host)||!Number.isInteger(port)||port<1024||port>65535)throw Error('无效的本机媒体地址');
     const key=host+':'+port;if(scope.ingress.has(key))return scope.ingress.get(key).promise;if(scope.ingress.size>=16)throw Error('本机会话端口过多');
-    const front=dgram.createSocket('udp4'),flows=new Map(),entry={front,flows};scope.ingress.set(key,entry);
-    front.on('error',()=>{});front.on('message',(bytes,remote)=>{if(scope.closed||remote.address!=='127.0.0.1')return;const remoteKey=remote.address+':'+remote.port;let flow=flows.get(remoteKey);if(!flow){if(flows.size>=32)return;const socket=dgram.createSocket('udp4');flow={socket,touched:Date.now()};flows.set(remoteKey,flow);socket.on('error',()=>{});socket.on('message',(reply,source)=>{if(!scope.closed&&source.address===host&&source.port===port)front.send(reply,remote.port,remote.address,()=>{});});}flow.touched=Date.now();flow.socket.send(bytes,port,host,()=>{});});
+    const front=mediaSocket(),flows=new Map(),entry={front,flows};scope.ingress.set(key,entry);
+    front.on('error',()=>{});front.on('message',(bytes,remote)=>{if(scope.closed||remote.address!=='127.0.0.1')return;const remoteKey=remote.address+':'+remote.port;let flow=flows.get(remoteKey);if(!flow){if(flows.size>=32)return;const socket=mediaSocket();flow={socket,touched:Date.now()};flows.set(remoteKey,flow);socket.on('error',()=>{});socket.on('message',(reply,source)=>{if(!scope.closed&&source.address===host&&source.port===port)front.send(reply,remote.port,remote.address,()=>{});});}flow.touched=Date.now();flow.socket.send(bytes,port,host,()=>{});});
     entry.timer=setInterval(()=>{for(const [key,flow] of flows)if(Date.now()-flow.touched>120000){try{flow.socket.close();}catch{}flows.delete(key);}},30000);entry.timer.unref();
     entry.promise=new Promise((resolve,reject)=>{front.once('error',reject);front.bind(0,'127.0.0.1',()=>{if(scope.closed)return reject(Error('转发会话已关闭'));resolve({port:front.address().port});});}).catch(error=>{clearInterval(entry.timer);try{front.close();}catch{}scope.ingress.delete(key);throw error;});return entry.promise;
   }
