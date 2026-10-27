@@ -2,10 +2,11 @@
   "schemaVersion": 1,
   "mirrorUrl": "https://file.rn1.me/d/中国移动云盘/分享/ScreenSh-updates/",
   "openList": {
-    "url": "https://file.4.rn1.me:16667",
+    "url": "https://file.rn1.me",
     "path": "/ScreenSh-updates"
   },
   "publish": {
+    "url": "https://file.4.rn1.me:16667",
     "path": "/"
   }
 }

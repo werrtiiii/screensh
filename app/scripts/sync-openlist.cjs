@@ -38,7 +38,9 @@ function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.
 
 function validateConfig(value){
   if(value?.schemaVersion!==1)throw Error('Unsupported update source schema');
-  const api=new URL(value.openList?.url);
+  // Upload credentials use a separate explicit endpoint; the guest entry may
+  // redirect and is never used to discover where to send a password.
+  const api=new URL(value.publish?.url||value.openList?.url);
   if(api.protocol!=='https:'||api.username||api.password||api.search||api.hash||api.pathname!=='/')throw Error('Invalid OpenList API origin');
   const directory=value.publish?.path;
   if(typeof directory!=='string'||!directory.startsWith('/')||directory.split('/').includes('..'))throw Error('Invalid upload path');

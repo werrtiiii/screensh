@@ -50,6 +50,11 @@ test('upload configuration rejects insecure origins and paths escaping the accou
   for(const url of ['http://files.example','https://user:password@files.example','https://files.example/?token=secret','https://files.example/other'])assert.throws(()=>validateConfig({...config,openList:{url}}));
   assert.throws(()=>validateConfig({...config,publish:{path:'/../private'}}));
 });
+test('upload endpoint is independent of the public guest domain and rejects unsafe overrides',()=>{
+  const value={...config,openList:{url:'https://guest.example'},publish:{path:'/',url:'https://upload.example:16667'}};
+  assert.equal(validateConfig(value).api.origin,'https://upload.example:16667');
+  for(const url of ['http://upload.example','https://user:secret@upload.example','https://upload.example/?token=secret'])assert.throws(()=>validateConfig({...value,publish:{...value.publish,url}}));
+});
 test('large binary uploads allow cloud hash reuse without buffering or sending the whole file',async t=>{
   const {dist,name}=fixture(t),{Writable,Readable}=require('node:stream');
   const file=path.join(dist,name);fs.writeFileSync(file,Buffer.alloc(2*1024*1024));let bytes=0;
