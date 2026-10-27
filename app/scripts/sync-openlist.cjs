@@ -8,7 +8,7 @@ function uploadStream({api,file,headers,log},request=https.request){
     const boundary='----ScreenSh'+crypto.randomBytes(16).toString('hex');
     const prefix=Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${path.basename(file)}"\r\nContent-Type: application/octet-stream\r\n\r\n`),suffix=Buffer.from(`\r\n--${boundary}--\r\n`);
     let input,finished=false;
-    const finish=(error,value)=>{if(finished)return;finished=true;clearTimeout(timer);input?.destroy();if(error){req.destroy();reject(error);}else resolve(value);};
+    const finish=(error,value)=>{if(finished)return;finished=true;clearTimeout(timer);input?.destroy();req.destroy();if(error)reject(error);else resolve(value);};
     const req=request(new URL('/api/fs/form',api),{method:'PUT',headers:{...headers,'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':String(Number(headers['Content-Length'])+prefix.length+suffix.length)}},response=>{
       let text='';
       response.setEncoding('utf8');
@@ -62,7 +62,7 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploa
   for(const name of files){
     const file=path.join(dist,name),size=fs.statSync(file).size;
     log('OpenList uploading: '+name+' ('+size+' bytes)');
-    await uploadFile({api,file,log,headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false'}});
+    await uploadFile({api,file,log,headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false',Overwrite:'true'}});
     log('OpenList upload accepted; verifying: '+name);
     // Explicitly refresh the listing; some storage backends cache newly uploaded files.
     const listing=await request('/api/fs/list',{method:'POST',headers:{Authorization:login.token,'Content-Type':'application/json'},body:JSON.stringify({path:directory||'/',password:'',page:1,per_page:0,refresh:true}),signal:AbortSignal.timeout(60000)});
