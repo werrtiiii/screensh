@@ -15,6 +15,7 @@ test('sync verifies the installer before login, streams files in order and publi
     last={name:decodeURIComponent(headers['File-Path']).slice(1),size:fs.statSync(file).size};uploaded.push(last.name);
     assert.equal(headers.Authorization,'test-token');assert.equal(String(last.size),headers['Content-Length']);
     assert.equal(headers.Overwrite,'true','latest.yml and retried versioned files must be overwritten');
+    for(const [header,algorithm] of [['X-File-Md5','md5'],['X-File-Sha1','sha1'],['X-File-Sha256','sha256']])assert.equal(headers[header],crypto.createHash(algorithm).update(fs.readFileSync(file)).digest('hex'));
   },fetchFile:async(url,options)=>{
     assert.equal(options.redirect,'error');
     if(url.pathname==='/api/auth/login'){assert.deepEqual(JSON.parse(options.body),{username:'publisher',password:'test-password'});return Response.json({code:200,data:{token:'test-token'}});}

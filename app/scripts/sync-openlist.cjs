@@ -3,6 +3,12 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const https=require('node:https');
 
+async function fileHashes(file){
+  const hashes=Object.fromEntries(['md5','sha1','sha256','sha512'].map(name=>[name,crypto.createHash(name)]));
+  for await(const chunk of fs.createReadStream(file))for(const hash of Object.values(hashes))hash.update(chunk);
+  return Object.fromEntries(Object.entries(hashes).map(([name,hash])=>[name,hash.digest(name==='sha512'?'base64':'hex')]));
+}
+
 function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.request){
   return new Promise((resolve,reject)=>{
     const boundary='----ScreenSh'+crypto.randomBytes(16).toString('hex');
@@ -44,9 +50,8 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploa
   const installer=info.files?.find(file=>/^ScreenSh-\d+\.\d+\.\d+-Setup\.exe$/.test(file.url));
   if(!installer||installer.url!==`ScreenSh-${info.version}-Setup.exe`)throw Error('Invalid release manifest');
   const filename=installer.url,installerPath=path.join(dist,filename),stat=fs.statSync(installerPath);
-  const hash=crypto.createHash('sha512');
-  for await(const chunk of fs.createReadStream(installerPath))hash.update(chunk);
-  if(stat.size!==installer.size||hash.digest('base64')!==installer.sha512)throw Error('Installer does not match official release metadata');
+  const verifiedHashes=await fileHashes(installerPath);
+  if(stat.size!==installer.size||verifiedHashes.sha512!==installer.sha512)throw Error('Installer does not match official release metadata');
   const files=[filename+'.blockmap',filename,'latest.yml'];
   for(const name of files)if(!fs.statSync(path.join(dist,name)).isFile())throw Error('Missing release file: '+name);
   async function request(endpoint,options){
@@ -61,8 +66,9 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploa
   log('OpenList upload account authenticated');
   for(const name of files){
     const file=path.join(dist,name),size=fs.statSync(file).size;
+    const hashes=name===filename?verifiedHashes:await fileHashes(file);
     log('OpenList uploading: '+name+' ('+size+' bytes)');
-    await uploadFile({api,file,log,headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false',Overwrite:'true'}});
+    await uploadFile({api,file,log,headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false',Overwrite:'true','X-File-Md5':hashes.md5,'X-File-Sha1':hashes.sha1,'X-File-Sha256':hashes.sha256}});
     log('OpenList upload accepted; verifying: '+name);
     // Explicitly refresh the listing; some storage backends cache newly uploaded files.
     const listing=await request('/api/fs/list',{method:'POST',headers:{Authorization:login.token,'Content-Type':'application/json'},body:JSON.stringify({path:directory||'/',password:'',page:1,per_page:0,refresh:true}),signal:AbortSignal.timeout(60000)});
