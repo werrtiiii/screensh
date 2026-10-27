@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
-const {syncOpenList,validateConfig}=require('../scripts/sync-openlist.cjs');
+const {syncOpenList,validateConfig,uploadStream}=require('../scripts/sync-openlist.cjs');
 const config={schemaVersion:1,openList:{url:'https://files.example'},publish:{path:'/'}};
 function fixture(t){
   const dist=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-publish-'));t.after(()=>fs.rmSync(dist,{recursive:true,force:true}));
@@ -11,16 +11,13 @@ function fixture(t){
 }
 test('sync verifies the installer before login, streams files in order and publishes manifest last',async t=>{
   const {dist,name}=fixture(t),uploaded=[];let last;
-  await syncOpenList({config,dist,username:'publisher',password:'test-password',log:()=>{},fetchFile:async(url,options)=>{
+  await syncOpenList({config,dist,username:'publisher',password:'test-password',log:()=>{},uploadFile:async({file,headers})=>{
+    last={name:decodeURIComponent(headers['File-Path']).slice(1),size:fs.statSync(file).size};uploaded.push(last.name);
+    assert.equal(headers.Authorization,'test-token');assert.equal(String(last.size),headers['Content-Length']);
+  },fetchFile:async(url,options)=>{
     assert.equal(options.redirect,'error');
     if(url.pathname==='/api/auth/login'){assert.deepEqual(JSON.parse(options.body),{username:'publisher',password:'test-password'});return Response.json({code:200,data:{token:'test-token'}});}
     assert.equal(options.headers.Authorization,'test-token');
-    if(options.method==='PUT'){
-      last={name:decodeURIComponent(options.headers['File-Path']).slice(1),size:0};
-      for await(const chunk of options.body)last.size+=chunk.length;
-      uploaded.push(last.name);assert.equal(String(last.size),options.headers['Content-Length']);
-      return Response.json({code:200});
-    }
     return Response.json({code:200,data:{content:[last]}});
   }});
   assert.deepEqual(uploaded,[name,name+'.blockmap','latest.yml']);
@@ -31,10 +28,20 @@ test('corrupt release artifacts are rejected before transmitting credentials',as
 });
 test('upload failure stops before publishing the manifest and does not delete historical files',async t=>{
   const {dist}=fixture(t);let calls=0;
-  await assert.rejects(syncOpenList({config,dist,username:'publisher',password:'password',fetchFile:async(url,options)=>{
-    calls++;if(calls===1)return Response.json({code:200,data:{token:'token'}});
-    assert.equal(options.method,'PUT');await options.body.cancel();return Response.json({code:403});
-  }}),/code 403/);assert.equal(calls,2);
+  await assert.rejects(syncOpenList({config,dist,username:'publisher',password:'password',log:()=>{},uploadFile:async()=>{calls++;throw Error('upload denied');},fetchFile:async()=>{calls++;return Response.json({code:200,data:{token:'token'}});}}),/upload denied/);assert.equal(calls,2);
+});
+test('native HTTPS uploader streams exact bytes and rejects HTTP redirects without forwarding credentials',async t=>{
+  const {dist,name}=fixture(t),{Writable,Readable}=require('node:stream');
+  let status=200,received=[];
+  const request=(url,options,callback)=>{
+    assert.equal(url.href,'https://files.example/api/fs/put');assert.equal(options.headers.Authorization,'test-token');
+    const req=new Writable({write(chunk,encoding,done){received.push(Buffer.from(chunk));done();}});
+    req.setTimeout=()=>{};
+    req.on('finish',()=>{const res=Readable.from(['{"code":200}']);res.statusCode=status;callback(res);});return req;
+  };
+  const options={api:new URL('https://files.example'),file:path.join(dist,name),headers:{Authorization:'test-token','Content-Length':'18'},log:()=>{}};
+  await uploadStream(options,request);assert.deepEqual(Buffer.concat(received),fs.readFileSync(options.file));
+  status=302;await assert.rejects(uploadStream(options,request),/HTTP 302/);
 });
 test('upload configuration rejects insecure origins and paths escaping the account root',()=>{
   for(const url of ['http://files.example','https://user:password@files.example','https://files.example/?token=secret','https://files.example/other'])assert.throws(()=>validateConfig({...config,openList:{url}}));
