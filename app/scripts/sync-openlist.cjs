@@ -3,7 +3,7 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const https=require('node:https');
 
-function uploadStream({api,file,headers,log},request=https.request){
+function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.request){
   return new Promise((resolve,reject)=>{
     const boundary='----ScreenSh'+crypto.randomBytes(16).toString('hex');
     const prefix=Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${path.basename(file)}"\r\nContent-Type: application/octet-stream\r\n\r\n`),suffix=Buffer.from(`\r\n--${boundary}--\r\n`);
@@ -18,11 +18,11 @@ function uploadStream({api,file,headers,log},request=https.request){
         try{if(response.statusCode!==200)throw Error('OpenList upload HTTP '+response.statusCode);const result=JSON.parse(text);if(result.code!==200)throw Error('OpenList upload code '+result.code);finish(null,result.data);}catch(error){finish(error);}
       });
     });
-    const timer=setTimeout(()=>finish(Error('OpenList upload total timeout')),20*60*1000);
+    const timer=setTimeout(()=>finish(Error('OpenList upload total timeout')),timeoutMs);
     req.setTimeout(60000,()=>finish(Error('OpenList upload idle timeout')));
     req.on('error',error=>finish(error));
     input=fs.createReadStream(file);let transferred=0,reported=0;
-    input.on('data',chunk=>{transferred+=chunk.length;if(!reported||transferred-reported>=16*1024*1024){reported=transferred;log('OpenList upload sent: '+path.basename(file)+' '+transferred+' / '+headers['Content-Length']+' bytes');}});
+    input.on('data',chunk=>{transferred+=chunk.length;if(!reported||transferred-reported>=1024*1024){reported=transferred;log('OpenList upload sent: '+path.basename(file)+' '+transferred+' / '+headers['Content-Length']+' bytes');}});
     input.on('error',error=>finish(error));req.write(prefix);input.on('end',()=>req.end(suffix));input.pipe(req,{end:false});
   });
 }
