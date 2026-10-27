@@ -12,6 +12,7 @@ function validateConfig(value){
   return {api,directory:directory.replace(/\/$/,'')};
 }
 async function syncOpenList({config,dist,username,password,fetchFile=fetch,log=console.log}){
+  log('OpenList sync starting; validating release files');
   const {api,directory}=validateConfig(config);
   if(!username||!password)throw Error('OpenList upload credentials are not configured');
   const manifest=fs.readFileSync(path.join(dist,'latest.yml'),'utf8');
