@@ -27,13 +27,28 @@ test('OpenList guest lookup refreshes per-file signatures without sending login 
   assert.equal(maps[0].searchParams.get('sign'),'file-specific:ScreenSh-1.5.3-Setup.exe.blockmap');
   assert.equal(maps[1].searchParams.get('sign'),'file-specific:ScreenSh-1.5.4-Setup.exe.blockmap');
   assert.equal(requests.length,3);
-  assert.ok(requests.every(r=>r.url==='https://files.example/api/fs/get'&&r.options.credentials==='omit'&&!r.options.headers.Authorization&&r.payload.password===''));
+  assert.ok(requests.every(r=>r.url==='https://files.example/api/fs/get'&&r.options.redirect==='error'&&r.options.credentials==='omit'&&!r.options.headers.Authorization&&r.payload.password===''));
   await mirror.download(client);assert.equal(requests.length,6,'signatures are refreshed instead of persisted');
 });
 test('OpenList guest access denied falls back to GitHub without requiring credentials',async()=>{
   const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},async()=>({ok:false,json:async()=>({code:401})}));
   provider.releaseInfo=info;let calls=0;client.downloadUpdate=async()=>{calls++;return provider.resolveFiles(info);};
   const files=await mirror.download(client);assert.equal(calls,1);assert.equal(files[0].url.hostname,'github.com');
+});
+test('guest API redirects are rejected and fall back without requesting the administrative endpoint',async()=>{
+  const requests=[];
+  const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},async(url,options)=>{
+    requests.push(String(url));assert.equal(options.redirect,'error');
+    return new Response(null,{status:307,headers:{Location:'https://admin.example:16667/api/fs/get'}});
+  });
+  provider.releaseInfo=info;client.downloadUpdate=async()=>provider.resolveFiles(info);
+  const files=await mirror.download(client);assert.equal(files[0].url.hostname,'github.com');
+  assert.ok(requests.length>0&&requests.every(url=>url==='https://files.example/api/fs/get'));
+});
+test('a fetch adapter returning an already redirected guest response cannot enable the mirror',async()=>{
+  const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},async()=>({ok:true,redirected:true,url:'https://admin.example:16667/api/fs/get',json:async()=>assert.fail('must reject before parsing another origin')}));
+  provider.releaseInfo=info;client.downloadUpdate=async()=>provider.resolveFiles(info);
+  assert.equal((await mirror.download(client))[0].url.hostname,'github.com');
 });
 test('a missing or invalid mirror artifact retries the same GitHub release without rechecking versions',async()=>{
   const {mirror,client,provider}=fixture(),attempts=[];

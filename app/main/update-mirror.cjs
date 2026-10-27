@@ -46,8 +46,9 @@ function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetc
           const names=[filename,filename+'.blockmap',(filename+'.blockmap').replace(info.version,current)];this.links.clear();
           await Promise.all([...new Set(names)].map(async name=>{
             try{
-              const response=await fetchFile(api,{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:openList.path.replace(/\/$/,'')+'/'+name,password:''}),signal:AbortSignal.timeout(8000)});
-              const result=await response.json();if(!response.ok||result.code!==200||result.data?.name!==name||result.data?.is_dir)throw Error('镜像文件暂不可用');
+              const response=await fetchFile(api,{method:'POST',redirect:'error',credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:openList.path.replace(/\/$/,'')+'/'+name,password:''}),signal:AbortSignal.timeout(8000)});
+              if(!response.ok||response.redirected||(response.url&&new URL(response.url).origin!==api.origin))throw Error('游客更新接口不可用或发生跳转');
+              const result=await response.json();if(result.code!==200||result.data?.name!==name||result.data?.is_dir)throw Error('镜像文件暂不可用');
               const url=new URL(encodeURIComponent(name),base);if(result.data.sign)url.searchParams.set('sign',result.data.sign);this.links.set(name,url);
             }catch(error){if(name===filename)throw error;}
           }));
