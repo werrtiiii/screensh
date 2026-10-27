@@ -11,11 +11,12 @@ async function fileHashes(file){
 
 function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.request){
   return new Promise((resolve,reject)=>{
+    const form=Number(headers['Content-Length'])<=1024*1024;
     const boundary='----ScreenSh'+crypto.randomBytes(16).toString('hex');
     const prefix=Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${path.basename(file)}"\r\nContent-Type: application/octet-stream\r\n\r\n`),suffix=Buffer.from(`\r\n--${boundary}--\r\n`);
     let input,finished=false;
     const finish=(error,value)=>{if(finished)return;finished=true;clearTimeout(timer);input?.destroy();req.destroy();if(error)reject(error);else resolve(value);};
-    const req=request(new URL('/api/fs/form',api),{method:'PUT',headers:{...headers,'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':String(Number(headers['Content-Length'])+prefix.length+suffix.length)}},response=>{
+    const req=request(new URL(form?'/api/fs/form':'/api/fs/put',api),{method:'PUT',headers:form?{...headers,'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':String(Number(headers['Content-Length'])+prefix.length+suffix.length)}:headers},response=>{
       let text='';
       response.setEncoding('utf8');
       response.on('data',chunk=>{text+=chunk;if(text.length>65536)finish(Error('OpenList upload response too large'));});
@@ -29,7 +30,9 @@ function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.
     req.on('error',error=>finish(error));
     input=fs.createReadStream(file);let transferred=0,reported=0;
     input.on('data',chunk=>{transferred+=chunk.length;if(!reported||transferred-reported>=1024*1024){reported=transferred;log('OpenList upload sent: '+path.basename(file)+' '+transferred+' / '+headers['Content-Length']+' bytes');}});
-    input.on('error',error=>finish(error));req.write(prefix);input.on('end',()=>req.end(suffix));input.pipe(req,{end:false});
+    input.on('error',error=>finish(error));
+    if(form){req.write(prefix);input.on('end',()=>req.end(suffix));input.pipe(req,{end:false});}
+    else input.pipe(req);
   });
 }
 

@@ -50,3 +50,14 @@ test('upload configuration rejects insecure origins and paths escaping the accou
   for(const url of ['http://files.example','https://user:password@files.example','https://files.example/?token=secret','https://files.example/other'])assert.throws(()=>validateConfig({...config,openList:{url}}));
   assert.throws(()=>validateConfig({...config,publish:{path:'/../private'}}));
 });
+test('large binary uploads allow cloud hash reuse without buffering or sending the whole file',async t=>{
+  const {dist,name}=fixture(t),{Writable,Readable}=require('node:stream');
+  const file=path.join(dist,name);fs.writeFileSync(file,Buffer.alloc(2*1024*1024));let bytes=0;
+  const request=(url,options,callback)=>{
+    assert.equal(url.pathname,'/api/fs/put');assert.equal(options.headers['X-File-Sha256'],'known-cloud-hash');
+    const req=new Writable({write(chunk,encoding,done){bytes+=chunk.length;done();if(bytes===chunk.length)setImmediate(()=>{const res=Readable.from(['{"code":200}']);res.statusCode=200;callback(res);});}});
+    req.setTimeout=()=>{};return req;
+  };
+  await uploadStream({api:new URL('https://files.example'),file,headers:{'Content-Length':String(2*1024*1024),'X-File-Sha256':'known-cloud-hash'},log:()=>{}},request);
+  assert.ok(bytes<2*1024*1024,'a successful early cloud response must stop the remaining file stream');
+});
