@@ -11,12 +11,14 @@ function fixture(t){
 }
 test('sync verifies the installer before login, streams files in order and publishes manifest last',async t=>{
   const {dist,name}=fixture(t),uploaded=[];let last;
-  await syncOpenList({config,dist,username:'publisher',password:'test-password',log:()=>{},uploadFile:async({file,headers})=>{
+  await syncOpenList({config,dist,username:'publisher',password:'test-password',publishUrl:'https://upload.example',log:()=>{},uploadFile:async({api,file,headers})=>{
+    assert.equal(api.hostname,'upload.example');
     last={name:decodeURIComponent(headers['File-Path']).slice(1),size:fs.statSync(file).size};uploaded.push(last.name);
     assert.equal(headers.Authorization,'test-token');assert.equal(String(last.size),headers['Content-Length']);
     assert.equal(headers.Overwrite,'true','latest.yml and retried versioned files must be overwritten');
     for(const [header,algorithm] of [['X-File-Md5','md5'],['X-File-Sha1','sha1'],['X-File-Sha256','sha256']])assert.equal(headers[header],crypto.createHash(algorithm).update(fs.readFileSync(file)).digest('hex'));
   },fetchFile:async(url,options)=>{
+    assert.equal(url.hostname,'upload.example','credentials and verification stay on the configured upload endpoint');
     assert.equal(options.redirect,'error');
     if(url.pathname==='/api/auth/login'){assert.deepEqual(JSON.parse(options.body),{username:'publisher',password:'test-password'});return Response.json({code:200,data:{token:'test-token'}});}
     assert.equal(options.headers.Authorization,'test-token');
@@ -51,9 +53,10 @@ test('upload configuration rejects insecure origins and paths escaping the accou
   assert.throws(()=>validateConfig({...config,publish:{path:'/../private'}}));
 });
 test('upload endpoint is independent of the public guest domain and rejects unsafe overrides',()=>{
-  const value={...config,openList:{url:'https://guest.example'},publish:{path:'/',url:'https://upload.example:16667'}};
-  assert.equal(validateConfig(value).api.origin,'https://upload.example:16667');
-  for(const url of ['http://upload.example','https://user:secret@upload.example','https://upload.example/?token=secret'])assert.throws(()=>validateConfig({...value,publish:{...value.publish,url}}));
+  const value={...config,openList:{url:'https://guest.example'},publish:{path:'/'}};
+  assert.equal(validateConfig(value,'https://upload.example:16667').api.origin,'https://upload.example:16667');
+  assert.equal(validateConfig(value).api.origin,'https://guest.example');
+  for(const url of ['http://upload.example','https://user:secret@upload.example','https://upload.example/?token=secret'])assert.throws(()=>validateConfig(value,url));
 });
 test('large binary uploads allow cloud hash reuse without buffering or sending the whole file',async t=>{
   const {dist,name}=fixture(t),{Writable,Readable}=require('node:stream');

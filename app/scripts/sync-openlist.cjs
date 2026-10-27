@@ -36,19 +36,19 @@ function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.
   });
 }
 
-function validateConfig(value){
+function validateConfig(value,publishUrl){
   if(value?.schemaVersion!==1)throw Error('Unsupported update source schema');
   // Upload credentials use a separate explicit endpoint; the guest entry may
   // redirect and is never used to discover where to send a password.
-  const api=new URL(value.publish?.url||value.openList?.url);
+  const api=new URL(publishUrl||value.openList?.url);
   if(api.protocol!=='https:'||api.username||api.password||api.search||api.hash||api.pathname!=='/')throw Error('Invalid OpenList API origin');
   const directory=value.publish?.path;
   if(typeof directory!=='string'||!directory.startsWith('/')||directory.split('/').includes('..'))throw Error('Invalid upload path');
   return {api,directory:directory.replace(/\/$/,'')};
 }
-async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploadFile=uploadStream,log=console.log}){
+async function syncOpenList({config,dist,username,password,publishUrl,fetchFile=fetch,uploadFile=uploadStream,log=console.log}){
   log('OpenList sync starting; validating release files');
-  const {api,directory}=validateConfig(config);
+  const {api,directory}=validateConfig(config,publishUrl);
   if(!username||!password)throw Error('OpenList upload credentials are not configured');
   const manifest=fs.readFileSync(path.join(dist,'latest.yml'),'utf8');
   const {load}=require('js-yaml'),info=load(manifest);
@@ -83,6 +83,6 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploa
 }
 if(require.main===module){
   const config=JSON.parse(fs.readFileSync(process.argv[2]||path.resolve(__dirname,'../../update-sources.json'),'utf8'));
-  syncOpenList({config,dist:process.argv[3]||path.resolve(__dirname,'../dist'),username:process.env.OPENLIST_USERNAME,password:process.env.OPENLIST_PASSWORD}).catch(error=>{console.error('OpenList sync failed: '+(error.message.startsWith('OpenList')?error.message:'check release files, credentials and server availability'));process.exitCode=1;});
+  syncOpenList({config,dist:process.argv[3]||path.resolve(__dirname,'../dist'),username:process.env.OPENLIST_USERNAME,password:process.env.OPENLIST_PASSWORD,publishUrl:process.env.OPENLIST_PUBLISH_URL}).catch(error=>{console.error('OpenList sync failed: '+(error.message.startsWith('OpenList')?error.message:'check release files, credentials and server availability'));process.exitCode=1;});
 }
 module.exports={syncOpenList,validateConfig,uploadStream};

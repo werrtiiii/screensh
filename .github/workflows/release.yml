@@ -101,4 +101,5 @@ jobs:
         env:
           OPENLIST_USERNAME: ${{ secrets.OPENLIST_USERNAME }}
           OPENLIST_PASSWORD: ${{ secrets.OPENLIST_PASSWORD }}
+          OPENLIST_PUBLISH_URL: ${{ vars.OPENLIST_PUBLISH_URL }}
         run: node app/scripts/sync-openlist.cjs app/dist/update-sources.json app/dist

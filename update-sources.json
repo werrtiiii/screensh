@@ -6,7 +6,6 @@
     "path": "/ScreenSh-updates"
   },
   "publish": {
-    "url": "https://file.4.rn1.me:16667",
     "path": "/"
   }
 }
