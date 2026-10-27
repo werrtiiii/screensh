@@ -34,13 +34,14 @@ test('native HTTPS uploader streams exact bytes and rejects HTTP redirects witho
   const {dist,name}=fixture(t),{Writable,Readable}=require('node:stream');
   let status=200,received=[];
   const request=(url,options,callback)=>{
-    assert.equal(url.href,'https://files.example/api/fs/put');assert.equal(options.headers.Authorization,'test-token');
+    assert.equal(url.href,'https://files.example/api/fs/form');assert.equal(options.headers.Authorization,'test-token');
+    assert.match(options.headers['Content-Type'],/^multipart\/form-data; boundary=/);
     const req=new Writable({write(chunk,encoding,done){received.push(Buffer.from(chunk));done();}});
     req.setTimeout=()=>{};
     req.on('finish',()=>{const res=Readable.from(['{"code":200}']);res.statusCode=status;callback(res);});return req;
   };
   const options={api:new URL('https://files.example'),file:path.join(dist,name),headers:{Authorization:'test-token','Content-Length':'18'},log:()=>{}};
-  await uploadStream(options,request);assert.deepEqual(Buffer.concat(received),fs.readFileSync(options.file));
+  await uploadStream(options,request);assert.ok(Buffer.concat(received).includes(fs.readFileSync(options.file)));
   status=302;await assert.rejects(uploadStream(options,request),/HTTP 302/);
 });
 test('upload configuration rejects insecure origins and paths escaping the account root',()=>{
