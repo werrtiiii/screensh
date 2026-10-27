@@ -20,7 +20,7 @@ test('sync verifies the installer before login, streams files in order and publi
     assert.equal(options.headers.Authorization,'test-token');
     return Response.json({code:200,data:{content:[last]}});
   }});
-  assert.deepEqual(uploaded,[name,name+'.blockmap','latest.yml']);
+  assert.deepEqual(uploaded,[name+'.blockmap',name,'latest.yml']);
 });
 test('corrupt release artifacts are rejected before transmitting credentials',async t=>{
   const {dist,name}=fixture(t);fs.appendFileSync(path.join(dist,name),'corrupt');

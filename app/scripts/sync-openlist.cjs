@@ -47,7 +47,7 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,uploa
   const hash=crypto.createHash('sha512');
   for await(const chunk of fs.createReadStream(installerPath))hash.update(chunk);
   if(stat.size!==installer.size||hash.digest('base64')!==installer.sha512)throw Error('Installer does not match official release metadata');
-  const files=[filename,filename+'.blockmap','latest.yml'];
+  const files=[filename+'.blockmap',filename,'latest.yml'];
   for(const name of files)if(!fs.statSync(path.join(dist,name)).isFile())throw Error('Missing release file: '+name);
   async function request(endpoint,options){
     // Reject redirects so upload credentials cannot be forwarded to another host.
