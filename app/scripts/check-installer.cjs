@@ -55,6 +55,7 @@ const probe = `
   }
   load('./main/external-obs.cjs');
   load('./main/member-probe.cjs');
+  load('./main/update-mirror.cjs');
   load('ws');
   console.log('PACKAGED_EXTERNAL_OBS_OK');
   console.log('PACKAGED_LOLPING_ASSETS_OK');

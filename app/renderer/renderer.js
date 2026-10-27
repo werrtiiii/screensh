@@ -418,7 +418,10 @@ function showUpdateState(info) {
   updateActions.classList.toggle('hidden', !['available','ready'].includes(info.status));
   btnDownloadUpdate.textContent = info.status === 'ready' ? '立即安装' : '下载更新';
   if (info.status === 'checking') setUpdateStatus('正在检查…');
-  else if (info.status === 'downloading') setUpdateStatus(`正在下载更新… ${Math.round(info.percent || 0)}%`);
+  else if (info.status === 'downloading') {
+    const amount=info.total>0?` · ${(info.transferred/1048576).toFixed(1)} / ${(info.total/1048576).toFixed(1)} MB`:'';
+    setUpdateStatus(`正在${info.downloadMode==='differential'?'差分下载':'下载更新'}… ${Math.round(info.percent || 0)}%${amount}`);
+  }
   else if (info.status === 'ready') setUpdateStatus(`新版本 ${info.version} 已下载，${(info.enabled ?? autoUpdateCheckbox.checked) ? '下次启动时安装' : '可点击立即安装'}`, 'update');
   else if (info.status === 'available') setUpdateStatus(`发现新版本 ${info.version}`, 'update');
   else if (info.status === 'current') setUpdateStatus(`已是最新版本（${info.currentVersion}）`, 'ok');

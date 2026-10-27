@@ -20,6 +20,7 @@ test('automatic downloads become installable only through the startup restore pa
   updates.start();await wait(()=>updates.get().status==='ready');
   assert.deepEqual(counts,{check:1,download:1});
   assert.equal(client.autoDownload,false);assert.equal(client.autoInstallOnAppQuit,false);
+  assert.equal(client.disableDifferentialDownload,false);assert.equal(client.disableWebInstaller,true);
   assert.ok(events.some(state=>state.status==='downloading'&&state.percent===55));
   updates.stop();const restarted=createAutoUpdate(args);t.after(()=>restarted.stop());
   assert.equal(await restarted.restoreAtStartup(),true);assert.deepEqual(counts,{check:1,download:1},'restoring a local download makes no network requests');
@@ -52,4 +53,13 @@ test('invalid cached update reports an error and lets normal startup continue',a
   const {updates,counts}=fixture(t,{pendingUpdates:{remember(){},restore:async()=>{throw Error('缓存校验失败');}}});
   assert.equal(await updates.restoreAtStartup(),false);assert.equal(updates.get().status,'error');assert.match(updates.get().message,/校验失败/);
   assert.deepEqual(counts,{check:0,download:0});
+});
+test('update progress reports changed-byte download size and identifies full-download fallback',async t=>{
+  const {updates,client,events}=fixture(t);
+  client.checkForUpdates=async()=>({isUpdateAvailable:true,updateInfo:{version:'9.0.0',files:[{url:'ScreenSh-9.0.0-Setup.exe',size:200000000}]}});
+  await updates.check();
+  client.emit('download-progress',{percent:50,total:4000000,transferred:2000000});
+  assert.equal(events.at(-1).downloadMode,'differential');assert.equal(events.at(-1).total,4000000);assert.equal(events.at(-1).transferred,2000000);
+  client.emit('download-progress',{percent:10,total:200000000,transferred:20000000});
+  assert.equal(events.at(-1).downloadMode,'full');assert.equal(events.at(-1).total,200000000);
 });

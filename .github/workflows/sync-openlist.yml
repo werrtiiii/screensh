@@ -1,0 +1,46 @@
+name: Sync existing release to OpenList
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published stable release tag to sync (for example 1.5.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openlist-update-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install script dependencies
+        run: npm ci --prefix app --ignore-scripts
+      - name: Download exact published release assets
+        shell: bash
+        run: |
+          node -e 'if(!/^v?\d+\.\d+\.\d+$/.test(process.env.RELEASE_TAG))throw Error("Invalid stable release tag")'
+          mkdir -p app/dist
+          version="${RELEASE_TAG#v}"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir app/dist --pattern latest.yml --pattern "ScreenSh-${version}-Setup.exe" --pattern "ScreenSh-${version}-Setup.exe.blockmap"
+      - name: Sync release to OpenList
+        env:
+          OPENLIST_USERNAME: ${{ secrets.OPENLIST_USERNAME }}
+          OPENLIST_PASSWORD: ${{ secrets.OPENLIST_PASSWORD }}
+        run: node app/scripts/sync-openlist.cjs update-sources.json app/dist

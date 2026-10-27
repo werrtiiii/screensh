@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, intervalMs = 6 * 60 * 60 * 1000, startupMs = 10000, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
+function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, intervalMs = 6 * 60 * 60 * 1000, startupMs = 10000, downloadMirror, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
   let enabled = true;
   try { enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabled !== false; } catch {}
   let client, checking, downloading, timer, startup, ready = false;
@@ -12,9 +12,17 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     client = getUpdater();
     client.autoDownload = false;
     client.autoInstallOnAppQuit = false;
+    client.disableDifferentialDownload = false;
+    client.disableWebInstaller = true;
+    downloadMirror?.configure(client);
     // Download now; only a later startup or an explicit install can install it.
     client.on('error', error => console.error('[Updater]', error.message));
-    client.on('download-progress', progress => publish({status:'downloading', percent:progress.percent}));
+    client.on('download-progress', progress => {
+      const total=Number.isFinite(progress.total)&&progress.total>0?progress.total:0;
+      const transferred=Number.isFinite(progress.transferred)&&progress.transferred>=0?progress.transferred:0;
+      publish({status:'downloading',percent:progress.percent,total,transferred,
+        downloadMode:total&&state.packageBytes?(total<state.packageBytes?'differential':'full'):null});
+    });
     client.on('update-downloaded', info => { pendingUpdates.remember(client,info); ready = true; publish({status:'ready', version:info.version}); });
     return client;
   }
@@ -27,7 +35,8 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
       try {
         const result = await updater().checkForUpdates();
         const info = {available:result?.isUpdateAvailable === true, currentVersion, version:result?.updateInfo?.version || null};
-        publish({status:info.available?'available':'current', version:info.version});
+        const installer=result?.updateInfo?.files?.find(file=>/\.exe(?:$|[?#])/i.test(file.url||''));
+        publish({status:info.available?'available':'current', version:info.version,packageBytes:Number(installer?.size)||0});
         return info;
       } catch (error) {
         const message = /404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')
@@ -42,7 +51,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     if (ready) return Promise.resolve(true);
     if (downloading) return downloading;
     downloading = (async () => {
-      try { publish({status:'downloading', percent:0}); await updater().downloadUpdate(); return true; }
+      try { publish({status:'downloading', percent:0,total:0,transferred:0,downloadMode:null}); const client=updater();await (downloadMirror?downloadMirror.download(client):client.downloadUpdate()); return true; }
       catch { const message = '下载更新失败，请确认网络连接后重试'; publish({status:'error', message}); throw Error(message); }
     })().finally(() => { downloading = null; });
     return downloading;

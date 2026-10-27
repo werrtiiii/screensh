@@ -6,9 +6,9 @@ const {createAutoUpdate}=require('../../main/auto-update.cjs');
 const root=path.resolve(__dirname,'../..'),data=path.join(root,'.runtime-probe','auto-update-'+process.pid);
 app.disableHardwareAcceleration();app.setPath('userData',data);app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
-  let win;const client=new EventEmitter();let checks=0,downloads=0;
-  client.checkForUpdates=async()=>{checks++;return {isUpdateAvailable:true,updateInfo:{version:'9.0.0'}};};
-  client.downloadUpdate=async()=>{downloads++;client.emit('update-downloaded',{version:'9.0.0'});};
+  let win,releaseDownload;const client=new EventEmitter();let checks=0,downloads=0;
+  client.checkForUpdates=async()=>{checks++;return {isUpdateAvailable:true,updateInfo:{version:'9.0.0',files:[{url:'ScreenSh-9.0.0-Setup.exe',size:200*1048576}]}};};
+  client.downloadUpdate=async()=>{downloads++;client.emit('download-progress',{percent:50,total:4*1048576,transferred:2*1048576});await new Promise(resolve=>{releaseDownload=resolve;});client.emit('update-downloaded',{version:'9.0.0'});};
   const updates=createAutoUpdate({file:path.join(data,'updates.json'),packaged:true,currentVersion:'1.5.2',getUpdater:()=>client,pendingUpdates:{remember(){},restore:async()=>null},send:state=>win.webContents.send('update-state',state)});
   ipcMain.handle('get-update-settings',()=>updates.get());ipcMain.handle('set-auto-update',(_e,value)=>updates.set(value));
   ipcMain.handle('check-for-update',()=>updates.check());
@@ -27,7 +27,9 @@ app.whenReady().then(async()=>{
     await run(`document.querySelector('#btnCheckUpdate').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('9.0.0')`);
     assert.equal(checks,1);assert.equal(downloads,0);
     await win.reload();await wait(`!document.querySelector('#autoUpdateCheckbox').checked`);
-    await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('已下载')`);
+    await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('差分下载')`);
+    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('2.0 / 4.0 MB'));
+    releaseDownload();await wait(`document.querySelector('#updateStatus').textContent.includes('已下载')`);
     assert.equal(downloads,1);assert.equal(client.autoInstallOnAppQuit,false);
     assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('下次启动时安装'));
     assert.equal(await run(`document.querySelector('#btnDownloadUpdate').textContent`),'立即安装');
@@ -37,5 +39,5 @@ app.whenReady().then(async()=>{
     fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'settings.png'),(await win.webContents.capturePage()).toPNG());
     console.log('AUTO_UPDATE_UI_OK',JSON.stringify({defaultOn:true,persistentToggle:true,manualCheck:true,backgroundDownload:true,deferredInstall:true,screenshot:path.join(data,'settings.png')}));
   }catch(error){console.error(error.stack);process.exitCode=1;}
-  finally{updates.stop();win?.destroy();app.exit(process.exitCode||0);}
+  finally{releaseDownload?.();updates.stop();win?.destroy();app.exit(process.exitCode||0);}
 });

@@ -18,13 +18,21 @@ export function normalizeServerAddress(value) {
 export function serverAddressCandidates(value) {
   const first = normalizeServerAddress(value);
   const raw = value.trim().replace(/\/$/, '');
-  const explicitPort = /:\d+$/.test(raw) && !(/^[0-9a-f:]+$/i.test(raw) && (raw.match(/:/g) || []).length > 1);
-  if (explicitPort) return [first];
+  const explicitPort = !(/^[0-9a-f:]+$/i.test(raw) && (raw.match(/:/g) || []).length > 1) ? raw.match(/:(\d+)$/)?.[1] : undefined;
   const url = new URL(first), candidates = [first];
   // Bare domains may be HTTPS-only, or redirect HTTP requests to HTTPS.
-  if (!raw.includes('://') && url.protocol === 'http:') candidates.push(`https://${url.host}`);
-  url.port = String(DEFAULT_SERVER_PORT);
-  candidates.push(url.origin);
+  if (!raw.includes('://') && url.protocol === 'http:') {
+    const secure = new URL(first);
+    secure.protocol = 'https:';
+    // URL.origin removes :80 from HTTP URLs; preserve an explicitly entered
+    // port when changing protocols rather than silently switching to 443.
+    if (explicitPort) secure.port = explicitPort;
+    candidates.push(secure.origin);
+  }
+  if (!explicitPort) {
+    url.port = String(DEFAULT_SERVER_PORT);
+    candidates.push(url.origin);
+  }
   return [...new Set(candidates)];
 }
 

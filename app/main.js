@@ -123,6 +123,7 @@ const ipv6Network=require('./main/ipv6-network.cjs').createIpv6Network({getEasyT
 ipcMain.handle('try-enable-ipv6',event=>{requireMainWindow(event);return ipv6Network.run();});
 const updates = require('./main/auto-update.cjs').createAutoUpdate({
   file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
+  downloadMirror:require('./main/update-mirror.cjs').createUpdateMirror(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options)),
   send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);},
 });
 ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});
