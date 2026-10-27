@@ -6,7 +6,7 @@ import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { state, $, $$ } from './shared.js';
 import { toast } from './toast.js';
 import { socket, connectServer, requestServer, applyServerState, rememberJoinCredentials } from './signaling.js';
-import { openScreenPicker, selectScreenSourceTab, startScreenCapture, stopSharing, stopWatch } from './media.js';
+import { openScreenPicker, selectScreenSourceTab, startScreenCapture, stopSharing, stopWatch, externalObsEnded } from './media.js';
 import { leaveRoom, enterRoom } from './room.js';
 import { normalizePeers } from './easytier-peers.mjs';
 import { requestPassword } from './password-dialog.js';
@@ -84,12 +84,16 @@ async function joinServer() {
     if (info.protocol !== 2 || !/^[a-f0-9-]{36}$/.test(info.serverId)) throw new Error('请升级为支持频道的服务器');
     if (info.channelFeatures !== 1) throw new Error('请更新频道服务器，以支持临时频道和频道密码');
     if (info.chatVersion !== 1) throw new Error('请更新频道服务器，以支持文字聊天');
+    // A link outage can leave our previous socket alive on the server until
+    // its heartbeat expires. Authenticate preflight as that same member too.
+    const identity = serverIdentity(localStorage, info.serverId, () =>
+      Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join(''));
     let password = '', access;
     if (info.passwordRequired) {
       try { password = await window.electronAPI.getSavedServerPassword(serverUrl, info.serverId); }
       catch { /* A storage failure must not prevent a manual connection. */ }
       if (password) {
-        try { access = await requestServer('check-access', { userName, password }, connection); }
+        try { access = await requestServer('check-access', { userName, password, identity }, connection); }
         catch (error) {
           if (!['服务器密码错误', '请输入服务器密码'].includes(error.message)) throw error;
           password = '';
@@ -103,11 +107,9 @@ async function joinServer() {
         password = answer.password;
       }
     }
-    access ||= await requestServer('check-access', { userName, password }, connection);
+    access ||= await requestServer('check-access', { userName, password, identity }, connection);
     if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
     const easytierPeers = normalizePeers(access.easytierPeers);
-    const identity = serverIdentity(localStorage, info.serverId, () =>
-      Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join(''));
     rememberJoinCredentials({ userName, identity, password });
     state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
     state.noTun = (await window.electronAPI.getTunnelMode()) === 'no-tun';
@@ -268,6 +270,7 @@ $('#serverUrl').addEventListener('input', () => localStorage.setItem('serverUrl'
 $('#userName').value = localStorage.getItem('userName') || '';
 $('#userName').addEventListener('input', () => localStorage.setItem('userName', $('#userName').value.trim()));
 window.electronAPI.onRuntimeError(async message => { toast(message, 'error'); await leaveRoom(); });
+window.electronAPI.onShareEnded?.(externalObsEnded);
 // Only test a server address previously saved by the user.
 if ($('#serverUrl').value) testServerConnection();
 
@@ -398,27 +401,48 @@ initSettings();
 initAccompaniment();
 initVoice();
 
-// GitHub Releases update check is explicit so it does not create background traffic.
+// Automatic checks and downloads share the same state as manual updates.
 const updateStatus = $('#updateStatus');
 const btnCheckUpdate = $('#btnCheckUpdate');
 const btnDownloadUpdate = $('#btnDownloadUpdate');
 const updateActions = $('#updateActions');
+const autoUpdateCheckbox = $('#autoUpdateCheckbox');
 function setUpdateStatus(message, kind = '') {
   updateStatus.textContent = message;
   updateStatus.dataset.kind = kind;
 }
+function showUpdateState(info) {
+  const busy = ['checking','downloading'].includes(info.status);
+  btnCheckUpdate.disabled = busy;
+  btnDownloadUpdate.disabled = busy;
+  updateActions.classList.toggle('hidden', !['available','ready'].includes(info.status));
+  btnDownloadUpdate.textContent = info.status === 'ready' ? '立即安装' : '下载更新';
+  if (info.status === 'checking') setUpdateStatus('正在检查…');
+  else if (info.status === 'downloading') setUpdateStatus(`正在下载更新… ${Math.round(info.percent || 0)}%`);
+  else if (info.status === 'ready') setUpdateStatus(`新版本 ${info.version} 已下载，${(info.enabled ?? autoUpdateCheckbox.checked) ? '下次启动时安装' : '可点击立即安装'}`, 'update');
+  else if (info.status === 'available') setUpdateStatus(`发现新版本 ${info.version}`, 'update');
+  else if (info.status === 'current') setUpdateStatus(`已是最新版本（${info.currentVersion}）`, 'ok');
+  else if (info.status === 'error') setUpdateStatus(info.message, 'error');
+}
+window.electronAPI.onUpdateState?.(showUpdateState);
+window.electronAPI.getUpdateSettings?.().then(info => {
+  autoUpdateCheckbox.checked = info.enabled;
+  showUpdateState(info);
+}).catch(error => setUpdateStatus(error.message, 'error'));
+autoUpdateCheckbox.addEventListener('change', async () => {
+  const enabled = autoUpdateCheckbox.checked;
+  autoUpdateCheckbox.disabled = true;
+  try { autoUpdateCheckbox.checked = await window.electronAPI.setAutoUpdate(enabled); }
+  catch (error) { autoUpdateCheckbox.checked = !enabled; toast(error.message, 'error'); }
+  finally { autoUpdateCheckbox.disabled = false; }
+});
 btnCheckUpdate?.addEventListener('click', async () => {
   btnCheckUpdate.disabled = true;
   updateActions.classList.add('hidden');
   setUpdateStatus('正在检查…');
   try {
     const result = await window.electronAPI.checkForUpdate();
-    if (result.available) {
-      setUpdateStatus(`发现新版本 ${result.version}`, 'update');
-      updateActions.classList.remove('hidden');
-    } else {
-      setUpdateStatus(result.development ? '开发模式不检查更新' : `已是最新版本（${result.currentVersion}）`, 'ok');
-    }
+    if (result.development) setUpdateStatus('开发模式不检查更新', 'ok');
   } catch (error) {
     setUpdateStatus(error?.message || '检查更新失败', 'error');
   } finally {

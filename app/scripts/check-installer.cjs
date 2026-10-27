@@ -50,13 +50,20 @@ const probe = `
     'lolping/dist/renderer/ui/surrender-frame.png','lolping/NOTICE.md','lolping/vendor/LICENSE']) {
     if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
   }
+  for (const file of ['main/auto-update.cjs','main/pending-update.cjs','main/external-obs.cjs','main/external-obs-settings.cjs','main/obs-websocket.cjs','renderer/external-obs-ui.mjs']) {
+    if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
+  }
+  load('./main/external-obs.cjs');
+  load('./main/member-probe.cjs');
+  load('ws');
+  console.log('PACKAGED_EXTERNAL_OBS_OK');
   console.log('PACKAGED_LOLPING_ASSETS_OK');
   load('./main/ipv6-network.cjs').createIpv6Network({platform:'win32',execute:(_exe,args,_options,done)=>{
     if(!args.includes('-EncodedCommand') || args.includes('-File') || !Buffer.from(args.at(-1),'base64').toString('utf16le').includes('Get-NetAdapter -Physical'))throw Error('Packaged IPv6 script is not available outside ASAR');
     done(null,JSON.stringify({policyBlocked:false,adapters:[{name:'fixture',enabled:true}],addresses:[],failures:[]}));
   }}).inspect().then(result=>{if(result.code!=='no-address')throw Error('Packaged IPv6 script check failed');console.log('PACKAGED_IPV6_SCRIPT_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   const { ObsEngine } = load('./main/obs-engine.js');
-  const engine = new ObsEngine(process.env.TEMP || process.cwd());
+  const engine = new ObsEngine(path.join(process.env.TEMP || process.cwd(),'screensh-installer-probe-'+process.pid),undefined,undefined,true);
   try {
     engine.init();
     if (!engine.osn.ServiceFactory.types().includes('whip_custom')) throw new Error('WHIP plugin is missing');

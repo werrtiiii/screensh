@@ -42,7 +42,6 @@ function getUpdater() {
     ({ autoUpdater: updater } = require('electron-updater'));
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
-    updater.on('download-progress', progress => mainWindow?.webContents.send('update-progress', progress.percent));
   }
   return updater;
 }
@@ -75,14 +74,27 @@ function failure(message) {
 }
 const easytier = new ManagedProcess('EasyTier', failure);
 const mediamtx = new ManagedProcess('MediaMTX', failure);
+const externalObsSettings=require('./main/external-obs-settings.cjs').createExternalObsSettings({file:path.join(app.getPath('userData'),'external-obs.json'),safeStorage});
+const externalObs=new (require('./main/external-obs.cjs').ExternalObs)({getCredentials:()=>externalObsSettings.credentials(),onEnded:notice=>{
+  mainWindow?.webContents.send('share-ended',notice);void stopShare().catch(error=>mainWindow?.webContents.send('share-ended',{...notice,message:error.message}));
+}});
+let externalObsSettingsRevision=0;
+ipcMain.handle('get-external-obs-settings',event=>{requireMainWindow(event);return externalObsSettings.get();});
+ipcMain.handle('connect-external-obs',async(event,value)=>{
+  requireMainWindow(event);if(shareStart||externalObs.active)throw Error('请先停止共享再修改 OBS 连接');
+  const revision=++externalObsSettingsRevision,credentials=externalObsSettings.credentials(value),status=await externalObs.inspect(credentials);
+  if(revision!==externalObsSettingsRevision||shareStart||externalObs.active)throw Error('OBS 连接检查已取消');externalObsSettings.save(credentials);return status;
+});
+ipcMain.handle('inspect-external-obs',event=>{requireMainWindow(event);return externalObs.inspect();});
 let sharePacer=null;
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
-ipcMain.handle('ping-member', async (_event, ip) => {if(easytierRpc?.noTun){const result=await memberRoutes.read(),row=result.rows.find(row=>row.ip===ip);return {ip,rttMs:row?.rttMs??null,noTun:true};}return memberPinger.ping(ip);});
+ipcMain.handle('ping-member', async (_event, ip) => {if(easytierRpc?.noTun){const result=await memberRoutes.read(),row=result.rows.find(row=>row.ip===ip);if(Number.isFinite(row?.rttMs))return {ip,rttMs:row.rttMs,noTun:true,source:'tunnel'};return memberProbe.ping(ip);}return memberPinger.ping(ip);});
 let easytierRpc=null;
 const {allocateRpcPortal,createMemberRoutes}=require('./main/member-routes.cjs');
 const memberRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
 const tunnelForwarder=require('./main/tunnel-forwarder.cjs').createTunnelForwarder({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
+const memberProbe=require('./main/member-probe.cjs').createMemberProbe({getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null,forwarder:tunnelForwarder});
 ipcMain.handle('get-tunnel-mode',event=>{requireMainWindow(event);return easytierRpc?.noTun?'no-tun':'tun';});
 ipcMain.handle('open-tunnel-scope',(event,ip)=>{requireMainWindow(event);return tunnelForwarder.open(ip);});
 ipcMain.handle('forward-tunnel-port',(event,id,protocol,port)=>{requireMainWindow(event);return tunnelForwarder.forward(id,protocol,port);});
@@ -109,25 +121,17 @@ ipcMain.handle('get-easytier-settings',async event=>{requireMainWindow(event);re
 ipcMain.handle('set-easytier-settings',async(event,value)=>{requireMainWindow(event);return (await getEasyTierSettings()).set(value);});
 const ipv6Network=require('./main/ipv6-network.cjs').createIpv6Network({getEasyTierDisabled:async()=>(await getEasyTierSettings()).get().disableIpv6});
 ipcMain.handle('try-enable-ipv6',event=>{requireMainWindow(event);return ipv6Network.run();});
-ipcMain.handle('check-for-update', async () => {
-  if (!app.isPackaged) return { available: false, currentVersion: app.getVersion(), development: true };
-  try {
-    const result = await getUpdater().checkForUpdates();
-    const info = result?.updateInfo;
-    return { available: result?.isUpdateAvailable === true, currentVersion: app.getVersion(), version: info?.version || null };
-  } catch (error) {
-    console.error('[Update check]', error);
-    if (/404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')) {
-      throw new Error('GitHub 尚未发布可用安装包，请稍后重试');
-    }
-    throw new Error('检查更新失败，请确认网络连接后重试');
-  }
+const updates = require('./main/auto-update.cjs').createAutoUpdate({
+  file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
+  send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);},
 });
+ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});
+ipcMain.handle('set-auto-update', (event,enabled) => {requireMainWindow(event);return updates.set(enabled);});
+ipcMain.handle('check-for-update', () => updates.check());
 ipcMain.handle('download-and-install-update', async () => {
   if (!app.isPackaged) throw new Error('开发模式不能安装更新');
-  const updater = getUpdater();
-  updater.once('update-downloaded', () => { void prepareQuit(() => updater.quitAndInstall(false, true)); });
-  await updater.downloadUpdate();
+  await updates.download();
+  await prepareQuit(() => getUpdater().quitAndInstall(false, true));
   return true;
 });
 const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i.address);
@@ -170,7 +174,7 @@ require('./main/realtime-policy.cjs').configureRealtimeScheduling(app.commandLin
 
 function createWindow() {
   Menu.setApplicationMenu(null);
-  obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure);
+  obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure, 'http://127.0.0.1:8889/live/whip', true);
   mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
     icon: path.join(__dirname, 'assets/branding/icon.png'),
     webPreferences: { preload: path.join(__dirname, "./preload.js"), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
@@ -199,7 +203,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
   const peers = normalizePeers(configuredPeers);
   const {easyTierAdvancedArgs,EASYTIER_CONNECTION_ARGS}=await import('./renderer/easytier-options.mjs');
   const advancedConfig=(await getEasyTierSettings()).get(),advancedArgs=easyTierAdvancedArgs(advancedConfig);
-  await tunnelForwarder.clear();
+  await memberProbe.stop();await tunnelForwarder.clear();
   easytierRpc=null;
   await easytier.stop();
   virtualIp = null;
@@ -237,7 +241,9 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
     throw error;
   }
   finally{clearInterval(readyPoll);}
-  return virtualIp = ip;
+  virtualIp=ip;
+  await memberProbe.start().catch(error=>console.warn('[Member probe]',error.message));
+  return ip;
 });
 
 ipcMain.handle('get-screens', async () => {
@@ -252,7 +258,7 @@ ipcMain.handle('get-screens', async () => {
 function validateConfig(config) {
   if (!config || !((Number.isInteger(config.sourceId) && config.sourceId >= 0)
     || (typeof config.sourceId === 'string' && config.sourceId.length > 0 && config.sourceId.length <= 512))
-    || !['screen', 'window'].includes(config.sourceType || 'screen')
+    || !['screen', 'window', 'obs'].includes(config.sourceType || 'screen')
     || (config.sourceType === 'window' && typeof config.sourceId !== 'string')
     || !['auto', 'wgc', 'dxgi'].includes(config.captureMethod ?? 'auto')
     || !['x264', 'nvenc', 'amf', 'qsv'].includes(config.videoEncoder ?? 'x264')
@@ -271,9 +277,10 @@ function stopShareResources() {
   // One failure must not prevent the other resource from being released.
   shareCleanup = Promise.allSettled([
     Promise.resolve().then(() => obs?.stop()),
+    Promise.resolve().then(() => externalObs.stop()),
     Promise.resolve().then(() => mediamtx.stop()),
     Promise.resolve().then(async()=>{const pacer=sharePacer;sharePacer=null;await pacer?.stop();}),
-  ]).then(results => checkCleanup(results, ['OBS', 'MediaMTX', '媒体 UDP']))
+  ]).then(results => checkCleanup(results, ['OBS', '外部 OBS', 'MediaMTX', '媒体 UDP']))
     .finally(() => { shareCleanup = null; });
   return shareCleanup;
 }
@@ -292,7 +299,7 @@ ipcMain.handle('start-sharing', async (_event, config) => {
   if (shareStop) await shareStop;
   if (runtimeLeave || quitting) throw new Error('正在退出，请稍候');
   if (!virtualIp) throw new Error('请先加入房间');
-  if (shareStart || obs.streaming) throw new Error('共享正在启动或已启动');
+  if (shareStart || obs.streaming || externalObs.active) throw new Error('共享正在启动或已启动');
   const current = ++generation;
   shareStart = (async () => {
     try {
@@ -305,7 +312,7 @@ ipcMain.handle('start-sharing', async (_event, config) => {
           MTX_WEBRTCLOCALTCPADDRESS: `${easytierRpc?.noTun?'127.0.0.1':virtualIp}:8189` },
       });
       if (current !== generation) throw new Error('共享启动已取消');
-      const result = await obs.start(config);
+      const result = config.sourceType==='obs'?await externalObs.start('http://127.0.0.1:8889/live/whip'):await obs.start(config);
       if (current !== generation) throw new Error('共享启动已取消');
       await mediamtx.waitForOutput(/\[path live\] stream is available/);
       if (current !== generation) throw new Error('共享启动已取消');
@@ -325,7 +332,7 @@ ipcMain.handle('stop-sharing', stopShare);
 function leaveRuntime() {
   if (runtimeLeave) return runtimeLeave;
   // Invalidate room access before any asynchronous cleanup can fail.
-  const forwardCleanup=tunnelForwarder.clear();
+  const forwardCleanup=memberProbe.stop().then(()=>tunnelForwarder.clear());
   virtualIp = null;
   runtimeLeave = Promise.allSettled([
     Promise.resolve().then(() => lolping?.stop()),
@@ -347,16 +354,22 @@ ipcMain.on('window-close', () => mainWindow?.close());
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => trayController?.show());
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    if (app.isPackaged && await updates.restoreAtStartup()) {
+      getUpdater().quitAndInstall(true, true);
+      if (getUpdater().quitAndInstallCalled) return;
+    }
     const { createTrayController } = require('./main/tray-controller.cjs');
     trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
     createWindow();
+    updates.start();
   });
   app.on('activate', () => trayController?.show());
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
     if (quitReady) return;
-    event.preventDefault(); void prepareQuit(() => app.quit());
+    event.preventDefault(); updates.stop();
+    void prepareQuit(() => app.quit());
   });
 }
 

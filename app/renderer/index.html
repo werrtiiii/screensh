@@ -158,7 +158,18 @@
     <div id="screenPicker" class="modal hidden">
       <div class="modal-content source-dialog" role="dialog" aria-modal="true" aria-labelledby="sourceDialogTitle">
         <div class="modal-header"><h2 id="sourceDialogTitle">屏幕共享</h2><button id="btnCancelPicker" class="btn-close" aria-label="关闭">×</button></div>
-        <div class="source-surface"><div class="source-tabs" role="tablist" aria-label="共享源类型"><button id="btnSourceWindows" type="button" role="tab" data-source-tab="window" aria-selected="true" aria-controls="screenList" class="source-tab active">程序</button><button id="btnSourceScreens" type="button" role="tab" data-source-tab="screen" aria-selected="false" aria-controls="screenList" class="source-tab">屏幕</button></div><div id="screenList" class="screen-list" role="tabpanel" aria-label="可共享的画面"></div></div>
+        <div class="source-surface"><div class="source-tabs" role="tablist" aria-label="共享源类型"><button id="btnSourceWindows" type="button" role="tab" data-source-tab="window" aria-selected="true" aria-controls="screenList" class="source-tab active">程序</button><button id="btnSourceScreens" type="button" role="tab" data-source-tab="screen" aria-selected="false" aria-controls="screenList" class="source-tab">屏幕</button><button type="button" role="tab" data-source-tab="obs" aria-selected="false" aria-controls="externalObsPanel" class="source-tab">外部 OBS</button></div><div id="screenList" class="screen-list" role="tabpanel" aria-label="可共享的画面"></div>
+          <section id="externalObsPanel" class="external-obs-panel hidden" role="tabpanel" aria-label="外部 OBS">
+            <p class="external-obs-help">先在 OBS 配置好场景和来源，并在「工具 → WebSocket 服务器设置」中启用服务器。<button type="button" class="help-tip" aria-label="外部 OBS 共享说明" data-tooltip="画面、声音和编码沿用 OBS 设置。开始共享时自动配置本地推流地址，结束后恢复原推流设置。">?</button></p>
+            <form class="external-obs-form">
+              <label>本机端口<input class="form-control" name="obsPort" type="number" min="1024" max="65535" value="4455" required /></label>
+              <label>WebSocket 密码<input class="form-control" name="obsPassword" type="password" maxlength="512" autocomplete="off" /></label>
+              <div class="external-obs-actions"><button class="btn btn-outline external-obs-clear" type="button">清除密码</button><button class="btn btn-primary" type="submit">连接 / 刷新预览</button></div>
+            </form>
+            <p class="external-obs-status" role="status">未连接 OBS</p>
+            <div class="external-obs-preview">OBS</div><div class="external-obs-scene">当前场景</div>
+          </section>
+        </div>
         <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
       </div>
     </div>
@@ -247,6 +258,7 @@
           </div>
           <div class="form-group setting-update">
             <label>软件更新</label>
+            <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="自动检查并后台下载新版本；下次启动时，先安装本地已下载的更新包。">?</span></label>
             <div class="update-row">
               <span id="updateStatus" class="update-status" role="status">当前版本</span>
               <button id="btnCheckUpdate" type="button" class="btn btn-outline btn-sm">检查更新</button>

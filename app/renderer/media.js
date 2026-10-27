@@ -5,12 +5,16 @@ import { WhepSession } from './whep.mjs';
 import { attachVideoStats } from './video-stats.mjs';
 import { createShareAdaptation, watchNetwork } from './share-adaptation.mjs';
 import { createMediaTunnel } from './media-tunnel.mjs';
+import { createExternalObsPanel } from './external-obs-ui.mjs';
 
 let session = null, sharingGeneration = 0;
 let stoppingPromise = null;
 let shareAdaptation = null;
 let disposeStats = null, watchContext = null, retainWatchTimer = null;
 let sourceInventory = [], sourceTab = 'window', sourceRequest = 0;
+let sourcesLoaded=false,sourcesLoading=false;
+let externalObsPanel,externalObsSessionId=null;
+function obsPanel(){return externalObsPanel||=createExternalObsPanel({onReady:()=>{if(sourceTab!=='obs'||$('#screenPicker').classList.contains('hidden'))return;state.selectedSourceId='external-obs';state.selectedSourceType='obs';$('#btnConfirmShare').classList.remove('hidden');},onInvalid:()=>{if(sourceTab==='obs'){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}}});}
 export function escapeHtml(str) {
   const div = document.createElement('div'); div.textContent = str; return div.innerHTML;
 }
@@ -18,21 +22,29 @@ export async function loadScreenSources() {
   const request=++sourceRequest;
   const list = $('#screenList');
   sourceInventory=[];
+  sourcesLoaded=false;
   state.selectedSourceId = null;
   $('#btnConfirmShare').classList.add('hidden');
   list.textContent = '获取显示器和窗口中...';
+  if(sourceTab==='obs'){selectScreenSourceTab('obs');return;}
+  sourcesLoading=true;
   try {
     const screens = await window.electronAPI.getScreens();
     if(request!==sourceRequest||$('#screenPicker').classList.contains('hidden'))return;
     sourceInventory=screens;
-    if(!screens.some(s=>s.type===sourceTab)&&screens.length)sourceTab=screens[0].type||'screen';
-    selectScreenSourceTab(sourceTab);
+    sourcesLoaded=true;
+    if(sourceTab!=='obs'){if(!screens.some(s=>s.type===sourceTab)&&screens.length)sourceTab=screens[0].type||'screen';selectScreenSourceTab(sourceTab);}
   } catch (error) { if(request===sourceRequest)list.textContent = `读取共享源失败：${error.message}`; }
+  finally{if(request===sourceRequest)sourcesLoading=false;}
 }
 export function selectScreenSourceTab(type) {
     sourceTab=type;
     if(state.selectedSourceType!==type){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}
     for(const button of document.querySelectorAll('[data-source-tab]')) {const active=button.dataset.sourceTab===type;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));}
+    $('#screenList').classList.toggle('hidden',type==='obs');$('#externalObsPanel').classList.toggle('hidden',type!=='obs');
+    $('#btnConfirmShare').textContent=type==='obs'?'开始 OBS 共享':'确认共享';
+    if(type==='obs'){void obsPanel().open();return;}externalObsPanel?.hide();
+    if(!sourcesLoaded&&!sourcesLoading){void loadScreenSources();return;}
     const list=$('#screenList');list.replaceChildren();list.scrollTop=0;
     const screens=sourceInventory.filter(s=>(s.type||'screen')===type);
     for (const screen of screens) {
@@ -73,7 +85,7 @@ export async function startScreenCapture() {
   if (!socket?.connected || !state.roomId) return toast('请先连接服务器', 'error');
   if (!state.channelId) return toast('请先加入频道', 'error');
   if (state.selectedSourceId == null) return toast('请选择显示器或窗口', 'error');
-  const current = ++sharingGeneration;
+  const current = ++sharingGeneration;externalObsSessionId=null;
   state.startingShare = true; updateSharingUI(false);
   try {
     const config = buildScreenConfig();
@@ -81,15 +93,16 @@ export async function startScreenCapture() {
     const result = await window.electronAPI.startSharing(config);
     if (current !== sharingGeneration || !state.roomId || !socket?.connected) return;
     state.isSharing = true; updateSharingUI(true);
+    externalObsSessionId=result?.externalObsSessionId||null;
     const [fallbackWidth, fallbackHeight] = config.resolution === 'auto' ? [1920,1080] : config.resolution.split('x').map(Number);
     shareAdaptation?.close();
-    shareAdaptation = adaptiveResolution ? createShareAdaptation({ base: config, width: result?.width || fallbackWidth, height: result?.height || fallbackHeight,
+    shareAdaptation = adaptiveResolution && config.sourceType!=='obs' ? createShareAdaptation({ base: config, width: result?.width || fallbackWidth, height: result?.height || fallbackHeight,
       bitrate: result?.bitrate || config.maxBitrate || 1500, change: (next, previous) => adjustShareQuality(current, next, previous) }) : null;
     $('#screenPicker').classList.add('hidden');
     socket.emit('start-sharing');
     if (state.autoPreview) void displayRemoteVideo(socket.id);
   } catch (error) {
-    if (current === sharingGeneration) { state.isSharing = false; updateSharingUI(false); toast(error.message, 'error'); }
+    if (current === sharingGeneration) { state.isSharing = false; updateSharingUI(false);if(state.selectedSourceType==='obs')externalObsPanel?.error(error.message);toast(error.message, 'error'); }
   } finally { state.startingShare = false; updateSharingUI(state.isSharing); }
 }
 async function adjustShareQuality(token, next, previous) {
@@ -111,7 +124,7 @@ export function receiveShareFeedback({ from, metrics }) {
 }
 export function stopSharing({ reportErrors = true } = {}) {
   if (stoppingPromise) return stoppingPromise;
-  sharingGeneration++; state.isSharing = false; state.selectedSourceId = null;
+  sharingGeneration++; state.isSharing = false; state.selectedSourceId = null;externalObsSessionId=null;
   shareAdaptation?.close(); shareAdaptation = null;
   state.stoppingShare = true;
   socket?.emit('stop-sharing'); updateSharingUI(false); stopWatch();
@@ -128,6 +141,10 @@ export function stopSharing({ reportErrors = true } = {}) {
     updateSharingUI(state.isSharing);
   });
   return stoppingPromise;
+}
+export async function externalObsEnded({message,sessionId}={}){
+  if(state.selectedSourceType!=='obs'||(!state.isSharing&&!state.startingShare)||externalObsSessionId&&externalObsSessionId!==sessionId)return;
+  await stopSharing();if(message)toast(message,'error');
 }
 export function updateSharingUI(sharing) {
   const showStop = sharing || state.stoppingShare || state.shareCleanupFailed;
