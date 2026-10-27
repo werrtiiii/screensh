@@ -33,9 +33,18 @@ async function syncOpenList({config,dist,username,password,fetchFile=fetch,log=c
   }
   const login=await request('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password}),signal:AbortSignal.timeout(30000)});
   if(!login?.token)throw Error('OpenList did not issue an upload token');
+  log('OpenList upload account authenticated');
   for(const name of files){
     const file=path.join(dist,name),size=fs.statSync(file).size;
-    await request('/api/fs/put',{method:'PUT',headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false'},body:Readable.toWeb(fs.createReadStream(file)),duplex:'half',signal:AbortSignal.timeout(20*60*1000)});
+    log('OpenList uploading: '+name+' ('+size+' bytes)');
+    let transferred=0,reported=0;
+    const body=Readable.toWeb(fs.createReadStream(file)).pipeThrough(new TransformStream({transform(chunk,controller){
+      transferred+=chunk.byteLength;
+      if(transferred-reported>=16*1024*1024){reported=transferred;log('OpenList upload progress: '+name+' '+Math.floor(transferred/size*100)+'% (sent to network)');}
+      controller.enqueue(chunk);
+    }}));
+    await request('/api/fs/put',{method:'PUT',headers:{Authorization:login.token,'Content-Type':'application/octet-stream','Content-Length':String(size),'File-Path':encodeURIComponent(directory+'/'+name),'As-Task':'false'},body,duplex:'half',signal:AbortSignal.timeout(20*60*1000)});
+    log('OpenList upload accepted; verifying: '+name);
     // Explicitly refresh the listing; some storage backends cache newly uploaded files.
     const listing=await request('/api/fs/list',{method:'POST',headers:{Authorization:login.token,'Content-Type':'application/json'},body:JSON.stringify({path:directory||'/',password:'',page:1,per_page:0,refresh:true}),signal:AbortSignal.timeout(60000)});
     if(!listing?.content?.some(file=>file.name===name&&file.size===size))throw Error('Uploaded file verification failed: '+name);
