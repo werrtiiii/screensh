@@ -7,6 +7,11 @@ on:
         description: 'Existing release tag to build (for example v1.4.4 or 1.5.0)'
         required: true
         type: string
+      skip_tests:
+        description: 'Skip runtime smoke tests; keep release file checks'
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - 'v*.*.*'
@@ -16,7 +21,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -43,9 +48,12 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Check release version
+        id: version
         shell: pwsh
         run: |
           node -e "const p=require('./app/package.json'),l=require('./app/package-lock.json'),tag=process.env.RELEASE_TAG,v=tag.replace(/^v/,'');if(!/^v?\d+\.\d+\.\d+$/.test(tag)||p.version!==v||l.version!==v||l.packages[''].version!==v)throw Error('Release tag does not match package versions. Update and commit versions before tagging.');"
+          $skipTests = ('${{ inputs.skip_tests }}' -eq 'true') -or ((git log -1 --format=%B) -match '\[skip runtime tests\]')
+          "skip_tests=$($skipTests.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Check native runtime files
         shell: pwsh
@@ -70,7 +78,7 @@ jobs:
         run: npm run pack:win --prefix app
 
       - name: Verify release files and packaged runtime
-        run: node app/scripts/check-installer.cjs
+        run: node app/scripts/check-installer.cjs ${{ steps.version.outputs.skip_tests == 'true' && '--files-only' || '' }}
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

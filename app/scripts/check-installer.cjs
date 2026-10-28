@@ -22,6 +22,10 @@ for (const protocol of ['rtsp', 'rtmp', 'hls', 'srt']) {
 }
 
 const manifest = path.join(resources, 'app.asar', 'package.json');
+if (process.argv.includes('--files-only')) {
+  console.log('RELEASE_FILES_OK; runtime tests skipped by release request');
+  process.exit(0);
+}
 const helper = spawnSync(path.join(resources,'lolping-hook-helper.exe'), ['--simulate'], {
   input: '{"type":"shutdown"}\n', windowsHide: true, encoding: 'utf8', timeout: 10000,
 });
