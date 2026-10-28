@@ -1,0 +1,8 @@
+{
+  "name": "screensh-openlist-sync-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "js-yaml": "4.3.2"
+  }
+}

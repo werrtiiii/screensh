@@ -69,14 +69,7 @@ jobs:
       - name: Build NSIS installer
         run: npm run pack:win --prefix app
 
-      - name: Verify update files
-        shell: pwsh
-        run: |
-          $required = @('app/dist/latest.yml', "app/dist/ScreenSh-$($env:RELEASE_TAG.TrimStart('v'))-Setup.exe")
-          $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
-          if ($missing) { throw "Missing release files: $($missing -join ', ')" }
-
-      - name: Verify installed runtime
+      - name: Verify release files and packaged runtime
         run: node app/scripts/check-installer.cjs
 
       - name: Publish GitHub Release

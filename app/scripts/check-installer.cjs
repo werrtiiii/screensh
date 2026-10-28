@@ -2,6 +2,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const version = require('../package.json').version;
+for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${version}-Setup.exe.blockmap`]) {
+  if (!fs.statSync(path.resolve(__dirname, '../dist', name), { throwIfNoEntry: false })?.isFile()) throw new Error(`Missing release file: ${name}`);
+}
+
 const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',

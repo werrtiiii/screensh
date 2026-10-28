@@ -34,13 +34,18 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /update-sources.json
+            /app/scripts/sync-openlist.cjs
+            /app/scripts/openlist-runtime/
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: app/scripts/openlist-runtime/package-lock.json
       - name: Install script dependencies
-        run: npm ci --prefix app --ignore-scripts
+        run: npm ci --prefix app/scripts/openlist-runtime --ignore-scripts --no-audit --no-fund
       - name: Download exact published release assets
         shell: bash
         run: |
@@ -52,6 +57,7 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir app/dist --pattern latest.yml --pattern "ScreenSh-${version}-Setup.exe" --pattern "ScreenSh-${version}-Setup.exe.blockmap"
       - name: Sync release to OpenList
         env:
+          NODE_PATH: ${{ github.workspace }}/app/scripts/openlist-runtime/node_modules
           NODE_USE_ENV_PROXY: '1'
           OPENLIST_USERNAME: ${{ secrets.OPENLIST_USERNAME }}
           OPENLIST_PASSWORD: ${{ secrets.OPENLIST_PASSWORD }}
