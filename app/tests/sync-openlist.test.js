@@ -69,3 +69,17 @@ test('large binary uploads allow cloud hash reuse without buffering or sending t
   await uploadStream({api:new URL('https://files.example'),file,headers:{'Content-Length':String(2*1024*1024),'X-File-Sha256':'known-cloud-hash'},log:()=>{}},request);
   assert.ok(bytes<2*1024*1024,'a successful early cloud response must stop the remaining file stream');
 });
+
+test('HTTP upload is allowed only with an explicit literal loopback override',()=>{
+  for(const origin of ['http://127.0.0.1:5244','http://[::1]:5244'])assert.equal(validateConfig(config,origin).api.origin,origin);
+  for(const origin of ['http://localhost:5244','http://192.168.1.1:5244','http://127.0.0.1.example','http://127.0.0.1:5244/path'])assert.throws(()=>validateConfig(config,origin));
+  assert.throws(()=>validateConfig({...config,openList:{url:'http://127.0.0.1:5244'}}),'public configuration cannot enable plaintext HTTP');
+});
+
+test('loopback uploader sends actual bytes to the local HTTP server',async t=>{
+  const {dist,name}=fixture(t),http=require('node:http');let received;
+  const server=http.createServer(async(req,res)=>{const chunks=[];for await(const chunk of req)chunks.push(chunk);received=Buffer.concat(chunks);res.writeHead(200,{'Content-Type':'application/json'});res.end('{"code":200}');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await uploadStream({api:new URL('http://127.0.0.1:'+server.address().port),file:path.join(dist,name),headers:{'Content-Length':String(fs.statSync(path.join(dist,name)).size)},log:()=>{}});
+  assert.ok(received.includes(fs.readFileSync(path.join(dist,name))));
+});

@@ -1,6 +1,11 @@
 name: Sync existing release to OpenList
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -17,7 +22,9 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: windows-latest
+    # Keep the hosted fallback until the dedicated server runner is online.
+    if: github.repository == 'werrtiiii/screensh' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event_name == 'push')
+    runs-on: ${{ fromJSON(vars.OPENLIST_RUNNER || '"windows-latest"') }}
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -26,6 +33,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: main
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -37,11 +45,14 @@ jobs:
         shell: bash
         run: |
           node -e 'if(!/^v?\d+\.\d+\.\d+$/.test(process.env.RELEASE_TAG))throw Error("Invalid stable release tag")'
+          # A self-hosted runner retains its workspace between jobs.
+          rm -f app/dist/latest.yml app/dist/ScreenSh-*-Setup.exe app/dist/ScreenSh-*-Setup.exe.blockmap
           mkdir -p app/dist
           version="${RELEASE_TAG#v}"
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir app/dist --pattern latest.yml --pattern "ScreenSh-${version}-Setup.exe" --pattern "ScreenSh-${version}-Setup.exe.blockmap"
       - name: Sync release to OpenList
         env:
+          NODE_USE_ENV_PROXY: '1'
           OPENLIST_USERNAME: ${{ secrets.OPENLIST_USERNAME }}
           OPENLIST_PASSWORD: ${{ secrets.OPENLIST_PASSWORD }}
           OPENLIST_PUBLISH_URL: ${{ vars.OPENLIST_PUBLISH_URL }}

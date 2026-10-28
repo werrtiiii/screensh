@@ -2,6 +2,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const https=require('node:https');
+const http=require('node:http');
 
 async function fileHashes(file){
   const hashes=Object.fromEntries(['md5','sha1','sha256','sha512'].map(name=>[name,crypto.createHash(name)]));
@@ -9,7 +10,8 @@ async function fileHashes(file){
   return Object.fromEntries(Object.entries(hashes).map(([name,hash])=>[name,hash.digest(name==='sha512'?'base64':'hex')]));
 }
 
-function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request=https.request){
+function uploadStream({api,file,headers,log,timeoutMs=90*60*1000},request){
+  request??=api.protocol==='http:'?http.request:https.request;
   return new Promise((resolve,reject)=>{
     const form=Number(headers['Content-Length'])<=1024*1024;
     const boundary='----ScreenSh'+crypto.randomBytes(16).toString('hex');
@@ -41,7 +43,8 @@ function validateConfig(value,publishUrl){
   // Upload credentials use a separate explicit endpoint; the guest entry may
   // redirect and is never used to discover where to send a password.
   const api=new URL(publishUrl||value.openList?.url);
-  if(api.protocol!=='https:'||api.username||api.password||api.search||api.hash||api.pathname!=='/')throw Error('Invalid OpenList API origin');
+  const localHttp=Boolean(publishUrl)&&api.protocol==='http:'&&['127.0.0.1','[::1]'].includes(api.hostname);
+  if((api.protocol!=='https:'&&!localHttp)||api.username||api.password||api.search||api.hash||api.pathname!=='/')throw Error('Invalid OpenList API origin');
   const directory=value.publish?.path;
   if(typeof directory!=='string'||!directory.startsWith('/')||directory.split('/').includes('..'))throw Error('Invalid upload path');
   return {api,directory:directory.replace(/\/$/,'')};

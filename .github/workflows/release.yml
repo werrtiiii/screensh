@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: openlist-update-sync
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -90,16 +90,11 @@ jobs:
           fail_on_unmatched_files: true
           body_path: ${{ format('release-notes/{0}.md', env.RELEASE_TAG) }}
 
-      - name: Read current download source configuration
-        shell: pwsh
-        run: |
-          # Read main rather than the tag, so a changed mirror also applies to reruns.
-          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github.raw+json' }
-          Invoke-WebRequest -Uri "https://api.github.com/repos/${{ github.repository }}/contents/update-sources.json?ref=main" -Headers $headers -OutFile app/dist/update-sources.json
-
-      - name: Sync release to OpenList
-        env:
-          OPENLIST_USERNAME: ${{ secrets.OPENLIST_USERNAME }}
-          OPENLIST_PASSWORD: ${{ secrets.OPENLIST_PASSWORD }}
-          OPENLIST_PUBLISH_URL: ${{ vars.OPENLIST_PUBLISH_URL }}
-        run: node app/scripts/sync-openlist.cjs app/dist/update-sources.json app/dist
+  sync-openlist:
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sync-openlist.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit
