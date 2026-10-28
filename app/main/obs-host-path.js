@@ -3,7 +3,9 @@ const path = require('path');
 const { createHash } = require('crypto');
 
 function prepareVoiceHost(bin, dataPath) {
-  const files = fs.readdirSync(bin).filter(name => name === 'obs64.exe' || /\.dll$/i.test(name));
+  // OBS launches these probes beside its executable before registering hardware
+  // encoders. A renamed isolated host must carry them as well as the DLLs.
+  const files = fs.readdirSync(bin).filter(name => name === 'obs64.exe' || /\.dll$/i.test(name) || /^obs-(nvenc|amf|qsv)-test\.exe$/i.test(name));
   const signature = files.sort().map(name => {
     const stat = fs.statSync(path.join(bin, name));
     return `${name}:${stat.size}:${stat.mtimeMs}`;

@@ -11,7 +11,8 @@ const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
   'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
-  'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node']) {
+  'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node',
+  ...['nvenc', 'amf', 'qsv'].map(vendor => `resources/app.asar.unpacked/node_modules/obs-studio-node/obs-${vendor}-test.exe`)]) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
 }
 
@@ -69,9 +70,13 @@ const probe = `
     done(null,JSON.stringify({policyBlocked:false,adapters:[{name:'fixture',enabled:true}],addresses:[],failures:[]}));
   }}).inspect().then(result=>{if(result.code!=='no-address')throw Error('Packaged IPv6 script check failed');console.log('PACKAGED_IPV6_SCRIPT_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   const { ObsEngine } = load('./main/obs-engine.js');
-  const engine = new ObsEngine(path.join(process.env.TEMP || process.cwd(),'screensh-installer-probe-'+process.pid),undefined,undefined,true);
+  const probePath = path.join(process.env.TEMP || process.cwd(),'screensh-installer-probe-'+process.pid);
+  const engine = new ObsEngine(probePath,undefined,undefined,true);
   try {
     engine.init();
+    const bin = path.dirname(load.resolve('obs-studio-node/package.json')).replace(path.sep+'app.asar'+path.sep, path.sep+'app.asar.unpacked'+path.sep);
+    const isolated = load('./main/obs-host-path').prepareVoiceHost(bin, probePath);
+    for (const vendor of ['nvenc','amf','qsv']) if (!fs.existsSync(path.join(path.dirname(isolated),'obs-'+vendor+'-test.exe'))) throw Error('Isolated OBS hardware probe is missing: '+vendor);
     if (!engine.osn.ServiceFactory.types().includes('whip_custom')) throw new Error('WHIP plugin is missing');
     console.log('PACKAGED_OBS_OK');
   } finally { engine.shutdown(); }
