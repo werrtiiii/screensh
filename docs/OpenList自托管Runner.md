@@ -1,5 +1,16 @@
 # OpenList 自托管 Runner
 
+## 当前部署
+
+2026-10-28 已在飞牛 NAS（Debian 12 x64）部署并通过真实同步验证：
+
+- Runner 名称 `screensh-fnos`，标签 `screensh-openlist`，普通用户目录 `/home/wsy/screensh-runner`。
+- 原生 systemd 服务 `actions.runner.werrtiiii-screensh.screensh-fnos.service`，以 `wsy` 身份运行，已启用开机启动，不依赖 Docker。
+- 已设置 `OPENLIST_RUNNER=["self-hosted","linux","screensh-openlist"]` 和 `OPENLIST_PUBLISH_URL=http://127.0.0.1:5244`。服务器代理为 `http://127.0.0.1:7890`，回环地址绕过代理。
+- [1.5.3 验证任务](https://github.com/werrtiiii/screensh/actions/runs/40639133424)全部成功：正式更新文件下载 54 秒，OpenList 上传和校验 38 秒。随后匿名验证了新版安装包大小、签名分段下载及更新清单。耗时仅代表本次测试。
+
+NAS 需要保持开机，Runner、代理及 OpenList 服务需要运行；没有匹配的在线 Runner 时同步任务会排队。GitHub 打包发布仍使用托管 Windows 机器。
+
 Windows 安装包继续在 GitHub 托管的 Windows 机器上构建。发布完成后，独立的同步任务下载 GitHub 正式发行文件，验证安装包 SHA-512，再上传到 OpenList。同步失败不撤销 GitHub Release。
 
 ## 服务器要求
