@@ -77,5 +77,4 @@ export function initMemberNetwork() {
   dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
   // Also close on leaving the server, without waiting for a pending Ping batch.
   new MutationObserver(() => { if (!$('#room').classList.contains('active')) close(); }).observe($('#room'), { attributes: true, attributeFilter: ['class'] });
-  new MutationObserver(() => { button.classList.toggle('hidden', $('#userCardsView').classList.contains('hidden')); }).observe($('#userCardsView'), { attributes: true, attributeFilter: ['class'] });
 }

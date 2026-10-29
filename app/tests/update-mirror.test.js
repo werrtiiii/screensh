@@ -107,3 +107,23 @@ test('cancelled proxy download does not retry the direct source',async()=>{
   provider.releaseInfo=info;let calls=0;client.downloadUpdate=async()=>{calls++;throw new CancellationError();};
   await assert.rejects(mirror.download(client),CancellationError);assert.equal(calls,1);
 });
+
+test('official update metadata is preferred; a connection failure relays API and checksums through the selected proxy',async t=>{
+  const {GitHubProvider}=require('electron-updater/out/providers/GitHubProvider');let offline=false,officialCalls=0;
+  t.mock.method(GitHubProvider.prototype,'getLatestVersion',async()=>{officialCalls++;if(offline)throw Error('GitHub connection timed out');return info;});
+  const requests=[],sha512=Buffer.alloc(64).toString('base64');
+  const {provider}=fixture({},async(url,options)=>{requests.push(String(url));assert.equal(options.credentials,'omit');assert.equal(options.headers.Authorization,undefined);
+    if(String(url).includes('api.github.com'))return Response.json({tag_name:'1.5.4',name:'ScreenSh 1.5.4',draft:false,prerelease:false});
+    return new Response(JSON.stringify({version:'1.5.4',files:[{url:'ScreenSh-1.5.4-Setup.exe',size:2000,sha512}]}));
+  },{getAcceleration:()=>({enabled:true,source:'custom',customUrl:'https://proxy.example'})});
+  assert.equal((await provider.getLatestVersion()).version,'1.5.4');assert.equal(requests.length,0);
+  offline=true;const result=await provider.getLatestVersion();assert.equal(officialCalls,2);assert.equal(result.files[0].sha512,sha512);assert.equal(result.tag,'1.5.4');
+  assert.deepEqual(requests,['https://proxy.example/https://api.github.com/repos/werrtiiii/screensh/releases/latest','https://proxy.example/https://github.com/werrtiiii/screensh/releases/download/1.5.4/latest.yml']);
+  assert.equal(provider.createRequestOptions(new URL('https://github.com/werrtiiii/screensh/releases.atom')).timeout,8000);
+});
+test('metadata fallback rejects a mismatched version and is disabled with the acceleration switch',async t=>{
+  const {GitHubProvider}=require('electron-updater/out/providers/GitHubProvider');t.mock.method(GitHubProvider.prototype,'getLatestVersion',async()=>{throw Error('official offline');});
+  let enabled=true,requests=0;
+  const {provider}=fixture({},async()=>{requests++;return Response.json(requests===1?{tag_name:'1.5.4'}:{version:'1.5.3',files:[]});},{getAcceleration:()=>({enabled,source:'https://gh-proxy.com'})});
+  await assert.rejects(provider.getLatestVersion(),/清单与正式版本不匹配/);enabled=false;await assert.rejects(provider.getLatestVersion(),/official offline/);assert.equal(requests,2);
+});

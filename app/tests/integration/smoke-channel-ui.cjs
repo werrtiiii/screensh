@@ -7,6 +7,8 @@ ipcMain.handle('get-hardware-acceleration',()=>false);
 ipcMain.handle('get-login-startup',()=>false);
 ipcMain.handle('lolping-get',()=>({config:{enabled:false}}));
 ipcMain.handle('lolping-sync',()=>{});
+ipcMain.handle('get-external-obs-settings',()=>({port:4455,hasPassword:false}));
+ipcMain.handle('inspect-external-obs',()=>({scene:'测试场景',version:'30',streaming:false}));
 ipcMain.handle('stop-sharing',()=>{});
 ipcMain.handle('get-screens',()=>{
  const thumbnail=nativeImage.createFromBitmap(Buffer.from([220,160,90,255]),{width:1,height:1}).resize({width:320,height:180}).toDataURL();
@@ -35,12 +37,16 @@ app.whenReady().then(async()=>{
   await run(`document.querySelector('.card-share-button').click()`);
   await wait(`document.querySelectorAll('.screen-item').length===2 && !!document.querySelector('.screen-preview img')`);
   assert.equal(await run(`document.querySelector('#btnSourceWindows').getAttribute('aria-selected')`),'true');
+  const pickerSize=await run(`(()=>{const r=document.querySelector('.source-dialog').getBoundingClientRect();return [r.width,r.height]})()`);
   await run(`document.querySelector('.screen-item').click()`);
   assert.equal(await run(`(async()=>{const{state}=await import('./shared.js');return state.selectedSourceId;})()`),'Preview:Class:test.exe');
   await run(`document.querySelector('#btnSourceScreens').click()`);
   assert.equal(await run(`document.querySelectorAll('.screen-item').length`),1);
+  assert.deepEqual(await run(`(()=>{const r=document.querySelector('.source-dialog').getBoundingClientRect();return [r.width,r.height]})()`),pickerSize);
   await run(`document.querySelector('.screen-item').click()`);
   assert.equal(await run(`(async()=>{const{state}=await import('./shared.js');return state.selectedSourceId==='display-guid'&&state.selectedSourceType==='screen';})()`),true);
+  await run(`document.querySelector('[data-source-tab="obs"]').click()`);await wait(`document.querySelector('.external-obs-status').textContent.includes('已连接 OBS')`);
+  assert.deepEqual(await run(`(()=>{const r=document.querySelector('.source-dialog').getBoundingClientRect();return [r.width,r.height]})()`),pickerSize);
   await run(`document.querySelector('#btnSourceWindows').click()`);
   assert.equal(await run(`document.querySelector('.screen-preview.unavailable').textContent`),'暂无预览');
   win.show();await new Promise(r=>setTimeout(r,150));fs.writeFileSync(path.join(root,'.runtime-probe','screen-source-previews.png'),(await win.webContents.capturePage()).toPNG());
@@ -109,6 +115,12 @@ app.whenReady().then(async()=>{
   fs.writeFileSync(path.join(root,'.runtime-probe','member-network.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.querySelector('#btnCloseMemberNetwork').click()`);
   assert.equal(await run(`document.querySelector('#memberNetworkDialog').classList.contains('hidden')`),true);
+  await run(`(async()=>{const {state}=await import('./shared.js');state.watchingId='watching-test';document.querySelector('#userCardsView').classList.add('hidden');document.querySelector('#activeVideoView').classList.remove('hidden');})()`);
+  await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(await run(`(()=>{const b=document.querySelector('#btnMemberNetwork'),r=b.getBoundingClientRect();return r.width>0&&document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b})()`),true,'network button remains visible and clickable while watching');
+  await run(`document.querySelector('#btnMemberNetwork').click()`);assert.equal(await run(`document.querySelector('#memberNetworkDialog').classList.contains('hidden')`),false);
+  assert.equal(await run(`(async()=>{const {state}=await import('./shared.js');return state.watchingId})()`),'watching-test');
+  await run(`document.querySelector('#btnCloseMemberNetwork').click();document.querySelector('#activeVideoView').classList.add('hidden');document.querySelector('#userCardsView').classList.remove('hidden');(async()=>{const {state}=await import('./shared.js');state.watchingId=null;})()`);
   await request(clients[0],'switch-channel',{channelId:'main'});
   await wait(`JSON.stringify(${mainNames})==='["Owner","Second","First"]'`);
   await run(`document.querySelector('.channel-member.me').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:160}))`);

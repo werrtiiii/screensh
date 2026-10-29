@@ -22,6 +22,17 @@ function accelerateUrl(proxy,original) {
   if(url.origin!=='https://github.com'||!/^\/[^/]+\/[^/]+\/releases\/download\//.test(url.pathname)||url.username||url.password)throw Error('只支持加速 GitHub 正式发行文件');
   return new URL(normalizeProxy(proxy)+'/'+url.href);
 }
+function accelerateMetadataUrl(proxy,original,repository) {
+  const repo=normalizeRepository(repository),url=new URL(original);
+  const allowed=repo&&((url.origin==='https://api.github.com'&&url.pathname===`/repos/${repo}/releases/latest`)||(url.origin==='https://github.com'&&url.pathname.startsWith(`/${repo}/releases/download/`)&&url.pathname.endsWith('/latest.yml')));
+  if(!allowed||url.username||url.password||url.search||url.hash)throw Error('更新信息地址不属于指定 GitHub 仓库');
+  return new URL(normalizeProxy(proxy)+'/'+url.href);
+}
+async function fetchMetadataText(url,fetchFile,headers={}) {
+  const response=await fetchFile(url,{credentials:'omit',headers,signal:AbortSignal.timeout(8000)});
+  if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('更新信息请求失败');}
+  return (await readBody(response,524288)).toString('utf8');
+}
 async function readBody(response,limit,truncate=false) {
   if(!response.body)throw Error('响应内容为空');
   const reader=response.body.getReader(),chunks=[];let size=0;
@@ -38,9 +49,9 @@ function createUpdateAcceleration({file,repository,fetchFile=fetch,now=Date.now}
   async function test(customUrl='') {
     const candidates=[...sources];if(customUrl.trim())candidates.push(normalizeProxy(customUrl));
     if(!repo)throw Error('未配置 GitHub 更新仓库');
-    const response=await fetchFile(`https://api.github.com/repos/${repo}/releases/latest`,{credentials:'omit',headers:{Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(8000)});
-    if(!response.ok)throw Error('无法获取 GitHub 测试文件，请稍后重试');
-    const release=JSON.parse((await readBody(response,131072)).toString('utf8'));
+    const metadata=new URL(`https://api.github.com/repos/${repo}/releases/latest`),headers={Accept:'application/vnd.github+json'};let release;
+    try{release=JSON.parse(await fetchMetadataText(metadata,fetchFile,headers));}
+    catch{const proxy=proxyFor(settings);if(!proxy)throw Error('无法获取 GitHub 测试文件，请稍后重试');release=JSON.parse(await fetchMetadataText(accelerateMetadataUrl(proxy,metadata,repo),fetchFile,headers));}
     const installer=release.assets?.find(a=>/^ScreenSh-\d+\.\d+\.\d+-Setup\.exe$/.test(a.name||''));
     const original=new URL(installer?.browser_download_url||'https://invalid.example');
     if(original.origin!=='https://github.com'||!original.pathname.startsWith('/'+repo+'/releases/download/'))throw Error('GitHub 暂无可用测试安装包');
@@ -60,4 +71,4 @@ function createUpdateAcceleration({file,repository,fetchFile=fetch,now=Date.now}
     test(customUrl=''){if(typeof customUrl!=='string')return Promise.reject(Error('自定义加速地址无效'));if(!testing)testing=test(customUrl).finally(()=>{testing=null;});return testing;},
   };
 }
-module.exports={createUpdateAcceleration,normalizeSettings,normalizeProxy,proxyFor,accelerateUrl};
+module.exports={createUpdateAcceleration,normalizeSettings,normalizeProxy,proxyFor,accelerateUrl,accelerateMetadataUrl,fetchMetadataText};

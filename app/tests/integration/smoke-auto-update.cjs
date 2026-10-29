@@ -53,7 +53,9 @@ app.whenReady().then(async()=>{
     await wait(`document.querySelector('#updateAccelerationStatus').textContent.includes('已保存')`);assert.equal(acceleration.get().source,'custom');assert.equal(acceleration.get().customUrl,'https://mirror.example');
     await win.reload();await wait(`document.querySelector('[name="updateAccelerationSource"][value="custom"]')?.checked`);
     await run(`document.querySelector('[name="updateAccelerationSource"][value="https://gh-proxy.com"]').click()`);await wait(`!document.querySelector('#updateAccelerationEnabled').disabled`);
-    await run(`document.querySelector('#btnTestUpdateAcceleration').click()`);await wait(`document.querySelector('#updateAccelerationStatus').textContent.includes('测试完成')`);
+    await run(`document.querySelector('#btnTestUpdateAcceleration').click()`);await wait(`document.querySelectorAll('.update-acceleration-result[data-available="true"]').length===5 && !document.querySelector('#btnTestUpdateAcceleration').disabled`);
+    assert.equal(await run(`document.querySelector('#updateAccelerationStatus').textContent`),'');
+    assert.equal(await run(`document.querySelector('#updateAccelerationEnabled').parentElement.querySelector('.help-tip')`),null);
     assert.equal(await run(`document.querySelectorAll('.update-acceleration-result[data-available="true"]').length`),5);
     await run(`document.querySelector('#btnSettings').click();document.querySelector('.setting-update').scrollIntoView({block:'start'});`);await new Promise(resolve=>setTimeout(resolve,200));
     fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'settings.png'),(await win.webContents.capturePage()).toPNG());

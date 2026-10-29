@@ -1,9 +1,9 @@
 const {normalizeRepository}=require('./updater');
 const {CancellationError}=require('builder-util-runtime');
-const {proxyFor,accelerateUrl}=require('./update-acceleration.cjs');
+const {proxyFor,accelerateUrl,accelerateMetadataUrl,fetchMetadataText}=require('./update-acceleration.cjs');
 
-// Version metadata and checksums stay on GitHub. Only the artifact download
-// location changes, so a stale mirror can never select an older release.
+// Use GitHub metadata first; a selected proxy may relay the same repository's
+// metadata only after the official check fails. OpenList never selects versions.
 function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetchFile=globalThis.fetch,{getAcceleration=()=>null}={}) {
   const repo=normalizeRepository(repository);
   if(!repo||!mirrorUrl)return null;
@@ -37,7 +37,27 @@ function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetc
       const {GitHubProvider}=require('electron-updater/out/providers/GitHubProvider');
       class MirrorProvider extends GitHubProvider {
         constructor(options,updater,runtime){super({...options,provider:'github'},updater,runtime);provider=this;this.links=new Map();}
-        async getLatestVersion(){await refreshSource();const info=await super.getLatestVersion();this.releaseInfo=info;return info;}
+        createRequestOptions(url,headers){return {...super.createRequestOptions(url,headers),timeout:8000};}
+        async getLatestVersion(){
+          await refreshSource();let info;
+          try{info=await super.getLatestVersion();}
+          catch(error){
+            if(error instanceof CancellationError||error?.name==='CancellationError')throw error;
+            const proxy=proxyFor(getAcceleration());if(!proxy)throw error;
+            const metadataUrl=new URL(`https://api.github.com/repos/${repo}/releases/latest`);
+            const release=JSON.parse(await fetchMetadataText(accelerateMetadataUrl(proxy,metadataUrl,repo),fetchFile,{Accept:'application/vnd.github+json'}));
+            const tag=release.tag_name;
+            if(release.draft||release.prerelease||!/^v?\d+\.\d+\.\d+$/.test(tag||''))throw Error('加速源未返回有效的正式版本');
+            const manifestUrl=new URL(`https://github.com/${repo}/releases/download/${tag}/latest.yml`);
+            const raw=await fetchMetadataText(accelerateMetadataUrl(proxy,manifestUrl,repo),fetchFile,{Accept:'text/yaml, text/plain, */*'});
+            const {parseUpdateInfo}=require('electron-updater/out/providers/Provider');
+            info=parseUpdateInfo(raw,'latest.yml',manifestUrl);
+            const expected=`ScreenSh-${String(tag).replace(/^v/,'')}-Setup.exe`;
+            if(info.version!==String(tag).replace(/^v/,'')||info.packages||!Array.isArray(info.files)||!info.files.length||info.files.some(file=>file.url!==expected||!Number.isSafeInteger(file.size)||file.size<=0||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512||'')))throw Error('加速源更新清单与正式版本不匹配');
+            info={...info,tag,releaseName:release.name||tag,releaseNotes:release.body||''};
+          }
+          this.releaseInfo=info;return info;
+        }
         artifact(filename){return this.links.get(filename)||new URL(encodeURIComponent(filename),base);}
         async prepareMirror(){
           if(!api)return;

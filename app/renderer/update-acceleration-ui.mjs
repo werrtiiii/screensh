@@ -43,7 +43,7 @@ export async function initUpdateAcceleration({root=document,api=window.electronA
         row.result.textContent=result.available?`可用 · ${result.latency} ms`:'不可用';row.result.dataset.available=String(result.available);
         row.result.title=result.available&&!result.range?'连通正常，但未确认分段下载支持，可能使用完整下载':'';
       }
-      status.textContent='测试完成；耗时为首包响应时间，不代表下载速度';
+      status.textContent='';
     }catch(error){status.textContent=error.message||'连通性测试失败';notify(status.textContent,'error');}
     finally{testing=false;test.textContent='测试连通性';refresh();}
   });
