@@ -2,8 +2,8 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {CancellationError}=require('builder-util-runtime');
 const {createUpdateMirror}=require('../main/update-mirror.cjs');
 const info={version:'1.5.4',tag:'1.5.4',files:[{url:'ScreenSh-1.5.4-Setup.exe',size:2000,sha512:'expected-release-checksum'}]};
-function fixture(options={},fetchFile){
-  const mirror=createUpdateMirror({repository:'werrtiiii/screensh',mirrorUrl:'https://files.example/d/updates/',...options},fetchFile);let provider;
+function fixture(options={},fetchFile,runtime){
+  const mirror=createUpdateMirror({repository:'werrtiiii/screensh',mirrorUrl:'https://files.example/d/updates/',...options},fetchFile,runtime);let provider;
   const client={currentVersion:{version:'1.5.3'},setFeedURL:config=>{provider=new config.updateProvider(config,client,{executor:{},platform:'win32'});}};
   mirror.configure(client);return {mirror,client,provider};
 }
@@ -89,4 +89,21 @@ test('unavailable remote configuration uses bundled mirror and still checks GitH
   const {provider}=fixture({remoteSource:true},async()=>{throw Error('offline');});
   assert.equal((await provider.getLatestVersion()).version,info.version);
   assert.equal(provider.resolveFiles(info)[0].url.hostname,'files.example');
+});
+
+test('failed OpenList uses the selected proxy for installer and both blockmaps, then falls back to GitHub',async()=>{
+  const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},async()=>{throw Error('mirror offline');},{getAcceleration:()=>({enabled:true,source:'custom',customUrl:'https://proxy.example/prefix'})});
+  provider.releaseInfo=info;const attempts=[];
+  client.downloadUpdate=async()=>{const file=provider.resolveFiles(info)[0];attempts.push(file);if(attempts.length===1){assert.match(file.url.href,/^https:\/\/proxy.example\/prefix\/https:\/\/github.com\//);const maps=provider.getBlockMapFiles(file.url,'1.5.3','1.5.4');assert.ok(maps.every(u=>u.href.startsWith('https://proxy.example/prefix/https://github.com/')));assert.ok(maps[0].href.endsWith('ScreenSh-1.5.3-Setup.exe.blockmap'));throw Error('proxy checksum mismatch');}return file;};
+  const file=await mirror.download(client);assert.equal(file.url.hostname,'github.com');assert.deepEqual(attempts[0].info,info.files[0]);assert.deepEqual(file.info,info.files[0]);
+});
+test('disabled acceleration bypasses OpenList and proxy and applies on the next download',async()=>{
+  let enabled=false;const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},()=>assert.fail('disabled acceleration must not contact OpenList'),{getAcceleration:()=>({enabled,source:'https://gh-proxy.com'})});
+  provider.releaseInfo=info;client.downloadUpdate=async()=>provider.resolveFiles(info);
+  assert.equal((await mirror.download(client))[0].url.hostname,'github.com');
+});
+test('cancelled proxy download does not retry the direct source',async()=>{
+  const {mirror,client,provider}=fixture({openList:{url:'https://files.example',path:'/updates'}},async()=>{throw Error('offline');},{getAcceleration:()=>({enabled:true,source:'https://gh-proxy.com'})});
+  provider.releaseInfo=info;let calls=0;client.downloadUpdate=async()=>{calls++;throw new CancellationError();};
+  await assert.rejects(mirror.download(client),CancellationError);assert.equal(calls,1);
 });

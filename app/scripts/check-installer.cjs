@@ -60,7 +60,7 @@ const probe = `
     'lolping/dist/renderer/ui/surrender-frame.png','lolping/NOTICE.md','lolping/vendor/LICENSE']) {
     if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
   }
-  for (const file of ['main/auto-update.cjs','main/pending-update.cjs','main/external-obs.cjs','main/external-obs-settings.cjs','main/obs-websocket.cjs','renderer/external-obs-ui.mjs']) {
+  for (const file of ['main/auto-update.cjs','main/update-acceleration.cjs','renderer/update-acceleration-ui.mjs','main/pending-update.cjs','main/external-obs.cjs','main/external-obs-settings.cjs','main/obs-websocket.cjs','renderer/external-obs-ui.mjs']) {
     if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
   }
   load('./main/external-obs.cjs');

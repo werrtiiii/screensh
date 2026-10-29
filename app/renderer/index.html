@@ -259,6 +259,18 @@
           <div class="form-group setting-update">
             <label>软件更新</label>
             <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="自动检查、后台优先差分下载，无法差分时下载完整包；下次启动时安装本地已下载的更新。">?</span></label>
+            <div id="updateAcceleration" class="update-acceleration">
+              <div class="update-acceleration-heading">
+                <label class="auto-update-setting"><input id="updateAccelerationEnabled" type="checkbox" role="switch" checked disabled /> 下载加速 <span class="help-tip" data-tooltip="默认开启。优先 OpenList，失败后使用选定的 GitHub 加速源，最后回退 GitHub 直连。关闭后直接从 GitHub 下载。版本和校验值仍从 GitHub 获取，修改在下次下载时生效。">?</span></label>
+                <button id="btnTestUpdateAcceleration" type="button" class="btn btn-outline btn-sm" disabled>测试连通性</button>
+              </div>
+              <div id="updateAccelerationSources" class="update-acceleration-sources" role="radiogroup" aria-label="GitHub 备用加速源"></div>
+              <div id="updateAccelerationCustom" class="update-acceleration-custom hidden">
+                <input id="updateAccelerationCustomUrl" class="form-control" type="url" placeholder="https://你的加速地址" aria-label="自定义 GitHub 加速地址" maxlength="2048" />
+                <button id="btnSaveUpdateAcceleration" class="btn btn-outline btn-sm" type="button">保存</button>
+              </div>
+              <small id="updateAccelerationStatus" class="update-acceleration-status" role="status" aria-live="polite"></small>
+            </div>
             <div class="update-row">
               <span id="updateStatus" class="update-status" role="status">当前版本</span>
               <button id="btnCheckUpdate" type="button" class="btn btn-outline btn-sm">检查更新</button>

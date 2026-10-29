@@ -121,9 +121,13 @@ ipcMain.handle('get-easytier-settings',async event=>{requireMainWindow(event);re
 ipcMain.handle('set-easytier-settings',async(event,value)=>{requireMainWindow(event);return (await getEasyTierSettings()).set(value);});
 const ipv6Network=require('./main/ipv6-network.cjs').createIpv6Network({getEasyTierDisabled:async()=>(await getEasyTierSettings()).get().disableIpv6});
 ipcMain.handle('try-enable-ipv6',event=>{requireMainWindow(event);return ipv6Network.run();});
+const updateAcceleration=require('./main/update-acceleration.cjs').createUpdateAcceleration({file:path.join(app.getPath('userData'),'update-acceleration.json'),repository:require('./update-config.json').repository,fetchFile:(url,options)=>require('electron').net.fetch(String(url),options)});
+ipcMain.handle('get-update-acceleration',event=>{requireMainWindow(event);return updateAcceleration.get();});
+ipcMain.handle('set-update-acceleration',(event,value)=>{requireMainWindow(event);return updateAcceleration.set(value);});
+ipcMain.handle('test-update-acceleration',(event,customUrl)=>{requireMainWindow(event);return updateAcceleration.test(customUrl);});
 const updates = require('./main/auto-update.cjs').createAutoUpdate({
   file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
-  downloadMirror:require('./main/update-mirror.cjs').createUpdateMirror(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options)),
+  downloadMirror:require('./main/update-mirror.cjs').createUpdateMirror(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options),{getAcceleration:()=>updateAcceleration.get()}),
   send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);},
 });
 ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});

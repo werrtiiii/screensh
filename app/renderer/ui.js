@@ -17,7 +17,7 @@ export function initSettingsNavigation() {
     const sharing = visible(body.querySelector('.setting-room'));
     const sections = sharing
       ? [['画面', '#videoEncoderSelect'], ['采集', '#captureMethodSelect'], ['声音', '#shareAudioCheckbox'], ['码率', '#bitrateInput']]
-      : [['常规', '#themeSelect'], ['音效', '#softwareSoundVolume'], ['lolPing', '#lolPingEnabled'], ['EasyTier', '#btnEasyTierAdvanced'], ['聊天', '#chatCacheEnabled'], ['语音', '#voiceMicrophone']];
+      : [['常规', '#themeSelect'], ['更新', '#autoUpdateCheckbox'], ['音效', '#softwareSoundVolume'], ['lolPing', '#lolPingEnabled'], ['EasyTier', '#btnEasyTierAdvanced'], ['聊天', '#chatCacheEnabled'], ['语音', '#voiceMicrophone']];
     targets = sections.map(([label, selector]) => ({ label, node: body.querySelector(selector)?.closest('.form-group') })).filter(item => visible(item.node));
     navigation.replaceChildren(...targets.map(({ label, node }, index) => {
       const button = document.createElement('button');

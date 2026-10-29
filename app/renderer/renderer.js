@@ -26,6 +26,7 @@ import { serverIdentity } from './server-identity.mjs';
 import { initServerInfo } from './server-info.mjs';
 import { initChat } from './chat.js';
 import { initEasyTierSettings } from './easytier-settings.mjs';
+import { initUpdateAcceleration } from './update-acceleration-ui.mjs';
 
 const initialAvatar = state.userAvatar;
 initMemberNetwork();
@@ -398,6 +399,7 @@ function initSettings() {
 }
 
 initSettings();
+void initUpdateAcceleration({notify:toast});
 initAccompaniment();
 initVoice();
 

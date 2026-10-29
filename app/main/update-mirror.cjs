@@ -1,9 +1,10 @@
 const {normalizeRepository}=require('./updater');
 const {CancellationError}=require('builder-util-runtime');
+const {proxyFor,accelerateUrl}=require('./update-acceleration.cjs');
 
 // Version metadata and checksums stay on GitHub. Only the artifact download
 // location changes, so a stale mirror can never select an older release.
-function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetchFile=globalThis.fetch) {
+function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetchFile=globalThis.fetch,{getAcceleration=()=>null}={}) {
   const repo=normalizeRepository(repository);
   if(!repo||!mirrorUrl)return null;
   let base=new URL(mirrorUrl);
@@ -11,7 +12,7 @@ function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetc
   if(!base.pathname.endsWith('/'))base.pathname+='/';
   let api;
   if(openList){api=new URL('/api/fs/get',openList.url);if(api.protocol!=='https:'||api.username||api.password||typeof openList.path!=='string'||!openList.path.startsWith('/')||openList.path.split('/').includes('..'))throw Error('OpenList 更新目录配置无效');}
-  const [owner,name]=repo.split('/'),control={mirror:true};let provider;
+  const [owner,name]=repo.split('/'),control={mirror:true,proxy:null};let provider;
   // Only this repository's main branch may change download locations. It cannot
   // replace the release repository or its authoritative checksums.
   const remote=remoteSource===true?`https://api.github.com/repos/${repo}/contents/update-sources.json?ref=main`:null;
@@ -55,6 +56,7 @@ function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetc
         }
         resolveFiles(info) {
           const files=super.resolveFiles(info);
+          if(control.proxy)return files.map(file=>({...file,url:accelerateUrl(control.proxy,file.url)}));
           if(!control.mirror)return files;
           return files.map(file=>{
             const filename=decodeURIComponent(file.url.pathname.split('/').at(-1));
@@ -63,19 +65,23 @@ function createUpdateMirror({repository,mirrorUrl,openList,remoteSource}={},fetc
           });
         }
         getBlockMapFiles(url,oldVersion,newVersion,override){
-          const files=super.getBlockMapFiles(url,oldVersion,newVersion,override);
+          const upstream=control.proxy&&url.href.startsWith(control.proxy+'/')?new URL(url.href.slice(control.proxy.length+1)):url;
+          const files=super.getBlockMapFiles(upstream,oldVersion,newVersion,override);
+          if(control.proxy)return files.map(file=>accelerateUrl(control.proxy,file));
           return control.mirror?files.map(url=>this.artifact(decodeURIComponent(url.pathname.split('/').at(-1)))):files;
         }
       }
       client.setFeedURL({provider:'custom',updateProvider:MirrorProvider,owner,repo:name});
     },
     async download(client) {
-      control.mirror=true;
-      try{await provider?.prepareMirror();return await client.downloadUpdate();}
-      catch(error){
-        if(error instanceof CancellationError||error?.code==='ERR_UPDATER_DOWNLOAD_CANCELLED'||error?.name==='CancellationError')throw error;
-        control.mirror=false;
-        return client.downloadUpdate();
+      const settings=getAcceleration(),proxy=settings?proxyFor(settings):null;
+      const routes=settings?.enabled===false?['github']:['mirror',...(proxy?[proxy]:[]),'github'];
+      for(const route of routes){
+        control.mirror=route==='mirror';control.proxy=route==='mirror'||route==='github'?null:route;
+        try{if(control.mirror)await provider?.prepareMirror();return await client.downloadUpdate();}
+        catch(error){
+          if(error instanceof CancellationError||error?.code==='ERR_UPDATER_DOWNLOAD_CANCELLED'||error?.name==='CancellationError'||route==='github')throw error;
+        }
       }
     },
   };
