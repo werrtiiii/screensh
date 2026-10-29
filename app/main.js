@@ -89,12 +89,13 @@ ipcMain.handle('inspect-external-obs',event=>{requireMainWindow(event);return ex
 let sharePacer=null;
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
-ipcMain.handle('ping-member', async (_event, ip) => {if(easytierRpc?.noTun){const result=await memberRoutes.read(),row=result.rows.find(row=>row.ip===ip);if(Number.isFinite(row?.rttMs))return {ip,rttMs:row.rttMs,noTun:true,source:'tunnel'};return memberProbe.ping(ip);}return memberPinger.ping(ip);});
+ipcMain.handle('ping-member', (event, ip) => {requireMainWindow(event);return memberLatency.ping(ip);});
 let easytierRpc=null;
 const {allocateRpcPortal,createMemberRoutes}=require('./main/member-routes.cjs');
 const memberRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
 const tunnelForwarder=require('./main/tunnel-forwarder.cjs').createTunnelForwarder({exe:resource('easytier-cli.exe'),getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null});
 const memberProbe=require('./main/member-probe.cjs').createMemberProbe({getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null,forwarder:tunnelForwarder});
+const memberLatency=require('./main/member-latency.cjs').createMemberLatency({getContext:()=>easytier.child?.exitCode===null&&virtualIp?easytierRpc:null,probe:memberProbe,pinger:memberPinger,routes:memberRoutes});
 ipcMain.handle('get-tunnel-mode',event=>{requireMainWindow(event);return easytierRpc?.noTun?'no-tun':'tun';});
 ipcMain.handle('open-tunnel-scope',(event,ip)=>{requireMainWindow(event);return tunnelForwarder.open(ip);});
 ipcMain.handle('forward-tunnel-port',(event,id,protocol,port)=>{requireMainWindow(event);return tunnelForwarder.forward(id,protocol,port);});
@@ -116,7 +117,7 @@ ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
   hardwareAccelerationEnabled = enabled;
   return enabled;
 });
-ipcMain.handle('test-easytier-peer', (_event, peer) => peerTester.test(peer));
+ipcMain.handle('test-easytier-peer', (event, peer) => {requireMainWindow(event);return peerTester.test(peer);});
 ipcMain.handle('get-easytier-settings',async event=>{requireMainWindow(event);return (await getEasyTierSettings()).get();});
 ipcMain.handle('set-easytier-settings',async(event,value)=>{requireMainWindow(event);return (await getEasyTierSettings()).set(value);});
 const ipv6Network=require('./main/ipv6-network.cjs').createIpv6Network({getEasyTierDisabled:async()=>(await getEasyTierSettings()).get().disableIpv6});

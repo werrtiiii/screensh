@@ -7,6 +7,7 @@ import { toast } from './toast.js';
 import { requestPassword } from './password-dialog.js';
 import { showContextMenu, closeContextMenu } from './context-menu.js';
 import { normalizePeers } from './easytier-peers.mjs';
+import { initServerPeerTests } from './server-peer-tests.mjs';
 import { decorateInteractionCard } from './interactions.js';
 import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { readChannelPreferences, saveChannelPreference } from './server-channel-preferences.mjs';
@@ -266,10 +267,12 @@ $('#serverNameForm').addEventListener('submit', async event => {
   finally { $('#btnSaveServerName').disabled = false; }
 });
 $('#btnCloseServerSettings').addEventListener('click', () => { $('#serverSettingsDialog').classList.add('hidden'); $('#btnServerSettings').focus(); });
+const serverPeerTests=initServerPeerTests(window.electronAPI);
 $('#btnServerPeers').addEventListener('click', () => {
   if (state.serverUsers.find(u => u.socketId === socket?.id)?.role !== 'host') return;
   $('#serverPeersInput').value = state.easytierPeers.join('\n');
   $('#serverPeersError').textContent = '';
+  serverPeerTests.reset();
   $('#serverPeersDialog').classList.remove('hidden'); $('#serverPeersInput').focus();
 });
 $('#btnCancelServerPeers').addEventListener('click', () => { $('#serverPeersDialog').classList.add('hidden'); $('#btnServerPeers').focus(); });

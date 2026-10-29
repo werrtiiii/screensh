@@ -530,6 +530,19 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
   box-shadow: var(--shadow);
 }
 .help-tip:hover::after, .help-tip:focus::after { opacity: 1; }
+#serverPeersForm .server-peers-label { position: relative; display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+#serverPeersForm .server-peers-label label { margin: 0; }
+#serverPeersForm .server-peers-label .help-tip { position: static; flex-shrink: 0; }
+#serverPeersForm .server-peers-label .help-tip::after { left: 0; top: calc(100% + 8px); bottom: auto; transform: none; width: min(340px, 100%); max-width: 100%; text-align: left; }
+.server-peer-tests { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.server-peer-tests-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.server-peer-tests-header h3 { margin: 0; font-size: 15px; }
+.server-peer-tests p { margin: 10px 0; font-size: 12px; line-height: 1.6; color: var(--text2); }
+.server-peer-test-results { max-height: 220px; overflow-y: auto; }
+.server-peer-test-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
+.server-peer-test-row strong { display: block; font-weight: 500; }
+.server-peer-test-row span { display: block; margin-top: 3px; color: var(--text2); }
+.server-peer-test-row[data-state="error"] span { color: var(--danger); }
 .modal-body .form-group { position: relative; }
 .modal-body .help-tip { position: static; flex-shrink: 0; }
 .modal-body .help-tip::after { left: 0; top: 28px; bottom: auto; transform: none; max-width: 100%; text-align: left; }

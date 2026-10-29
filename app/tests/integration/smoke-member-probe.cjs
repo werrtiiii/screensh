@@ -5,6 +5,7 @@ const dgram=require('node:dgram'),path=require('node:path'),assert=require('node
 const {allocateRpcPortal,createMemberRoutes}=require('../../main/member-routes.cjs');
 const {createTunnelForwarder}=require('../../main/tunnel-forwarder.cjs');
 const {createMemberProbe}=require('../../main/member-probe.cjs');
+const {createMemberLatency}=require('../../main/member-latency.cjs');
 const root=path.resolve(__dirname,'../..'),cores=[],forwarders=[],probes=[],network='probe-'+randomUUID();
 async function core(ip,peers=[],listener,relay=false) {
   const portal=await allocateRpcPortal(),instance=randomUUID();
@@ -27,8 +28,9 @@ async function core(ip,peers=[],listener,relay=false) {
   // Only B receives inbound traffic here, as EasyTier routes remote UDP to 127.0.0.1.
   const responder=createMemberProbe({getContext:()=>b.context,forwarder,port});probes.push(responder);await responder.start();
   const requester=createMemberProbe({getContext:()=>a.context,forwarder,port,bindHost:'127.0.0.2',timeout:3000});probes.push(requester);await requester.start();
-  const result=await requester.ping(b.context.virtualIp);assert.ok(Number.isFinite(result.rttMs)&&result.rttMs>0,JSON.stringify(result));
-  assert.deepEqual(await requester.ping(b.context.virtualIp),result);
+  const latency=createMemberLatency({getContext:()=>a.context,probe:requester,pinger:{ping:()=>{throw Error('no TUN must not use ICMP');}},routes:a.reader});
+  const result=await latency.ping(b.context.virtualIp);assert.ok(Number.isFinite(result.rttMs)&&result.rttMs>0,JSON.stringify(result));assert.equal(result.source,'probe');
+  assert.deepEqual(await latency.ping(b.context.virtualIp),result);
   console.log('MEMBER_RELAY_RTT_OK',JSON.stringify({route:route.route,...result,realEasyTier:true}));
 }catch(error){console.error(error.stack);process.exitCode=1;}
 finally {guard?.close();await Promise.all(probes.map(probe=>probe.stop()));await Promise.all(forwarders.map(forwarder=>forwarder.clear()));await Promise.all(cores.map(async child=>{if(child.exitCode!==null)return;const done=once(child,'close');child.kill();await done;}));}})();

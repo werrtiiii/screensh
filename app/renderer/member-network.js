@@ -64,8 +64,9 @@ export function initMemberNetwork() {
           const result = await window.electronAPI.pingMember(user.virtualIp);
           if (token !== generation || room !== state.roomId || !open()) return;
           if (!state.serverUsers.some(current => current.socketId === user.socketId && current.virtualIp === user.virtualIp)) { delay.textContent = '已离线'; continue; }
-          delay.textContent = result.ip === user.virtualIp && Number.isFinite(result.rttMs) && result.rttMs >= 0 ? (result.rttMs < 1 ? '<1 ms' : `${Math.round(result.rttMs)} ms`) : result.noTun&&result.source!=='probe'?'—':'未响应';
-          delay.title = result.source==='probe'?'经过 EasyTier 路由到该成员的 UDP 探测往返时间（包含中继）；对方需支持延迟探测':result.noTun?'EasyTier 直连隧道 RTT':delay.textContent === '未响应' ? '对方未响应 Ping，可能是网络不通或防火墙禁止 ICMP' : '到该成员虚拟 IP 的 Ping 往返时间';
+          const measured=result.ip === user.virtualIp && Number.isFinite(result.rttMs) && result.rttMs >= 0;
+          delay.textContent = measured ? (result.rttMs < 1 ? '<1 ms' : `${Math.round(result.rttMs)} ms`) : '未响应';
+          delay.title = !measured?'未取得延迟：可能是对方版本不支持 UDP 探测、探测被拦截或网络暂时不可达；不代表媒体连接一定中断':result.source==='probe'?'经过 EasyTier 路由到该成员的 UDP 探测往返时间（包含中继）':result.source==='tunnel'?'EasyTier 直连隧道 RTT（探测未响应时的参考值，不是端到端 UDP 实测）':'到该成员虚拟 IP 的 ICMP Ping 往返时间';
         } catch { if (token === generation && open()) delay.textContent = '检测失败'; }
       }
     })]);

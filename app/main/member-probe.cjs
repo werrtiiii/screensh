@@ -10,7 +10,7 @@ const validIp=ip=>typeof ip==='string'&&isIPv4(ip)&&ip.startsWith('10.144.');
 function createMemberProbe({getContext,forwarder,port=PORT,timeout=1500,bindHost}) {
   let endpoint,context,sweep,closed=true,tokens=200,refill=Date.now();
   const scopes=new Map(),pending=new Map(),cache=new Map(),cancel=new Set();
-  const empty=ip=>({ip,rttMs:null,noTun:true,source:'probe'});
+  const empty=ip=>({ip,rttMs:null,noTun:!!context?.noTun,source:'probe'});
   async function release(ip,entry) { if(scopes.get(ip)===entry)scopes.delete(ip);await forwarder.close(entry.id).catch(()=>{}); }
   async function stop() {
     closed=true;context=null;clearInterval(sweep);cache.clear();

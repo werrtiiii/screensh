@@ -209,11 +209,15 @@
     <div id="serverPeersDialog" class="modal hidden">
       <form id="serverPeersForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverPeersTitle">
         <div class="modal-header"><h2 id="serverPeersTitle">服务器组网节点</h2><button id="btnCancelServerPeers" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <div class="form-group"><label for="serverPeersInput">EasyTier 节点 <span class="help-tip" data-tooltip="帮助成员建立虚拟局域网传输共享画面。每行一个，支持 TCP / UDP，未写协议时使用 TCP。保存到服务器，下次连接生效。">?</span></label>
+        <div class="form-group"><div class="server-peers-label"><label for="serverPeersInput">EasyTier 节点</label><button type="button" class="help-tip" aria-label="EasyTier 节点说明" data-tooltip="帮助成员建立虚拟局域网传输共享画面。每行一个，支持 TCP / UDP，未写协议时使用 TCP。保存到服务器，下次连接生效。">?</button></div>
           <textarea id="serverPeersInput" class="form-control" rows="5" spellcheck="false" placeholder="主机:端口"></textarea>
         </div>
         <p id="serverPeersError" class="dialog-error" role="alert"></p>
         <div class="dialog-actions"><button id="btnSaveServerPeers" type="submit" class="btn btn-primary">保存节点</button></div>
+        <section class="server-peer-tests" aria-labelledby="serverPeerTestsTitle">
+          <div class="server-peer-tests-header"><h3 id="serverPeerTestsTitle">组网节点测试</h3><button id="btnTestServerPeers" type="button" class="btn btn-outline btn-sm">测试节点</button></div>
+          <div id="serverPeerTestResults" class="server-peer-test-results hidden" role="status" aria-live="polite"></div>
+        </section>
       </form>
     </div>
     <div id="bookmarkEditDialog" class="modal hidden">

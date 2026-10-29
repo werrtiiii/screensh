@@ -1,6 +1,7 @@
 const path = require('path');
 const { randomUUID } = require('crypto');
 const { ManagedProcess } = require('./managed-process');
+const { allocateRpcPortal } = require('./member-routes.cjs');
 
 function createPeerTester(exe) {
   const probe = new ManagedProcess('节点测试');
@@ -17,12 +18,13 @@ function createPeerTester(exe) {
       busy = true;
       const started = Date.now();
       try {
+        const portal=await allocateRpcPortal();
         // Ignore inherited EasyTier configuration; this probe must never create a TUN.
         const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('ET_')));
         await probe.start(exe, [
-          '--no-tun', '--no-listener', '--disable-p2p', '--disable-upnp',
+          '--no-tun', '--no-listener', '--disable-p2p', '--disable-upnp', '--bind-device', 'false',
           '--network-name', `screensh-test-${randomUUID()}`, '--network-secret', randomUUID(),
-          '--hostname', 'ScreenSh-node-test', '--rpc-portal', '127.0.0.1:0',
+          '--hostname', 'ScreenSh-node-test', '--instance-name', `screensh-test-${randomUUID()}`, '--rpc-portal', portal,
           '--console-log-level', 'info', '--stun-servers', '--stun-servers-v6', '-p', peers[0],
         ], {
           cwd: path.dirname(exe), env, timeout: 15000,
