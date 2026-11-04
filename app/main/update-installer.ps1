@@ -51,7 +51,7 @@ $timer.Add_Tick({
    $hash=[Security.Cryptography.SHA512]::Create();$stream=[IO.File]::OpenRead($stagedSetup);try{$copied=[Convert]::ToBase64String($hash.ComputeHash($stream))}finally{$stream.Dispose();$hash.Dispose()}
    if($copied -ne $job.sha512){throw '安装临时副本校验失败。'}
    $detail.Text='正在安装 '+$job.version+'，完成后自动启动软件。'
-   $info=New-Object Diagnostics.ProcessStartInfo;$info.FileName=$stagedSetup;$info.Arguments='/S --updated /D='+$job.root;$info.UseShellExecute=$false;$info.WorkingDirectory=$script:stage
+   $info=New-Object Diagnostics.ProcessStartInfo;$info.FileName=$stagedSetup;$info.Arguments='/S --updated --screensh-staged /D='+$job.root;$info.UseShellExecute=$false;$info.WorkingDirectory=$script:stage
    $info.EnvironmentVariables['TEMP']=$script:stage;$info.EnvironmentVariables['TMP']=$script:stage
    $script:installerProcess=[Diagnostics.Process]::Start($info);$script:phase='installing';Write-InstallLog 'installer-started' $null
   }elseif($script:phase -eq 'installing' -and $script:installerProcess.HasExited){

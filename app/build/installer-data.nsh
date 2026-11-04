@@ -1,3 +1,42 @@
+!macro customInit
+  !ifndef BUILD_UNINSTALLER
+    # Old clients launch setup from data/updates and pass data/temp as TEMP.
+    # Restart outside the install root before invoking their old uninstaller.
+    ${GetParameters} $R6
+    ClearErrors
+    ${GetOptions} $R6 "--screensh-staged" $R7
+    ${If} ${Errors}
+      CreateDirectory "$LOCALAPPDATA\Temp"
+      System::Call 'kernel32::GetCurrentProcessId()i.r0'
+      StrCpy $R8 "$LOCALAPPDATA\Temp\ScreenSh-bootstrap-$0.tmp"
+      CreateDirectory "$R8"
+      ClearErrors
+      CopyFiles /SILENT "$EXEPATH" "$R8\setup.exe"
+      IfErrors 0 +3
+        SetErrorLevel 2
+        Quit
+      File /oname=$R8\bootstrap.ps1 "${BUILD_RESOURCES_DIR}\..\res\screensh-bootstrap-install.ps1"
+      StrCpy $R9 ""
+      ${If} ${Silent}
+        StrCpy $R9 "$R9 -Silent"
+      ${EndIf}
+      ClearErrors
+      ${GetOptions} $R6 "--updated" $R7
+      ${IfNot} ${Errors}
+        StrCpy $R9 "$R9 -Updated"
+      ${EndIf}
+      ClearErrors
+      ${GetOptions} $R6 "--force-run" $R7
+      ${IfNot} ${Errors}
+        StrCpy $R9 "$R9 -ForceRun"
+      ${EndIf}
+      Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$R8\bootstrap.ps1" -Stage "$R8" -InstallRoot "$INSTDIR" -ParentPid $0 $R9'
+      SetErrorLevel 0
+      Quit
+    ${EndIf}
+  !endif
+!macroend
+
 !macro customCheckAppRunning
   InitPluginsDir
   !ifdef BUILD_UNINSTALLER
