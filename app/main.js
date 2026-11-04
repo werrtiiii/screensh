@@ -352,6 +352,7 @@ ipcMain.handle('start-sharing', async (event, config) => {
     } catch (error) {
       // An explicit stop owns cleanup when it has cancelled this generation.
       if (current === generation) {
+        if(config.videoRelay&&relayPublisher?.startupError)error=relayPublisher.startupError;
         try { await stopShareResources(); }
         catch (cleanupError) { throw new Error(`${error.message}；${cleanupError.message}`); }
       }

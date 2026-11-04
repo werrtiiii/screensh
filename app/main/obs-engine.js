@@ -200,7 +200,8 @@ class ObsEngine {
       return { width, height, bitrate };
     } catch (error) {
       await this.stopAndWait();
-      if (['nvenc', 'amf', 'qsv'].includes(config.videoEncoder)) throw new Error(`${({ amf: 'AMD AMF', nvenc: 'NVIDIA NVENC', qsv: 'Intel QSV' })[config.videoEncoder]} 硬件编码启动失败：${error.message}。请检查显卡驱动，或在房间设置中切回软件编码`);
+      // Output failures also include network, WHIP and authentication errors.
+      // Encoder creation already reports its own specific hardware failure.
       throw error;
     }
   }

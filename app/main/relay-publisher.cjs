@@ -11,7 +11,7 @@ function validateRelay(value){
   return value;
 }
 async function createRelayPublisher({relay,noTun,virtualIp,forwarder,pacerExe,onFailure=()=>{},onDiagnostics=detail=>console.info('[Relay Publisher]',JSON.stringify(detail)),createPacer=require('./media-udp-pacer.cjs').createMediaUdpPacer}){
-  validateRelay(relay);let closed=false;const controllers=new Set(),prefix='/'+randomUUID();
+  validateRelay(relay);let closed=false,startupError=null;const controllers=new Set(),prefix='/'+randomUUID();
   const direct=relay.transport==='direct',scope=direct?null:forwarder.open(relay.host);
   const closeScope=()=>scope?forwarder.close(scope.id):Promise.resolve();
   let server,closing,scopeClosing;const pacers=new Map();
@@ -55,21 +55,30 @@ async function createRelayPublisher({relay,noTun,virtualIp,forwarder,pacerExe,on
       mapped++;
     }
     onDiagnostics({stage:remote?'answer':'offer',candidates,mapped,noTun});
+    if(remote&&candidates>0&&mapped===0){startupError=Error('转发服务器未提供匹配节点的媒体地址，请房主检查 MediaMTX 的 ICE 地址和转发节点设置');throw startupError;}
     return lines.join('\r\n');
   }
   try{
     const target=direct?null:await forwarder.forward(scope.id,'tcp',relay.port,false),origin=direct?relay.url:`http://${target.host}:${target.port}`;
     server=http.createServer(async(req,res)=>{
-      const controller=new AbortController();controllers.add(controller);const timer=setTimeout(()=>controller.abort(),20000);
+      const controller=new AbortController();controllers.add(controller);const timer=setTimeout(()=>controller.abort(),10000);
       try{
         const requestUrl=new URL(req.url,'http://127.0.0.1'),suffix=requestUrl.pathname.slice(prefix.length);
         if(closed||!requestUrl.pathname.startsWith(prefix+'/')||!/^\/whip(?:\/[a-f0-9-]{36})?$/.test(suffix)||!['POST','PATCH','DELETE','OPTIONS'].includes(req.method))return res.writeHead(404).end();
+        if(req.method==='POST')startupError=null;
         if(req.method==='DELETE')onDiagnostics({stage:'publisher-delete'});
         let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>1024*1024)return res.writeHead(413).end();chunks.push(chunk);}
         const headers={Authorization:'Bearer '+relay.token};
         for(const key of ['content-type','if-match'])if(req.headers[key])headers[key]=req.headers[key];
         const body=chunks.length?await sdp(Buffer.concat(chunks).toString(),false):undefined;
         const response=await fetch(`${origin}/${relay.path}${suffix}`,{method:req.method,headers,body,redirect:'error',signal:controller.signal});
+        if(req.method==='POST'&&!response.ok){
+          startupError=Error(response.status===401||response.status===403?'服务器转发认证失败，请房主检查 MediaMTX 的认证配置':response.status===404?'服务器转发地址或端口不正确，未找到 WHIP 推流接口，请房主检查转发设置':`服务器转发拒绝推流（HTTP ${response.status}），请检查 MediaMTX 配置`);
+          await response.body?.cancel();res.writeHead(response.status).end(startupError.message);return;
+        }
+        if(req.method==='POST'&&(!response.headers.get('content-type')?.includes('application/sdp')||!response.headers.has('location'))){
+          await response.body?.cancel();startupError=Error('配置的转发地址未返回有效的 WHIP 会话，请房主检查 MediaMTX 地址和端口');res.writeHead(502).end(startupError.message);return;
+        }
         const outgoing={};for(const key of ['content-type','etag','accept-patch'])if(response.headers.has(key))outgoing[key]=response.headers.get(key);
         if(response.headers.has('location')){
           const location=new URL(response.headers.get('location'),origin);
@@ -79,12 +88,12 @@ async function createRelayPublisher({relay,noTun,virtualIp,forwarder,pacerExe,on
         const bytes=await response.text();if(bytes.length>1024*1024)throw Error('服务器返回的数据过大');
         const text=response.headers.get('content-type')?.includes('application/sdp')?await sdp(bytes,true):bytes;
         res.writeHead(response.status,outgoing).end(text);
-      }catch{if(!res.headersSent)res.writeHead(502);res.end('服务器转发连接失败');}
+      }catch{if(req.method==='POST'&&!closed)startupError||=Error('无法连接转发服务器，请房主检查转发地址、端口及 MediaMTX 是否运行');if(!res.headersSent)res.writeHead(502);res.end('服务器转发连接失败');}
       finally{clearTimeout(timer);controllers.delete(controller);}
     });
     server.requestTimeout=20000;
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-    return {url:`http://127.0.0.1:${server.address().port}${prefix}/whip`,cancel,close(){return scopeClosing||=(async()=>{await cancel();await Promise.allSettled([...pacers.values()].map(async entry=>{await entry.ready.catch(()=>{});await entry.pacer.stop();}));await closeScope();})();}};
+    return {url:`http://127.0.0.1:${server.address().port}${prefix}/whip`,get startupError(){return startupError;},cancel,close(){return scopeClosing||=(async()=>{await cancel();await Promise.allSettled([...pacers.values()].map(async entry=>{await entry.ready.catch(()=>{});await entry.pacer.stop();}));await closeScope();})();}};
   }catch(error){server?.close();await closeScope().catch(()=>{});throw error;}
 }
 module.exports={createRelayPublisher,validateRelay};

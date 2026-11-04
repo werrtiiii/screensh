@@ -4,6 +4,7 @@ import {toast} from './toast.js';
 export function initRelaySettings(request){
   const owner=document.querySelector('#serverVideoRelayEnabled'),status=document.querySelector('#serverVideoRelayStatus');
   const sharing=document.querySelector('#useServerRelayCheckbox'),hint=document.querySelector('#shareRelayStatus');
+  const serverHelp=document.querySelector('#serverVideoRelayHelp'),shareHelp=document.querySelector('#shareRelayHelp');
   const form=document.querySelector('#serverNetworkForm'),name=document.querySelector('#serverNetworkName'),secret=document.querySelector('#serverNetworkSecret'),host=document.querySelector('#serverRelayHost'),port=document.querySelector('#serverRelayPort'),error=document.querySelector('#serverNetworkError'),save=document.querySelector('#btnSaveServerNetwork');
   const transport=document.querySelector('#serverRelayTransport'),url=document.querySelector('#serverRelayUrl');
   function paintMode(){const direct=transport.value==='direct';document.querySelector('#serverRelayNetworkFields').classList.toggle('hidden',direct);document.querySelector('#serverRelayDirectFields').classList.toggle('hidden',!direct);host.disabled=port.disabled=direct;port.required=!direct;url.disabled=!direct;url.required=direct;}
@@ -31,8 +32,11 @@ export function initRelaySettings(request){
     owner.disabled=busy||!supported;owner.checked=relay?.enabled===true;
     save.disabled=busy||!supported;
     status.dataset.state=relay?.enabled&&!relay?.configured?'error':'idle';
-    status.textContent=!supported?'请更新服务端以配置外部组网与转发':!relay.enabled?'已关闭软件转发，外部服务保持运行':relay.message||'请配置转发节点';
-    hint.textContent=state.useServerRelay?relay?.ready?relay.transport==='direct'?'直接连接服务器 MediaMTX，本机不启动 MediaMTX':'使用已配置节点的 MediaMTX，本机不启动 MediaMTX':relay?.message||'当前服务器转发不可用':'';
+    status.textContent=!supported?'请更新服务端以配置外部组网与转发':!relay.enabled?'已关闭软件转发，外部服务保持运行':!relay.configured?relay.message||'请配置转发节点':'';
+    hint.textContent=state.useServerRelay&&!relay?.ready?relay?.message||'当前服务器转发不可用':'';
+    serverHelp.dataset.tooltip=relay?.transport==='direct'?'直接连接已配置的 MediaMTX，连接时验证可达性。':'已配置外部节点，连接时验证可达性。';
+    shareHelp.dataset.tooltip=relay?.transport==='direct'?'直接连接服务器 MediaMTX，本机不启动 MediaMTX。':'使用已配置节点的 MediaMTX，本机不启动 MediaMTX。';
+    serverHelp.setAttribute('aria-label',serverHelp.dataset.tooltip);shareHelp.setAttribute('aria-label',shareHelp.dataset.tooltip);
     paintMode();
     if(!state.roomId){secret.value='';loadedRoom=null;}
   }

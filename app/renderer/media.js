@@ -113,7 +113,7 @@ export async function startScreenCapture() {
     if(!config.videoRelay)socket.emit('start-sharing');
     if (state.autoPreview) void displayRemoteVideo(socket.id);
   } catch (error) {
-    if (current === sharingGeneration) {if(state.selectedSourceType==='obs')externalObsPanel?.error(error.message);await stopSharing({reportErrors:false});toast(error.message, 'error'); }
+    if (current === sharingGeneration) {const message=error.message.replace(/^Error invoking remote method 'start-sharing': (?:Error: )?/,'');if(state.selectedSourceType==='obs')externalObsPanel?.error(message);await stopSharing({reportErrors:false});toast(message, 'error'); }
   } finally { state.startingShare = false;state.pendingShareRelay=false;updateSharingUI(state.isSharing); }
 }
 async function adjustShareQuality(token, next, previous) {

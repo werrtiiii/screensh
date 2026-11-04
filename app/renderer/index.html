@@ -194,7 +194,7 @@
           <p id="serverNetworkError" class="dialog-error" role="alert"></p>
           <div class="dialog-actions"><button id="btnSaveServerNetwork" type="submit" class="btn btn-primary btn-sm">保存组网配置</button></div>
         </form>
-        <div class="server-owner-setting"><div class="server-setting-row"><label for="serverVideoRelayEnabled">支持外部视频转发</label><input id="serverVideoRelayEnabled" type="checkbox" role="switch" checked /></div><p id="serverVideoRelayStatus" class="relay-server-status" role="status" aria-live="polite"></p></div>
+        <div class="server-owner-setting"><div class="server-setting-row"><span><label for="serverVideoRelayEnabled">支持外部视频转发</label> <button id="serverVideoRelayHelp" type="button" class="help-tip" aria-label="服务器转发说明" data-tooltip="已配置外部节点，连接时验证可达性。">?</button></span><input id="serverVideoRelayEnabled" type="checkbox" role="switch" checked /></div><p id="serverVideoRelayStatus" class="relay-server-status" role="status" aria-live="polite"></p></div>
         <div class="server-setting-row server-owner-setting"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="server-setting-row server-owner-setting"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
         <form id="serverChatSettingsForm" class="server-owner-setting chat-retention-form"><h3>服务器聊天记录 <button id="serverChatHelp" type="button" class="help-tip" aria-label="聊天保存说明" data-tooltip="0 表示不限制，超过任一上限时删除最早的记录及图片。">?</button></h3><div class="chat-retention-fields"><label>保存天数<input id="serverChatDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="serverChatMB" type="number" min="0" max="1048576" value="512" /></label></div><span id="serverChatUsage" class="hidden"></span><div class="dialog-actions"><button id="serverChatClear" type="button" class="btn btn-outline btn-sm">清除服务器记录</button><button type="submit" class="btn btn-primary btn-sm">保存</button></div></form>
@@ -339,7 +339,7 @@
               <span class="help-tip" data-tooltip="共享后自动预览自己的画面。">?</span>
             </label>
           </div>
-          <div class="form-group setting-room"><label><input id="useServerRelayCheckbox" type="checkbox" role="switch" /> 使用服务器转发</label><small id="shareRelayStatus" role="status"></small></div>
+          <div class="form-group setting-room"><label><input id="useServerRelayCheckbox" type="checkbox" role="switch" /> 使用服务器转发 <button id="shareRelayHelp" type="button" class="help-tip" aria-label="使用服务器转发说明" data-tooltip="使用已配置节点的 MediaMTX，本机不启动 MediaMTX。">?</button></label><small id="shareRelayStatus" role="status"></small></div>
           <div class="form-group setting-room">
             <label><input type="checkbox" role="switch" id="adaptiveResolutionCheckbox"> 自动调整分辨率
               <span class="help-tip" data-tooltip="根据观众网络自动降低或恢复分辨率，但会影响所有观众。下次开始共享生效。">?</span>

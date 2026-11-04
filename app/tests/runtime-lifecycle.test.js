@@ -13,7 +13,7 @@ const tick = () => new Promise(setImmediate);
 const config = { sourceId: 0, resolution: '1280x720', frameRate: 30, maxBitrate: 1500, audioBitrate: 128, shareAudio: false };
 
 // Execute the actual IPC handlers; only Electron and native resources are mocked.
-function runtime() {
+function runtime(options={}) {
   const handlers = new Map(), processes = new Map();
   let obs;
   class FakeProcess {
@@ -59,6 +59,7 @@ function runtime() {
     './main/tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },
     electron, './main/capture-sources': {}, './main/managed-process': { ManagedProcess: FakeProcess },
     './main/screen-obs-runtime.cjs': { ScreenObsRuntime: FakeObs }, './main/peer-test': { createPeerTester: () => ({ stop: async () => {} }) },
+    './main/relay-publisher.cjs': {createRelayPublisher:async()=>options.publisher},
   };
   const context = vm.createContext({
     require: name => Object.hasOwn(dependencies, name) ? dependencies[name] : require('node:module').createRequire(path.join(__dirname,'../main.js'))(name),
@@ -70,12 +71,18 @@ function runtime() {
   `, context, { filename: 'main.js' });
   context.roomAddress.set('10.144.1.1');
   return {
-    start: () => handlers.get('start-sharing')({sender:context.mainSender}, config),
+    start: (extra={}) => handlers.get('start-sharing')({sender:context.mainSender}, {...config,...extra}),
     stop: () => handlers.get('stop-sharing')(),
     leave: () => handlers.get('leave-runtime')(),
     address: context.roomAddress, obs, media: processes.get('MediaMTX'), network: processes.get('EasyTier'),
   };
 }
+
+test('relay connection failure takes precedence over the native generic output error and is preserved through cleanup',async()=>{
+  let closed=0;const publisher={url:'http://127.0.0.1:12345/whip',startupError:Error('无法连接转发服务器，请房主检查转发地址、端口及 MediaMTX 是否运行'),close:async()=>{closed++;}};
+  const r=runtime({publisher});r.obs.startError=Error('OBS 推流已停止 (-3)');
+  await assert.rejects(r.start({videoRelay:{host:'10.0.0.1'},videoEncoder:'nvenc'}),/无法连接转发服务器/);assert.equal(closed,1);assert.equal(r.media.startCalls,0);
+});
 
 test('rapid restart waits for process exit and concurrent stops share one cleanup', async () => {
   const r = runtime();

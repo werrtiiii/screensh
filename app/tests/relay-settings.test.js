@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 function fixture(){
   const nodes=new Map(),events=new Map(),requests=[],notices=[];
-  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',dataset:{},classList:{toggle(){}},addEventListener(event,fn){this[event]=fn;}});return nodes.get(id);};
+  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',dataset:{},classList:{toggle(){}},setAttribute(){},addEventListener(event,fn){this[event]=fn;}});return nodes.get(id);};
   const state={roomId:'first',videoRelay:{version:2,enabled:true,configured:true,ready:true},serverUsers:[{socketId:'one',role:'host'}]};
   const context=vm.createContext({state,socket:{id:'one'},document:{querySelector:node,addEventListener:(event,fn)=>events.set(event,fn)},localStorage:{getItem:()=>null,setItem(){}},toast:message=>notices.push(message)});
   const code=fs.readFileSync(require.resolve('../renderer/relay-settings.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function','function');

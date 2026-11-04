@@ -40,3 +40,18 @@ test('direct WHIP preserves ICE candidates and credentials without using EasyTie
   assert.deepEqual(requests.map(r=>r.method),['POST','PATCH','DELETE']);
   for(const url of ['https://user:password@example.com','https://example.com/other','file:///tmp','https://example.com?token=secret'])assert.throws(()=>validateRelay({...relay,url}),/无效/);
 });
+
+test('bad relay HTTP endpoints and refused connections produce actionable relay errors, unaffected by DELETE cleanup',async t=>{
+  let code=404;
+  const upstream=http.createServer((req,res)=>res.writeHead(req.method==='DELETE'?204:code,{'Content-Type':'text/html'}).end(req.method==='DELETE'?'':'<html>wrong endpoint</html>'));
+  await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
+  const relay={...descriptor,transport:'direct',host:'127.0.0.1',port:upstream.address().port,url:`http://127.0.0.1:${upstream.address().port}`};
+  const bridge=await createRelayPublisher({relay,noTun:true});
+  t.after(async()=>{await bridge.close();if(upstream.listening){upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}});
+  for(const [status,expected]of [[404,/地址或端口/],[401,/认证失败/],[403,/认证失败/],[500,/拒绝推流/],[200,/未返回有效的 WHIP/]]){
+    code=status;await fetch(bridge.url,{method:'POST',body:'v=0\r\n'});assert.match(bridge.startupError.message,expected);assert.doesNotMatch(bridge.startupError.message,/NVENC|显卡|<html>/);
+    const message=bridge.startupError.message;await fetch(bridge.url,{method:'DELETE'});assert.equal(bridge.startupError.message,message);
+  }
+  upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));
+  assert.equal((await fetch(bridge.url,{method:'POST',body:'v=0\r\n'})).status,502);assert.match(bridge.startupError.message,/无法连接转发服务器/);
+});
