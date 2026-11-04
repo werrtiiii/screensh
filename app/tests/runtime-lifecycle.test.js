@@ -41,6 +41,7 @@ function runtime() {
       if (this.startGate) await this.startGate.promise;
       return { width: 1280, height: 720 };
     }
+    stopAndWait(){if(this.stopGate){this.stopCalls++;return this.stopGate.promise.then(()=>{this.streaming=null;});}return this.stop();}
     stop() {
       this.stopCalls++;
       if (this.stopError) throw this.stopError;
@@ -57,18 +58,19 @@ function runtime() {
   const dependencies = {
     './main/tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },
     electron, './main/capture-sources': {}, './main/managed-process': { ManagedProcess: FakeProcess },
-    './main/obs-engine': { ObsEngine: FakeObs }, './main/peer-test': { createPeerTester: () => ({ stop: async () => {} }) },
+    './main/screen-obs-runtime.cjs': { ScreenObsRuntime: FakeObs }, './main/peer-test': { createPeerTester: () => ({ stop: async () => {} }) },
   };
   const context = vm.createContext({
     require: name => Object.hasOwn(dependencies, name) ? dependencies[name] : require('node:module').createRequire(path.join(__dirname,'../main.js'))(name),
     __dirname: path.resolve(__dirname,'..'), process, console,
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../main.js"), 'utf8') + `
+    globalThis.mainSender=mainWindow.webContents;
     globalThis.roomAddress = { get: () => virtualIp, set: value => { virtualIp = value; } };
   `, context, { filename: 'main.js' });
   context.roomAddress.set('10.144.1.1');
   return {
-    start: () => handlers.get('start-sharing')(null, config),
+    start: () => handlers.get('start-sharing')({sender:context.mainSender}, config),
     stop: () => handlers.get('stop-sharing')(),
     leave: () => handlers.get('leave-runtime')(),
     address: context.roomAddress, obs, media: processes.get('MediaMTX'), network: processes.get('EasyTier'),
@@ -198,4 +200,7 @@ test('network cleanup starts while media shutdown is still pending', async () =>
   assert.equal(r.address.get(), null);
   gate.resolve();
   await leave;
+});
+test('publishers finish before local MediaMTX is stopped',async()=>{
+  const r=runtime();await r.start();const gate=r.obs.stopGate=deferred();const stopped=r.stop();await tick();assert.equal(r.media.stopCalls,0);gate.resolve();await stopped;assert.equal(r.media.stopCalls,1);
 });

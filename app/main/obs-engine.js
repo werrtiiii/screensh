@@ -67,6 +67,7 @@ class ObsEngine {
     return this.osn.InputFactory.create('monitor_capture', `screen-${Date.now()}`, settings);
   }
   async start(config) {
+    if(this.pendingStop)await this.pendingStop;
     if (this.streaming) throw new Error('OBS 正在共享');
     this.init();
     const generation = this.generation = (this.generation || 0) + 1;
@@ -177,12 +178,14 @@ class ObsEngine {
       const service = this.own(o.ServiceFactory.create('whip_custom', `whip-${Date.now()}`, { server: this.publishUrl }), s => o.ServiceFactory.destroy(s));
       const stream = this.streaming = o.SimpleStreamingFactory.create();
       stream.service = service; stream.video = video; stream.videoEncoder = ve; stream.audioEncoder = ae;
+      this.outputStopped=false;
       await new Promise((resolve, reject) => {
         let started = false;
         const timer = setTimeout(() => done(new Error('OBS 推流启动超时')), 15000);
         const done = error => { clearTimeout(timer); this.cancelStart = null; error ? reject(error) : resolve(); };
         this.cancelStart = () => done(new Error('OBS 推流已取消'));
         stream.signalHandler = signal => {
+          if(signal.signal==='stop'&&this.streaming===stream){this.outputStopped=true;this.stopOutputWaiter?.();}
           if (generation !== this.generation) return;
           console.log('[OBS]', signal);
           if (signal.signal === 'start') { started = true; done(); }
@@ -196,10 +199,29 @@ class ObsEngine {
       });
       return { width, height, bitrate };
     } catch (error) {
-      this.stop();
+      await this.stopAndWait();
       if (['nvenc', 'amf', 'qsv'].includes(config.videoEncoder)) throw new Error(`${({ amf: 'AMD AMF', nvenc: 'NVIDIA NVENC', qsv: 'Intel QSV' })[config.videoEncoder]} 硬件编码启动失败：${error.message}。请检查显卡驱动，或在房间设置中切回软件编码`);
       throw error;
     }
+  }
+  stopAndWait() {
+    if(this.pendingStop)return this.pendingStop;
+    this.pendingStop=(async()=>{
+      this.generation=(this.generation||0)+1;this.stopping=true;this.cancelStart?.();
+      const stream=this.streaming;
+      if(stream&&!this.outputStopped){
+        // Native destroy joins the WHIP network thread. Let JS keep serving its
+        // final HTTP requests until the native output reports that it stopped.
+        await new Promise(resolve=>{
+          let finished=false;const done=()=>{if(finished)return;finished=true;clearTimeout(timer);resolve();};
+          const timer=setTimeout(done,8000);
+          this.stopOutputWaiter=done;
+          try{stream.stop(true);}catch{done();}
+        });
+      }
+      this.stopOutputWaiter=null;await new Promise(resolve=>setImmediate(resolve));this.stop();
+    })().finally(()=>{this.pendingStop=null;});
+    return this.pendingStop;
   }
   stop() {
     this.generation = (this.generation || 0) + 1;
@@ -209,7 +231,7 @@ class ObsEngine {
     const attempt = fn => { try { fn(); } catch (e) { console.error('[OBS cleanup]', e.message); } };
     if (this.streaming) {
       const stream = this.streaming; this.streaming = null;
-      attempt(() => stream.stop(true));
+      if(!this.outputStopped)attempt(() => stream.stop(true));
       attempt(() => o.SimpleStreamingFactory.destroy(stream));
     }
     if (this.initialized) for (const channel of [0, 1]) attempt(() => o.Global.setOutputSource(channel, null));

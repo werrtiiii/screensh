@@ -15,7 +15,9 @@ ipcMain.handle('lolping-get',()=>({config:{enabled:false}}));
 ipcMain.handle('lolping-sync',()=>{});
 ipcMain.handle('get-login-startup',()=>false);
 ipcMain.handle('start-easytier', () => '10.144.1.1');
-ipcMain.handle('stop-sharing', () => {}); ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('voice-stop', () => {});
+let pendingStart,startedResolve,stopCount=0;
+ipcMain.handle('start-sharing',()=>new Promise(resolve=>{pendingStart=resolve;startedResolve?.();}));
+ipcMain.handle('stop-sharing', () => {stopCount++;pendingStart?.({width:1280,height:720});pendingStart=null;}); ipcMain.handle('leave-runtime', () => {}); ipcMain.handle('voice-stop', () => {});
 app.whenReady().then(async () => {
   const { server, io } = createSignalingServer({ initialPeers: 'test.example:11010' });
   let window, staleClient, blocked = false, connections = 0;
@@ -40,9 +42,14 @@ app.whenReady().then(async () => {
     };
     await join();
     const channel = await run(`(async () => { const { requestServer } = await import('./signaling.js'); const { switchChannel } = await import('./room.js'); const channel = (await requestServer('create-channel', { name: 'Restore' })).channel; await switchChannel(channel.id); return channel.id; })()`);
+    const starting=new Promise(resolve=>{startedResolve=resolve;});
+    await run(`(async()=>{const {state}=await import('./shared.js'),media=await import('./media.js');state.selectedSourceId='pending-source';state.useServerRelay=false;window.pendingShareTest=media.startScreenCapture();})()`);
+    await starting;const beforeStops=stopCount;
     const old = [...io.sockets.sockets.values()][0].id;
     [...io.sockets.sockets.values()][0].conn.close();
     await wait(`(async () => { const { socket } = await import('./signaling.js'); const { state } = await import('./shared.js'); return socket?.connected && socket.id !== '${old}' && state.channelId === '${channel}' && state.serverUsers.some(u => u.socketId===socket.id && u.name === 'Reconnect' && u.role === 'host'); })()`, 5000);
+    await run(`pendingShareTest`);assert.ok(stopCount>beforeStops,'disconnect cancels a pending native share start');
+    assert.equal(await run(`(async()=>{const {state}=await import('./shared.js');return state.isSharing||state.startingShare;})()`),false,'reconnect does not revive the cancelled share');
     await run(`document.querySelector('#btnLeaveChannel').click()`);
     await wait(`(async()=>{const {state}=await import('./shared.js');return state.channelId===null && document.querySelector('#channelNameDisplay').textContent==='';})()`);
     const outsideSocket=[...io.sockets.sockets.values()][0].id;

@@ -3,6 +3,7 @@ const {randomUUID}=require('node:crypto');
 const {isIPv4}=require('node:net');
 const dgram=require('node:dgram');
 const os=require('node:os');
+const {isPrivateVirtualIp}=require('./virtual-address.cjs');
 const {allocateRpcPortal}=require('./member-routes.cjs');
 // Screen-share keyframes arrive as UDP bursts. Windows' default socket queue
 // can overflow before the main-process event loop drains a complete burst.
@@ -25,7 +26,7 @@ function createTunnelForwarder({exe,getContext,execute=execFile}){
   // but does not recreate it for the same VIP. Keep one inactive loopback TCP
   // rule for the core's lifetime; media scopes still release their own rules.
   function keepStack(context){if(anchor?.context===context)return anchor.promise;const entry=anchor={context};entry.promise=(async()=>{entry.bind=await allocateRpcPortal();entry.dst=(context.virtualIp||'10.144.0.1')+':9';await command(context,['add','tcp',entry.bind,entry.dst]);})().catch(error=>{if(anchor===entry)anchor=null;throw error;});return entry.promise;}
-  function open(ip){const context=getContext();if(!context)throw Error('虚拟网络未连接');if(!isIPv4(ip)||!ip.startsWith('10.144.'))throw Error('无效的成员虚拟地址');if(scopes.size>=512)throw Error('转发会话过多');const id=randomUUID();scopes.set(id,{context,ip,maps:new Map(),ingress:new Map(),closed:false,revision});return {id,forward:!!context.noTun};}
+  function open(ip){const context=getContext();if(!context)throw Error('虚拟网络未连接');if(!isPrivateVirtualIp(ip))throw Error('无效的成员虚拟地址');if(scopes.size>=512)throw Error('转发会话过多');const id=randomUUID();scopes.set(id,{context,ip,maps:new Map(),ingress:new Map(),closed:false,revision});return {id,forward:!!context.noTun};}
   async function expose(id,host,port){const scope=scopes.get(id);if(!scope||scope.closed||scope.context!==getContext())throw Error('转发会话已关闭');
     if(!scope.context.noTun)return {port};
     if(!isIPv4(host)||!Object.values(os.networkInterfaces()).flat().some(item=>item?.address===host)||!Number.isInteger(port)||port<1024||port>65535)throw Error('无效的本机媒体地址');

@@ -1,9 +1,10 @@
+const {isPrivateVirtualIp}=require('./virtual-address.cjs');
 const dgram=require('node:dgram');
 const {isIPv4}=require('node:net');
 const {randomBytes}=require('node:crypto');
 const {performance}=require('node:perf_hooks');
 const PORT=31113, MAGIC=Buffer.from('SSRTT001');
-const validIp=ip=>typeof ip==='string'&&isIPv4(ip)&&ip.startsWith('10.144.');
+const validIp=ip=>isPrivateVirtualIp(ip);
 
 // A small UDP echo endpoint is reachable through both TUN and EasyTier's
 // userspace UDP forwarding. Nonces and connected sockets reject stale replies.

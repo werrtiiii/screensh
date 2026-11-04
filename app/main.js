@@ -17,9 +17,14 @@ const fs = require('fs');
 const { isIPv4 } = require('net');
 const { randomInt, randomUUID } = require('crypto');
 const { ManagedProcess } = require('./main/managed-process');
+let localStoragePaths;
+if(typeof app.setPath==='function'&&typeof app.getName==='function'){
+  try{localStoragePaths=require('./main/local-storage.cjs').configureLocalStorage(app,{developmentDir:__dirname,legacyUpdates:path.join(require('electron-updater/out/AppAdapter').getAppCacheDir(),'screensh-updater')});}
+  catch(error){require('electron').dialog.showErrorBox('无法初始化本地数据',error.message);app.exit(1);throw error;}
+}
 let easytierSettings;
 async function getEasyTierSettings(){const {normalizeEasyTierSettings}=await import('./renderer/easytier-options.mjs');return easytierSettings ||= require('./main/easytier-settings.cjs').createEasyTierSettings({file:path.join(app.getPath('userData'),'easytier-settings.json'),normalize:normalizeEasyTierSettings});}
-const { ObsEngine } = require('./main/obs-engine');
+const { ScreenObsRuntime:ObsEngine } = require('./main/screen-obs-runtime.cjs');
 const renderingConfigPath = path.join(app.getPath('userData'), 'rendering.json');
 let hardwareAccelerationEnabled = false;
 try {
@@ -40,6 +45,7 @@ let updater = null;
 function getUpdater() {
   if (!updater) {
     ({ autoUpdater: updater } = require('electron-updater'));
+    if(localStoragePaths?.hasLock)require('./main/local-storage.cjs').configureUpdateStorage(updater,localStoragePaths.updates);
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
   }
@@ -87,6 +93,7 @@ ipcMain.handle('connect-external-obs',async(event,value)=>{
 });
 ipcMain.handle('inspect-external-obs',event=>{requireMainWindow(event);return externalObs.inspect();});
 let sharePacer=null;
+let relayPublisher=null;
 const peerTester = require('./main/peer-test').createPeerTester(resource('easytier-core.exe'));
 const memberPinger = require('./main/member-ping.cjs').createMemberPinger();
 ipcMain.handle('ping-member', (event, ip) => {requireMainWindow(event);return memberLatency.ping(ip);});
@@ -202,11 +209,13 @@ function createWindow() {
   if (!app.isPackaged && process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
 }
 
-ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
+ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network) => {
   if (runtimeLeave) await runtimeLeave;
   if (typeof roomId !== 'string' || !/^[\p{L}\p{N}_-]{1,64}$/u.test(roomId)) throw new Error('房间号仅支持1至64位字母、数字、下划线和连字符');
   const { normalizePeers } = await import('./renderer/easytier-peers.mjs');
   const peers = normalizePeers(configuredPeers);
+  const networkConfig=require('./main/network-config.cjs').normalizeClientNetwork(roomId,network);
+  const useDhcp=networkConfig.dhcp;
   const {easyTierAdvancedArgs,EASYTIER_CONNECTION_ARGS}=await import('./renderer/easytier-options.mjs');
   const advancedConfig=(await getEasyTierSettings()).get(),advancedArgs=easyTierAdvancedArgs(advancedConfig);
   await memberProbe.stop();await tunnelForwarder.clear();
@@ -220,22 +229,26 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
     return virtualIp = ip;
   }
   let ip;
-  do { ip = `10.144.${randomInt(1, 255)}.${randomInt(1, 255)}`; } while (addresses().includes(ip));
-  const exe = resource('easytier-core.exe');
+  if(!useDhcp)do { ip = `10.144.${randomInt(1, 255)}.${randomInt(1, 255)}`; } while (addresses().includes(ip)||ip===networkConfig.relayHost);
+  // The UDP-buffer diagnostic build is validated for no-TUN forwarding only.
+  // Keep TUN on the original core and its existing Wintun loading behavior.
+  const exe = resource(advancedConfig.noTun?'easytier-core-no-tun.exe':'easytier-core.exe');
+  if (!fs.existsSync(exe)) throw new Error('缺少当前模式所需的 EasyTier 核心，请重新安装客户端');
   if (!advancedConfig.noTun&&!fs.existsSync(resource('wintun.dll'))) throw new Error('缺少 Wintun：请把匹配 Windows x64 的 wintun.dll 放到 app/res 目录');
   let readyPoll;
   try {
     easytierRpc={portal:await allocateRpcPortal(),instance:'screensh-'+randomUUID(),noTun:advancedConfig.noTun,virtualIp:ip};
     let rpcReady=false,checking=false;
-    if(advancedConfig.noTun){const probeRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytierRpc});readyPoll=setInterval(async()=>{if(checking)return;checking=true;try{const result=await probeRoutes.read();rpcReady=result.available&&result.rows.some(row=>row.ip===ip&&row.route==='本机');}finally{checking=false;}},200);}
+    if(advancedConfig.noTun||useDhcp){const context=easytierRpc,probeRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytierRpc===context?context:null});readyPoll=setInterval(async()=>{if(checking)return;checking=true;try{const result=await probeRoutes.read(),local=result.rows.find(row=>row.route==='本机'&&require('./main/virtual-address.cjs').isPrivateVirtualIp(row.ip));if(useDhcp&&local&&easytierRpc===context){ip=local.ip;context.virtualIp=ip;}rpcReady=result.available&&!!local&&local.ip===ip;}finally{checking=false;}},200);}
     // Addresses span 10.144.0.0/16. Without a prefix EasyTier defaults to /24,
     // sending other members' virtual IPs through the physical default gateway.
-    await easytier.start(exe, ['-i', `${ip}/16`, '--network-name', `screensh-${roomId}`,
-    '--network-secret', process.env.SCREENSH_NETWORK_SECRET || 'screensh-p2p',
+    await easytier.start(exe, [...(useDhcp?['--dhcp']:['-i',`${ip}/16`]), '--network-name', networkConfig.name,
+    '--network-secret', networkConfig.secret,
     '--rpc-portal',easytierRpc.portal,'--instance-name',easytierRpc.instance,
     ...EASYTIER_CONNECTION_ARGS,...advancedArgs, '-p', ...peers], {
     cwd: path.dirname(exe),
-    probe: () => advancedConfig.noTun?rpcReady:Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && i.cidr === `${ip}/16`),
+    probe: () => advancedConfig.noTun?rpcReady:Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && (useDhcp||i.cidr === `${ip}/16`)),
+    sensitiveValues:[networkConfig.secret],
     timeout: 20000,
   });
   } catch (error) {
@@ -253,10 +266,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers) => {
 });
 
 ipcMain.handle('get-screens', async () => {
-  obs.init();
-  let sources;
-  try { sources = listCaptureSources(obs.osn, screen.getAllDisplays()); }
-  finally { obs.scheduleIdleShutdown(); }
+  const sources=await obs.sources(screen.getAllDisplays());
   try {return attachCapturePreviews(sources, await desktopCapturer.getSources({types:['screen','window'],thumbnailSize:{width:480,height:270},fetchWindowIcons:false}));}
   catch(error) {console.warn('[Capture previews]',error.message);return sources;}
 });
@@ -280,14 +290,20 @@ function checkCleanup(results, labels) {
 }
 function stopShareResources() {
   if (shareCleanup) return shareCleanup;
-  // One failure must not prevent the other resource from being released.
-  shareCleanup = Promise.allSettled([
-    Promise.resolve().then(() => obs?.stop()),
-    Promise.resolve().then(() => externalObs.stop()),
-    Promise.resolve().then(() => mediamtx.stop()),
-    Promise.resolve().then(async()=>{const pacer=sharePacer;sharePacer=null;await pacer?.stop();}),
-  ]).then(results => checkCleanup(results, ['OBS', '外部 OBS', 'MediaMTX', '媒体 UDP']))
-    .finally(() => { shareCleanup = null; });
+  // Keep WHIP/UDP endpoints alive until publishers finish their DELETE/stop.
+  // Every resource is still released even if one of the publishers fails.
+  shareCleanup=Promise.allSettled([
+    Promise.resolve().then(()=>obs?.stopAndWait?obs.stopAndWait():obs?.stop()),
+    Promise.resolve().then(()=>externalObs.stop()),
+  ]).then(async publishers=>{
+    const publisher=relayPublisher;relayPublisher=null;
+    const resources=await Promise.allSettled([
+      Promise.resolve().then(()=>mediamtx.stop()),
+      Promise.resolve().then(async()=>{const pacer=sharePacer;sharePacer=null;await pacer?.stop();}),
+      Promise.resolve().then(()=>publisher?.close()),
+    ]);
+    checkCleanup([...publishers,...resources],['OBS','外部 OBS','MediaMTX','媒体 UDP','服务器转发']);
+  }).finally(()=>{shareCleanup=null;});
   return shareCleanup;
 }
 function stopShare() {
@@ -300,7 +316,8 @@ function stopShare() {
     .finally(() => { shareStop = null; });
   return shareStop;
 }
-ipcMain.handle('start-sharing', async (_event, config) => {
+ipcMain.handle('start-sharing', async (event, config) => {
+  requireMainWindow(event);
   validateConfig(config);
   if (shareStop) await shareStop;
   if (runtimeLeave || quitting) throw new Error('正在退出，请稍候');
@@ -309,6 +326,15 @@ ipcMain.handle('start-sharing', async (_event, config) => {
   const current = ++generation;
   shareStart = (async () => {
     try {
+      if(config.videoRelay){
+        const publisher=await require('./main/relay-publisher.cjs').createRelayPublisher({relay:config.videoRelay,noTun:!!easytierRpc?.noTun,virtualIp,forwarder:tunnelForwarder,pacerExe:resource('screensh-media-udp.exe'),onFailure:failure});
+        if(current!==generation){await publisher.close();throw Error('共享启动已取消');}
+        relayPublisher=publisher;obs.publishUrl=publisher.url;
+        const result=config.sourceType==='obs'?await externalObs.start(publisher.url):await obs.start(config);
+        if(current!==generation)throw Error('共享启动已取消');
+        return result;
+      }
+      obs.publishUrl='http://127.0.0.1:8889/live/whip';
       const exe = resource('mediamtx.exe');
       if(easytierRpc?.noTun){sharePacer=require('./main/media-udp-pacer.cjs').createMediaUdpPacer({port:8189,exe:resource('screensh-media-udp.exe'),onFailure:failure});await sharePacer.start();}
       await mediamtx.start(exe, [app.isPackaged ? resource('mediamtx.yml') : path.join(__dirname, "./mediamtx.yml")], {
@@ -357,7 +383,7 @@ ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
 ipcMain.on('window-close', () => mainWindow?.close());
 // Fixed media ports mean a second local instance cannot safely share simultaneously.
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!(localStoragePaths?.hasLock??app.requestSingleInstanceLock())) app.quit();
 else {
   app.on('second-instance', () => trayController?.show());
   app.whenReady().then(async () => {
@@ -383,8 +409,8 @@ else {
 function prepareQuit(exit) {
   if (quitPromise) return quitPromise;
   quitting = true;
-  quitPromise = Promise.allSettled([leaveRuntime(), peerTester.stop()]).then(() => {
-    try { obs?.shutdown(); } finally { trayController?.destroy(); quitReady = true; exit(); }
+  quitPromise = Promise.allSettled([leaveRuntime(), peerTester.stop()]).then(async () => {
+    try { await obs?.shutdown(); } finally { trayController?.destroy(); quitReady = true; exit(); }
   });
   return quitPromise;
 }

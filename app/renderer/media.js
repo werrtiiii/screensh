@@ -1,6 +1,6 @@
 import { state, $, $$, getIceServers } from './shared.js';
 import { toast } from './toast.js';
-import { socket, roomUsers } from './signaling.js';
+import { socket, roomUsers,requestServer } from './signaling.js';
 import { WhepSession } from './whep.mjs';
 import { attachVideoStats } from './video-stats.mjs';
 import { createShareAdaptation, watchNetwork } from './share-adaptation.mjs';
@@ -26,6 +26,7 @@ export async function loadScreenSources() {
   state.selectedSourceId = null;
   $('#btnConfirmShare').classList.add('hidden');
   list.textContent = '获取显示器和窗口中...';
+  sourcesLoading=false;
   if(sourceTab==='obs'){selectScreenSourceTab('obs');return;}
   sourcesLoading=true;
   try {
@@ -86,12 +87,22 @@ export async function startScreenCapture() {
   if (!state.channelId) return toast('请先加入频道', 'error');
   if (state.selectedSourceId == null) return toast('请选择显示器或窗口', 'error');
   const current = ++sharingGeneration;externalObsSessionId=null;
-  state.startingShare = true; updateSharingUI(false);
+  state.startingShare = true;state.pendingShareRelay=state.useServerRelay;updateSharingUI(false);
   try {
     const config = buildScreenConfig();
+    if(state.useServerRelay){
+      if(!state.videoRelay?.ready)throw Error(state.videoRelay?.message||'服务器未启用视频转发');
+      config.videoRelay=await requestServer('prepare-relay-share');
+      if(current!==sharingGeneration||!state.roomId||!socket?.connected)return;
+    }
     const adaptiveResolution = state.adaptiveResolution;
     const result = await window.electronAPI.startSharing(config);
     if (current !== sharingGeneration || !state.roomId || !socket?.connected) return;
+    if(config.videoRelay){
+      state.activeShareRelay={host:config.videoRelay.host,port:config.videoRelay.port,path:config.videoRelay.path,...(config.videoRelay.transport==='direct'?{transport:'direct',url:config.videoRelay.url}:{})};
+      await requestServer('start-sharing',{relayPath:config.videoRelay.path});
+      if(current!==sharingGeneration||!state.roomId||!socket?.connected)return;
+    }
     state.isSharing = true; updateSharingUI(true);
     externalObsSessionId=result?.externalObsSessionId||null;
     const [fallbackWidth, fallbackHeight] = config.resolution === 'auto' ? [1920,1080] : config.resolution.split('x').map(Number);
@@ -99,11 +110,11 @@ export async function startScreenCapture() {
     shareAdaptation = adaptiveResolution && config.sourceType!=='obs' ? createShareAdaptation({ base: config, width: result?.width || fallbackWidth, height: result?.height || fallbackHeight,
       bitrate: result?.bitrate || config.maxBitrate || 1500, change: (next, previous) => adjustShareQuality(current, next, previous) }) : null;
     $('#screenPicker').classList.add('hidden');
-    socket.emit('start-sharing');
+    if(!config.videoRelay)socket.emit('start-sharing');
     if (state.autoPreview) void displayRemoteVideo(socket.id);
   } catch (error) {
-    if (current === sharingGeneration) { state.isSharing = false; updateSharingUI(false);if(state.selectedSourceType==='obs')externalObsPanel?.error(error.message);toast(error.message, 'error'); }
-  } finally { state.startingShare = false; updateSharingUI(state.isSharing); }
+    if (current === sharingGeneration) {if(state.selectedSourceType==='obs')externalObsPanel?.error(error.message);await stopSharing({reportErrors:false});toast(error.message, 'error'); }
+  } finally { state.startingShare = false;state.pendingShareRelay=false;updateSharingUI(state.isSharing); }
 }
 async function adjustShareQuality(token, next, previous) {
   const active = () => token === sharingGeneration && state.isSharing && !state.leaving && !state.switchingChannel && !!socket?.connected;
@@ -111,10 +122,12 @@ async function adjustShareQuality(token, next, previous) {
   state.adjustingShare = true; updateSharingUI(true);
   try {
     await window.electronAPI.stopSharing(); if (!active()) return false;
+    if(next.videoRelay)next={...next,videoRelay:await requestServer('prepare-relay-share')};
+    if(!active())return false;
     await window.electronAPI.startSharing(next); return active();
   } catch (error) {
     if (!active()) return false;
-    try { await window.electronAPI.startSharing(previous); }
+    try { if(previous.videoRelay)previous={...previous,videoRelay:await requestServer('prepare-relay-share')};if(!active())return false;await window.electronAPI.startSharing(previous); }
     catch { if (active()) { await stopSharing(); toast(`共享画质调整失败：${error.message}`, 'error'); } }
     return false;
   } finally { state.adjustingShare = false; updateSharingUI(state.isSharing); }
@@ -124,10 +137,11 @@ export function receiveShareFeedback({ from, metrics }) {
 }
 export function stopSharing({ reportErrors = true } = {}) {
   if (stoppingPromise) return stoppingPromise;
-  sharingGeneration++; state.isSharing = false; state.selectedSourceId = null;externalObsSessionId=null;
+  const stoppedSocket=socket,stoppedRoom=state.roomId;
+  sharingGeneration++; state.isSharing = false;state.pendingShareRelay=false;state.activeShareRelay=null;state.selectedSourceId = null;externalObsSessionId=null;
   shareAdaptation?.close(); shareAdaptation = null;
   state.stoppingShare = true;
-  socket?.emit('stop-sharing'); updateSharingUI(false); stopWatch();
+  updateSharingUI(false); stopWatch();
   $('#btnConfirmShare').classList.add('hidden');
   stoppingPromise = Promise.resolve().then(() => window.electronAPI.stopSharing()).then(() => {
     state.shareCleanupFailed = false;
@@ -137,6 +151,8 @@ export function stopSharing({ reportErrors = true } = {}) {
     if (reportErrors) toast(`共享清理未完成，请重试停止：${error.message}`, 'error');
     return false;
   }).finally(() => {
+    // Let OBS finish its WHIP DELETE before the server revokes the publisher.
+    if(socket===stoppedSocket&&state.roomId===stoppedRoom)stoppedSocket?.emit('stop-sharing');
     state.stoppingShare = false; stoppingPromise = null;
     updateSharingUI(state.isSharing);
   });
@@ -169,16 +185,17 @@ export function validateRetainedWatch() {
   if (!watchContext) return;
   const user = roomUsers.get(watchContext.target);
   if (watchContext.room !== state.roomId || watchContext.channel !== state.channelId
-    || (watchContext.isSelf ? !state.isSharing : !user?.isSharing || user.virtualIp !== watchContext.host)) stopWatch();
+    || (watchContext.isSelf ? !state.isSharing||JSON.stringify(state.activeShareRelay)!==watchContext.relayKey : !user?.isSharing || JSON.stringify(user.videoRelay||null)!==watchContext.relayKey || !watchContext.relay&&user.virtualIp !== watchContext.host)) stopWatch();
 }
 export async function displayRemoteVideo(targetSocketId) {
   const targetUser = roomUsers.get(targetSocketId);
   const isSelf = targetSocketId === socket?.id;
-  const valid = isSelf ? state.isSharing : targetUser?.isSharing && /^\d{1,3}(\.\d{1,3}){3}$/.test(targetUser.virtualIp);
+  const relay=isSelf?state.activeShareRelay:targetUser?.videoRelay||null;
+  const valid = isSelf ? state.isSharing : targetUser?.isSharing && (relay||/^\d{1,3}(\.\d{1,3}){3}$/.test(targetUser.virtualIp));
   if (!valid) { stopWatch(); return toast('共享者地址不可用', 'error'); }
   const reusable = retainWatchTimer !== null && watchContext?.target === targetSocketId
     && watchContext.room === state.roomId && watchContext.channel === state.channelId
-    && watchContext.host === (isSelf ? '127.0.0.1' : targetUser.virtualIp)
+    && watchContext.host === (relay?.host||(isSelf ? '127.0.0.1' : targetUser.virtualIp))&&watchContext.relayKey===JSON.stringify(relay)
     && !session.closed && !['failed', 'closed', 'disconnected'].includes(session.pc.connectionState);
   if (!reusable) stopWatch();
   else { clearTimeout(retainWatchTimer); retainWatchTimer = null; }
@@ -200,7 +217,7 @@ export async function displayRemoteVideo(targetSocketId) {
     reportViewing(watchContext); watchContext.startFeedback?.(); return;
   }
   const context = { target: targetSocketId, isSelf, room: state.roomId, channel: state.channelId,
-    host: isSelf ? '127.0.0.1' : targetUser.virtualIp, stream: new MediaStream(), video, reported: false,
+    relay,relayKey:JSON.stringify(relay),host: relay?.host||(isSelf ? '127.0.0.1' : targetUser.virtualIp), stream: new MediaStream(), video, reported: false,
     retries: 0, retryTimer: null, disconnectTimer: null, connectedAt: null, feedbackStop: null };
   watchContext = context;
   const message = text => {
@@ -231,13 +248,14 @@ export async function displayRemoteVideo(targetSocketId) {
         if (watchContext === context && state.watchingId === context.target) void connect();
       }, Math.min(5000, 800 * 2 ** (context.retries - 1)));
     };
-    const current = context.current = new WhepSession(`http://${context.host}:8889/live/whep`, getIceServers(), event => {
+    const relayOrigin=relay?.transport==='direct'?relay.url:`http://${context.host}:${relay?.port||8889}`;
+    const current = context.current = new WhepSession(`${relayOrigin}/${relay?.path||'live'}/whep`, getIceServers(), event => {
       if (watchContext !== context || context.current !== current || current.closed) return;
       context.stream.addTrack(event.track);
       const activeVideo = context.video; if (!activeVideo) return;
       activeVideo.srcObject = context.stream;
       activeVideo.play().catch(() => { if (context.video === activeVideo) toast('请点击视频播放按钮'); });
-    }, fail,state.noTun?{tunnel:createMediaTunnel(context.isSelf?state.virtualIp:context.host,true),virtualIp:state.virtualIp}:{});
+    }, fail,{directRelay:relay?.transport==='direct',...(state.noTun&&relay?.transport!=='direct'?{tunnel:createMediaTunnel(context.isSelf&&!relay?state.virtualIp:context.host,true),virtualIp:state.virtualIp}:{}),...(relay?{getToken:async()=>{const result=await requestServer('get-relay-view',{target:context.target});if(watchContext!==context||result.path!==relay.path||result.host!==relay.host||result.port!==relay.port||result.transport!==relay.transport||result.url!==relay.url)throw Error('转发会话已变化，请重新观看');return result.token;}}:{})});
     session = current;
     context.startFeedback = () => {
       if (context.isSelf || context.feedbackStop || watchContext !== context || state.watchingId !== context.target) return;

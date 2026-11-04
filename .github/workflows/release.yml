@@ -58,7 +58,7 @@ jobs:
       - name: Check native runtime files
         shell: pwsh
         run: |
-          $required = @('obs-studio-node/package.json', 'obs-studio-node/obs_studio_client.node', 'app/res/easytier-core.exe', 'app/res/easytier-cli.exe', 'app/res/mediamtx.exe', 'app/res/wintun.dll', 'app/res/Packet.dll')
+          $required = @('obs-studio-node/package.json', 'obs-studio-node/obs_studio_client.node', 'app/res/easytier-core.exe', 'app/res/easytier-core-no-tun.exe', 'app/res/easytier-cli.exe', 'app/res/mediamtx.exe', 'app/res/wintun.dll', 'app/res/Packet.dll')
           $missing = $required | Where-Object { -not (Test-Path -LiteralPath $_) }
           if ($missing) { throw "Missing native runtime files: $($missing -join ', '). Restore the native runtime bundle before packaging." }
 
@@ -80,6 +80,10 @@ jobs:
       - name: Verify release files and packaged runtime
         run: node app/scripts/check-installer.cjs ${{ steps.version.outputs.skip_tests == 'true' && '--files-only' || '' }}
 
+      - name: Package server deployment files
+        shell: pwsh
+        run: ./app/scripts/package-server.ps1
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -88,6 +92,7 @@ jobs:
             app/dist/latest.yml
             app/dist/ScreenSh-*-Setup.exe
             app/dist/ScreenSh-*-Setup.exe.blockmap
+            app/dist/ScreenSh-*-server.zip
           fail_on_unmatched_files: true
           body_path: ${{ format('release-notes/{0}.md', env.RELEASE_TAG) }}
 

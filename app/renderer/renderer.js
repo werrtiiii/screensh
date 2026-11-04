@@ -111,10 +111,10 @@ async function joinServer() {
     access ||= await requestServer('check-access', { userName, password, identity }, connection);
     if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
     const easytierPeers = normalizePeers(access.easytierPeers);
-    rememberJoinCredentials({ userName, identity, password });
-    state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers);
+    rememberJoinCredentials({ userName, identity, password,networkRevision:access.network?.revision });
+    state.virtualIp = await window.electronAPI.startEasyTier(info.serverId, easytierPeers,access.network);
     state.noTun = (await window.electronAPI.getTunnelMode()) === 'no-tun';
-    const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
+    const joined = await joinPreferredChannel(info.serverId, { userName, identity, password, easytierPeers,networkRevision:access.network?.revision, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true' }, payload => requestServer('join-server', payload, connection));
     if (!connection.connected) throw new Error('连接已断开，请重试');
     state.roomId = info.serverId; state.userName = userName;
     enterRoom(info.serverId); applyServerState(joined);

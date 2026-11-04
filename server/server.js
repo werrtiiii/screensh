@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { randomUUID, createHash, randomBytes, scrypt, timingSafeEqual } = require('crypto');
+const { randomUUID, createHash, createHmac, randomBytes, scrypt, timingSafeEqual } = require('crypto');
 const derivePassword = require('util').promisify(scrypt);
 const { isIPv4 } = require('net');
 const { Server } = require('socket.io');
@@ -10,6 +10,7 @@ const proxyaddr = require('proxy-addr');
 const { normalizePeers } = require('./easytier-peers.cjs');
 const { cleanLolPingEndpoint } = require('./lolping-protocol.cjs');
 const { createChatStore } = require('./chat-store.cjs');
+const {normalizeNetwork,externalRelayStatus,privateIp,relayEndpoint}=require('./network-settings.cjs');
 
 function createSignalingServer({ stateFile = null, initialPeers = process.env.SCREENSH_EASYTIER_PEERS, trustedProxies = process.env.SCREENSH_TRUST_PROXY || 'loopback', disconnectGraceMs = 6000, presenceTtlMs = 45000, presenceSweepMs = 5000, temporaryChannelIdleMs = 300000 } = {}) {
   const uptimeStart = performance.now();
@@ -33,6 +34,9 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   if (!Number.isFinite(saved.createdAt) || saved.createdAt <= 0) saved.createdAt = Date.now();
   if (!saved.memberHistory || typeof saved.memberHistory !== 'object' || Array.isArray(saved.memberHistory)) saved.memberHistory = {};
   if (typeof saved.serverName !== 'string' || !saved.serverName.trim()) saved.serverName = '0091 Server';
+  if(typeof saved.videoRelayEnabled!=='boolean')saved.videoRelayEnabled=true;
+  if(!saved.networkSettings)saved.networkSettings={name:'screensh-'+saved.serverId,secret:process.env.SCREENSH_NETWORK_SECRET||'screensh-p2p',dhcp:false,relayHost:'',relayPort:8889};
+  if(!saved.networkRevision)saved.networkRevision=randomUUID();
   if (saved.serverIcon && !isImageData(saved.serverIcon)) saved.serverIcon = readImageReference(saved.serverIcon);
   saved.channels = saved.channels.map(channel => ({ ...channel, voiceBitrate: [24, 32, 64, 96].includes(channel.voiceBitrate) ? channel.voiceBitrate : 32, icon: channel.icon && !isImageData(channel.icon) ? readImageReference(channel.icon) : channel.icon || null }));
   saved.channels = saved.channels.map(channel => ({ ...channel, temporary: channel.id !== 'main' && channel.temporary === true }));
@@ -95,6 +99,22 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
   app.set('trust proxy', trustedProxies);
   const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000, maxHttpBufferSize: 28 * 1024 * 1024 });
   const members = new Map();
+  const relayKey=randomBytes(32);
+  const relay={status:()=>externalRelayStatus(saved.networkSettings,saved.videoRelayEnabled),reconcile:async()=>{},revalidate:async()=>{},stop:async()=>{}};
+  const relayStatus=()=>relay.status();
+  app.post('/media-relay/auth',express.json({limit:'16kb'}),(req,res)=>res.sendStatus(authorizeRelay(req.body,false)?204:403));
+  function relayToken(socketId,channelId,streamPath,action){const payload=Buffer.from(JSON.stringify({socketId,channelId,path:streamPath,action,expires:Date.now()+120000})).toString('base64url');return payload+'.'+createHmac('sha256',relayKey).update(payload).digest('base64url');}
+  function authorizeRelay(entry,active=false){
+    try{
+      if(!saved.videoRelayEnabled||!relay.status().ready||entry.protocol!=='webrtc'||typeof entry.token!=='string'||entry.token.length>2048)return false;
+      const [payload,signature,...extra]=entry.token.split('.'),expected=createHmac('sha256',relayKey).update(payload).digest();
+      const actual=Buffer.from(signature||'','base64url');if(extra.length||actual.length!==expected.length||!timingSafeEqual(actual,expected))return false;
+      const grant=JSON.parse(Buffer.from(payload,'base64url'));
+      const user=members.get(grant.socketId),publisher=[...members.values()].find(u=>u.relaySession?.path===grant.path);
+      if(!user||!publisher||!user.channelId||user.channelId!==grant.channelId||publisher.channelId!==grant.channelId||entry.path!==grant.path||entry.action!==grant.action||(!active&&grant.expires<Date.now()))return false;
+      return grant.action==='publish'?user===publisher:grant.action==='read'&&publisher.isSharing;
+    }catch{return false;}
+  }
   const chat = createChatStore({directory:dataDir ? path.join(dataDir,'chat') : null});
   const chatDownloads=new Map();
   app.get('/chat-files/:token',(req,res)=>{
@@ -247,13 +267,15 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         channelId: current?.user.channelId ?? null, voiceMuted: !!current?.user.voiceMuted };
     });
   }
-  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, lolping: 'easytier-udp-v1', channels: saved.channels.map(publicChannel), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
+  const snapshot = () => ({ serverId: saved.serverId, serverName: saved.serverName, videoRelay:relayStatus(),networkSettings:{name:saved.networkSettings.name,dhcp:saved.networkSettings.dhcp,relayHost:saved.networkSettings.relayHost,relayPort:saved.networkSettings.relayPort,revision:saved.networkRevision}, lolping: 'easytier-udp-v1', channels: saved.channels.map(publicChannel), easytierPeers: saved.easytierPeers, passwordRequired: !!saved.password, serverIcon: imageRef(saved.serverIcon),
     serverStats: { users: members.size, maxUsers: 100, channels: saved.channels.length, uptimeMs: Math.max(0, performance.now() - uptimeStart), createdAt: saved.createdAt, serverTime: Date.now() },
     soundMembers: [...members.values(), ...[...disconnectedMembers.values()].map(record => record.user)].map(u => ({ memberId: u.memberId, channelId: u.channelId })),
     memberHistory: historicalMembers(),
-    users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, profileId: saved.memberHistory[u.key]?.id, name: u.name, virtualIp: u.virtualIp,
+    users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, profileId: saved.memberHistory[u.key]?.id, name: u.name, virtualIp: u.virtualIp, videoRelay:u.isSharing&&u.relaySession?{...relayEndpoint(relay.status()),path:u.relaySession.path}:null,
       channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, lolpingEndpoint: u.lolpingEndpoint || null, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
+    for(const user of members.values())if(user.relaySession?.channelId!==user.channelId)delete user.relaySession;
+    void relay.revalidate();
     syncTemporaryChannels();
     for (const u of members.values()) {
       const target = members.get(u.watchingId);
@@ -279,7 +301,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const u = requireMember();
       if (typeof payload?.enabled !== 'boolean') throw new Error('无效的 lolPing 设置');
       const endpoint = payload.enabled ? cleanLolPingEndpoint(payload.endpoint) : null;
-      if (payload.enabled && (!u.channelId || payload.channelId !== u.channelId || !endpoint || !/^10\.144\./.test(u.virtualIp) && !/^127\./.test(u.virtualIp))) throw new Error('无效的 lolPing 频道或虚拟网络地址');
+      if (payload.enabled && (!u.channelId || payload.channelId !== u.channelId || !endpoint || !privateIp(u.virtualIp) && !/^127\./.test(u.virtualIp))) throw new Error('无效的 lolPing 频道或虚拟网络地址');
       if (JSON.stringify(u.lolpingEndpoint || null) === JSON.stringify(endpoint)) return {};
       if (payload.enabled) {
         const now = Date.now(); endpointTokens = Math.min(10, endpointTokens + Math.max(0, now - lastEndpointRefill) / 200); lastEndpointRefill = now;
@@ -290,6 +312,39 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       return {};
     });
     handle('server-info', () => ({ protocol: 2, channelFeatures: 1, chatVersion: 1, serverId: saved.serverId, serverName: saved.serverName, passwordRequired: !!saved.password, appPresence: true }));
+    handle('get-network-settings',()=>{
+      if(role(requireMember().key)!=='host')throw Error('只有房主可以查看组网密码');
+      return {network:{...saved.networkSettings},enabled:saved.videoRelayEnabled};
+    });
+    handle('set-network-settings',payload=>{
+      if(role(requireMember().key)!=='host')throw Error('只有房主可以修改组网配置');
+      const networkSettings=normalizeNetwork(payload);
+      const changed=networkSettings.name!==saved.networkSettings.name||networkSettings.secret!==saved.networkSettings.secret||networkSettings.dhcp!==saved.networkSettings.dhcp;
+      const relayChanged=networkSettings.relayHost!==saved.networkSettings.relayHost||networkSettings.relayPort!==saved.networkSettings.relayPort||networkSettings.relayTransport!==(saved.networkSettings.relayTransport||'easytier')||networkSettings.relayUrl!==(saved.networkSettings.relayUrl||'');
+      persist({...saved,networkSettings,networkRevision:changed?randomUUID():saved.networkRevision});
+      if(relayChanged)for(const user of members.values())if(user.relaySession){user.isSharing=false;delete user.relaySession;}
+      publish();return {network:{...saved.networkSettings},videoRelay:relayStatus(),revision:saved.networkRevision};
+    });
+    handle('set-video-relay',async payload=>{
+      if(role(requireMember().key)!=='host')throw Error('只有房主可以设置服务器视频转发');
+      if(typeof payload?.enabled!=='boolean')throw Error('无效的视频转发设置');
+      persist({...saved,videoRelayEnabled:payload.enabled});
+      if(!payload.enabled)for(const user of members.values())if(user.relaySession){user.isSharing=false;delete user.relaySession;}
+      publish();return {videoRelay:relayStatus()};
+    });
+    handle('prepare-relay-share',()=>{
+      const user=requireMember(),status=relay.status();
+      if(!user.channelId)throw Error('请先加入频道');
+      if(!saved.videoRelayEnabled||!status.ready)throw Error(status.message||'服务器未启用视频转发');
+      if(user.isSharing&&!user.relaySession)throw Error('请先停止当前共享');
+      if(!user.isSharing)user.relaySession={path:'relay-'+randomUUID(),channelId:user.channelId};void relay.revalidate();
+      return {...user.relaySession,...relayEndpoint(status),token:relayToken(socket.id,user.channelId,user.relaySession.path,'publish')};
+    });
+    handle('get-relay-view',payload=>{
+      const user=requireMember(),target=members.get(payload?.target),status=relay.status();
+      if(!saved.videoRelayEnabled||!status.ready||!target?.isSharing||!target.relaySession||!user.channelId||user.channelId!==target.channelId)throw Error('当前频道没有可观看的服务器转发流');
+      return {...target.relaySession,...relayEndpoint(status),token:relayToken(socket.id,user.channelId,target.relaySession.path,'read')};
+    });
     let chatTokens=5,chatRefill=Date.now();
     const chatAvatar=message=>message.avatar||imageRef(saved.userProfiles[Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId)]?.avatar);
     handle('chat-history',payload=>{requireMember();const result=chat.history(payload?.before??Infinity,payload?.limit??40);return {...result,messages:result.messages.map(message=>({...message,avatar:chatAvatar(message)}))};});
@@ -338,12 +393,13 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (!disconnectGraceMs) { appPresence.delete(socket.id); publish(); }
       else record.expires = Math.min(record.expires, Date.now() + disconnectGraceMs);
     });
-    handle('check-access', async payload => { await checkAccess(socket, payload); return { easytierPeers: saved.easytierPeers }; });
+    handle('check-access', async payload => { await checkAccess(socket, payload); return { easytierPeers: saved.easytierPeers,network:{...saved.networkSettings,revision:saved.networkRevision} }; });
     handle('join-server', async payload => {
       const accessPassword = saved.password;
       await checkAccess(socket, payload);
       if (!socket.connected) throw new Error('连接已断开');
       if (saved.password !== accessPassword) throw new Error('服务器密码已变更，请重新连接');
+      if (saved.networkSettings.dhcp&&payload.networkRevision!==saved.networkRevision)throw Error('组网配置已变更或客户端版本过旧，请重新进入服务器');
       if (members.has(socket.id)) throw new Error('已进入服务器');
       if (JSON.stringify(payload?.easytierPeers) !== JSON.stringify(saved.easytierPeers)) throw new Error('组网节点已变更或客户端版本过旧，请更新客户端后重新连接');
       if (!payload || typeof payload.userName !== 'string' || !payload.userName.trim() || payload.userName.trim().length > 20
@@ -362,6 +418,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       if (!socket.connected) throw new Error('连接已断开');
       if (saved.password !== accessPassword) throw new Error('服务器密码已变更，请重新连接');
       if (channelId !== null && !saved.channels.some(item => item.id === channelId)) throw new Error('频道不存在');
+      if (saved.networkSettings.dhcp&&payload.networkRevision!==saved.networkRevision)throw Error('组网配置已变更或客户端版本过旧，请重新进入服务器');
       if (members.has(socket.id)) throw new Error('已进入服务器');
       if (members.size >= 100) throw new Error('服务器已满（最多100人）');
       previous = [...members.entries()].find(([, u]) => u.key === key);
@@ -370,6 +427,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
         const stale = io.sockets.sockets.get(previous[0]);
         stale?.leave('members'); stale?.leave(group(previous[1].channelId)); stale?.disconnect(true);
       }
+      if (saved.networkSettings.relayHost && payload.virtualIp === saved.networkSettings.relayHost) throw new Error('此虚拟 IP 为服务器转发保留，请重新连接');
       if ([...members.values()].some(u => u.virtualIp === payload.virtualIp)) throw new Error('虚拟 IP 冲突，请重新连接');
       if ([...members.values()].some(u => nameKey(u.name) === nameKey(payload.userName.trim()))) throw new Error('名称已被使用，请换一个');
       const avatar = validateImage(Object.hasOwn(payload, 'avatar') ? payload.avatar : saved.userProfiles[key]?.avatar ?? null, '用户头像');
@@ -604,8 +662,11 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       }
       return snapshot();
     });
-    for (const sharing of [true, false]) handle(sharing ? 'start-sharing' : 'stop-sharing', () => {
-      const u = requireMember(); if (sharing && !u.channelId) throw new Error('请先加入频道'); u.isSharing = sharing; publish(); return {};
+    for (const sharing of [true, false]) handle(sharing ? 'start-sharing' : 'stop-sharing', payload => {
+      const u = requireMember(); if (sharing && !u.channelId) throw new Error('请先加入频道');
+      if(sharing&&payload?.relayPath){if(!saved.videoRelayEnabled||!relay.status().ready||u.relaySession?.path!==payload.relayPath)throw Error('服务器转发会话已失效');}
+      else delete u.relaySession;
+      u.isSharing = sharing; publish(); return {};
     });
     function leave(unexpected = false) {
       const u = members.get(socket.id); if (!u) return;
@@ -656,10 +717,13 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       });
     }
   });
-  return { server, io };
+  return { server, io,stopMediaRelay:()=>relay.stop() };
 }
 if (require.main === module) {
-  const { server } = createSignalingServer({ stateFile: process.env.SCREENSH_STATE_FILE || path.join(__dirname, 'data', 'server-state.json') });
+  const { server,io,stopMediaRelay } = createSignalingServer({ stateFile: process.env.SCREENSH_STATE_FILE || path.join(__dirname, 'data', 'server-state.json') });
   server.listen(process.env.PORT || 31012, () => console.log('ScreenSh 频道服务器运行于端口 ' + server.address().port));
+  let stopping=false;
+  const shutdown=async()=>{if(stopping)return;stopping=true;await stopMediaRelay();io.close(()=>process.exit(0));};
+  process.on('SIGTERM',()=>void shutdown());process.on('SIGINT',()=>void shutdown());
 }
 module.exports = { createSignalingServer };

@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),
-  startEasyTier: (roomId, peers) => ipcRenderer.invoke('start-easytier', roomId, peers),
+  startEasyTier: (roomId, peers, network) => ipcRenderer.invoke('start-easytier', roomId, peers, network),
   getTunnelMode: () => ipcRenderer.invoke('get-tunnel-mode'),
   openTunnelScope: ip => ipcRenderer.invoke('open-tunnel-scope',ip),
   forwardTunnelPort: (id,protocol,port) => ipcRenderer.invoke('forward-tunnel-port',id,protocol,port),

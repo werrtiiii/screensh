@@ -543,6 +543,9 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .server-peer-test-row strong { display: block; font-weight: 500; }
 .server-peer-test-row span { display: block; margin-top: 3px; color: var(--text2); }
 .server-peer-test-row[data-state="error"] span { color: var(--danger); }
+.relay-server-status { margin: 0 0 12px; color: var(--text2); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.relay-server-status[data-state="error"] { color: var(--danger); }
+#shareRelayStatus { display: block; color: var(--text2); font-size: 12px; line-height: 1.6; margin-top: 6px; overflow-wrap: anywhere; }
 .modal-body .form-group { position: relative; }
 .modal-body .help-tip { position: static; flex-shrink: 0; }
 .modal-body .help-tip::after { left: 0; top: 28px; bottom: auto; transform: none; max-width: 100%; text-align: left; }

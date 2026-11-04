@@ -11,6 +11,7 @@ export const state = {
   serverName: '0091 Server',
   userAvatar: typeof localStorage !== 'undefined' ? (localStorage.getItem('userAvatar') || null) : null,
   easytierPeers: [],
+  networkSettings:null,
   switchingChannel: false,
   userName: null,
   virtualIp: null, // 当前本机的 EasyTier VIP
@@ -32,6 +33,10 @@ export const state = {
   captureMethod: 'auto',
   videoEncoder: 'x264',
   autoPreview: true,
+  useServerRelay: false,
+  videoRelay: null,
+  activeShareRelay: null,
+  pendingShareRelay: false,
   frameRate: 30,
   maxBitrate: 1500,
   audioBitrate: 128,

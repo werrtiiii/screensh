@@ -2,8 +2,7 @@ services:
   screensh-server:
     build: .
     restart: unless-stopped
-    ports:
-      - "31012:31012"
+    network_mode: host
     environment:
       PORT: "31012"
       SCREENSH_STATE_FILE: /app/data/server-state.json

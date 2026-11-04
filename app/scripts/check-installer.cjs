@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const {keepLocaleFile}=require('./package-locales.cjs');
 
 const version = require('../package.json').version;
 for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${version}-Setup.exe.blockmap`]) {
@@ -9,8 +10,18 @@ for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${v
 
 const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
+function checkLocales(directory){
+  for(const entry of fs.readdirSync(directory,{withFileTypes:true})){
+    const full=path.join(directory,entry.name);
+    if(entry.isDirectory())checkLocales(full);
+    else if(!keepLocaleFile(full))throw Error('Installer contains an unwanted language pack: '+full);
+  }
+}
+checkLocales(path.join(root,'locales'));
+checkLocales(path.join(resources,'app.asar.unpacked/node_modules/obs-studio-node'));
+for(const locale of ['en-US','zh-CN','zh-TW'])if(!fs.existsSync(path.join(root,'locales',locale+'.pak')))throw Error('Installer is missing '+locale+' language pack');
 for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
-  'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
+  'resources/easytier-core-no-tun.exe', 'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node',
   ...['nvenc', 'amf', 'qsv'].map(vendor => `resources/app.asar.unpacked/node_modules/obs-studio-node/obs-${vendor}-test.exe`)]) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Installer is missing ${file}`);
@@ -47,9 +58,9 @@ const probe = `
   const { createRequire } = require('node:module');
   const load = createRequire(${JSON.stringify(manifest)});
   const fs = require('node:fs'), path = require('node:path'), root = path.dirname(${JSON.stringify(manifest)});
-  for (const file of ['main/saved-passwords.cjs','main/login-startup.cjs','main/capture-sources.js','renderer/ui.css','renderer/ui.js','renderer/app-presence.mjs','renderer/channel-sound-tracker.mjs',
+  for (const file of ['main/local-storage.cjs','main/saved-passwords.cjs','main/login-startup.cjs','main/capture-sources.js','renderer/ui.css','renderer/ui.js','renderer/app-presence.mjs','renderer/channel-sound-tracker.mjs',
     'renderer/chat.js','renderer/chat.css','renderer/chat-cache.mjs','renderer/chat-image-type.mjs','renderer/chat-markup.mjs','renderer/chat-video.mjs',
-    'main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','main/tunnel-forwarder.cjs','main/media-udp-pacer.cjs','main/audio-timing.cjs','main/realtime-policy.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
+    'main/screen-obs-runtime.cjs','main/screen-obs-worker.cjs','main/network-config.cjs','main/virtual-address.cjs','main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','main/tunnel-forwarder.cjs','main/media-udp-pacer.cjs','main/audio-timing.cjs','main/realtime-policy.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
     'lolping/runtime.cjs','lolping/room.cjs','lolping/easytier.cjs','lolping/windows.cjs',
     'lolping/dist/main/core.cjs','lolping/dist/preload/overlay.cjs','lolping/dist/ui/preload.cjs','lolping/dist/settings-tools.mjs',
     'lolping/dist/renderer/overlay/index.html','lolping/dist/renderer/overlay/main.js','lolping/dist/renderer/overlay/main.css',
@@ -66,6 +77,8 @@ const probe = `
   load('./main/external-obs.cjs');
   load('./main/member-probe.cjs');
   load('./main/member-latency.cjs');
+  load('./main/relay-publisher.cjs');
+  if(!fs.existsSync(path.join(root,'renderer/relay-settings.mjs')))throw Error('Packaged relay settings are missing');
   load('./main/update-mirror.cjs');
   load('ws');
   console.log('PACKAGED_EXTERNAL_OBS_OK');

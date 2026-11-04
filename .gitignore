@@ -14,6 +14,7 @@ release/
 # Native binaries, drivers and compiler/debug outputs
 *.exe
 !app/res/easytier-cli.exe
+!app/res/easytier-core-no-tun.exe
 *.dll
 *.node
 *.sys
@@ -26,6 +27,7 @@ release/
 
 # Smoke-test profiles, coverage and test reports
 /app/.runtime-probe/
+/app/data/
 coverage/
 .nyc_output/
 test-results/

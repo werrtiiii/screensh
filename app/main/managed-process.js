@@ -3,13 +3,13 @@ const { spawn } = require('child_process');
 // Own only the process we started. A failed or cancelled start must never report ready.
 class ManagedProcess {
   constructor(name, onExit = () => {}) { this.name = name; this.onExit = onExit; this.child = null; }
-  start(exe, args, { cwd, ready, probe, timeout = 15000, env = process.env } = {}) {
+  start(exe, args, { cwd, ready, probe, timeout = 15000, env = process.env, sensitiveValues=[] } = {}) {
     if (this.child) return Promise.reject(new Error(`${this.name} 已在运行或启动中`));
     this.output = '';
     return new Promise((resolve, reject) => {
       const child = spawn(exe, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
-      let settled = false, readySucceeded = false, tail = '';
+      let settled = false, readySucceeded = false, tail = '',rawOutput='';
       const clean = () => { clearTimeout(timer); clearInterval(poll); this.cancel = null; };
       const finish = error => {
         if (settled) return;
@@ -20,9 +20,8 @@ class ManagedProcess {
       const poll = probe ? setInterval(() => { try { if (probe()) finish(); } catch (e) { finish(e); } }, 200) : null;
       this.cancel = () => finish(new Error(`${this.name} 启动已取消`));
       for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
-        const text = data.toString(); tail = (tail + text).slice(-2000);
-        this.output = (this.output + text).slice(-16000);
-        console.log(`[${this.name}] ${text.trim()}`);
+        const text=data.toString();rawOutput=(rawOutput+text).slice(-16000);let safe=rawOutput;for(const value of sensitiveValues.filter(Boolean)){safe=safe.split(value).join('[已隐藏]');safe=safe.split(JSON.stringify(value).slice(1,-1)).join('[已隐藏]');}tail=safe.slice(-2000);this.output=safe;
+        if(!sensitiveValues.some(Boolean))console.log(`[${this.name}] ${text.trim()}`);
         if (ready?.(tail)) finish();
       });
       child.once('error', error => finish(new Error(`${this.name}: ${error.message}`)));

@@ -58,7 +58,7 @@ test('channel isolation and key rotation reject packets from another channel or 
   const cross=once(a.transport.socket,'message');c.transport.send(event);await cross;assert.equal(a.packets.length,0);
 });
 test('production binds only EasyTier IPv4 addresses; cleanup releases sockets and peer keys', async t=>{
-  for (const ip of ['0.0.0.0','127.0.0.1','192.168.1.2','10.144.evil']) assert.throws(()=>new EasyTierLolPing({context:{virtualIp:ip}}));
+  for (const ip of ['0.0.0.0','127.0.0.1','8.8.8.8','10.144.evil']) assert.throws(()=>new EasyTierLolPing({context:{virtualIp:ip}}));
   const a=await create(t,'alice');const socket=a.transport.socket;
   assert.equal(socket.address().address,'127.0.0.1');
   await a.transport.stop();assert.equal(a.transport.socket,null);assert.equal(a.transport.peers.size,0);

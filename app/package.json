@@ -1,6 +1,6 @@
 {
   "name": "screensh",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
@@ -50,6 +50,12 @@
     "appId": "com.screensh.app",
     "productName": "ScreenSh",
     "asar": true,
+    "electronLanguages": [
+      "en-US",
+      "en-GB",
+      "zh-CN",
+      "zh-TW"
+    ],
     "asarUnpack": [
       "node_modules/obs-studio-node/**/*"
     ],
@@ -97,6 +103,12 @@
       "requestedExecutionLevel": "requireAdministrator"
     },
     "nsis": {
+      "include": "build/installer-data.nsh",
+      "installerLanguages": [
+        "en_US",
+        "zh_CN",
+        "zh_TW"
+      ],
       "installerIcon": "assets/branding/icon.ico",
       "uninstallerIcon": "assets/branding/icon.ico",
       "oneClick": false,

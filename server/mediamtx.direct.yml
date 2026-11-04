@@ -1,0 +1,29 @@
+# 直连 WHIP/WHEP 示例。将 video.example.com 替换为客户端可达的公网 IP、
+# 局域网 IP 或域名，并开放/映射 HTTP TCP 18889、媒体 UDP 35686。
+# 同时启用 ICE TCP；如使用此备用传输，还需开放 TCP 35686。
+# authHTTPAddress 必须从此 MediaMTX 主机访问到 ScreenSh 信令服务。
+logLevel: info
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+playback: false
+metrics: false
+pprof: false
+api: false
+authMethod: http
+authHTTPAddress: http://127.0.0.1:31012/media-relay/auth
+authHTTPExclude: []
+webrtc: true
+webrtcAddress: :18889
+webrtcLocalUDPAddress: :35686
+webrtcLocalTCPAddress: :35686
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [video.example.com]
+webrtcAllowOrigins: ['*']
+udpReadBufferSize: 8388608
+udpMaxPayloadSize: 1200
+paths:
+  '~^relay-[a-f0-9-]{36}$':
+    source: publisher
+    overridePublisher: false

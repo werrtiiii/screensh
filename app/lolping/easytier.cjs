@@ -1,3 +1,4 @@
+const {isPrivateVirtualIp}=require('../main/virtual-address.cjs');
 const dgram = require('node:dgram');
 const { wireEvent } = require('./room.cjs');
 const { isIPv4 } = require('node:net');
@@ -6,7 +7,7 @@ const VERSION = 1, MAX_PACKET = 1200, MAX_PEERS = 512;
 const publicKeyValid = value => typeof value === 'string' && /^[A-Za-z0-9+/]{59}=$/.test(value)
   && Buffer.from(value, 'base64').length === 44 && Buffer.from(value, 'base64').toString('base64') === value
   && Buffer.from(value, 'base64').subarray(0, 12).toString('hex') === '302a300506032b656e032100';
-const virtualIpValid = (ip, loopback) => isIPv4(ip) && (/^10\.144\./.test(ip) || loopback && /^127\./.test(ip));
+const virtualIpValid = (ip, loopback) => isIPv4(ip) && (isPrivateVirtualIp(ip) || loopback && /^127\./.test(ip));
 
 // Membership is supplied by the authenticated channel server. All event data
 // goes directly over sockets bound to the EasyTier interface, never broadcast.

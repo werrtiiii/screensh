@@ -1,0 +1,30 @@
+# MediaMTX 独立运行在现有 EasyTier 节点所在主机。
+# 将 10.126.126.1 改为该节点实际虚拟 IP。
+# authHTTPAddress 必须能从 MediaMTX 访问到 ScreenSh 信令服务。
+logLevel: info
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+playback: false
+metrics: false
+pprof: false
+api: false
+authMethod: http
+authHTTPAddress: http://127.0.0.1:31012/media-relay/auth
+authHTTPExclude: []
+webrtc: true
+webrtcAddress: 10.126.126.1:8889
+webrtcLocalUDPAddress: 10.126.126.1:8189
+webrtcLocalTCPAddress: 10.126.126.1:8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts:
+  - 10.126.126.1
+webrtcAllowOrigins: ['*']
+# Linux 宿主机 net.core.rmem_max 也需至少达到此值。
+udpReadBufferSize: 8388608
+udpMaxPayloadSize: 1200
+paths:
+  '~^relay-[a-f0-9-]{36}$':
+    source: publisher
+    overridePublisher: false

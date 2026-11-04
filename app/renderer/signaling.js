@@ -101,6 +101,9 @@ export function applyServerState(data, restoring = false) {
     document.dispatchEvent(new CustomEvent('user-avatar-updated', { detail: meAvatar }));
   }
   state.easytierPeers = data.easytierPeers || [];
+  state.videoRelay=data.videoRelay||null;state.networkSettings=data.networkSettings||null;
+  document.dispatchEvent(new Event('video-relay-state'));
+  if(state.pendingShareRelay&&!state.videoRelay?.ready||state.isSharing&&state.activeShareRelay&&!state.startingShare&&(!state.videoRelay?.ready||!me.isSharing))void stopSharing();
   state.serverUsers = data.users;
   roomUsers.clear();
   data.users.filter(u => state.channelId && u.channelId === state.channelId).forEach(u => roomUsers.set(u.socketId, u));
@@ -174,9 +177,10 @@ async function reconnectJoin(deadline, previousChannel) {
   if (info.passwordRequired && !credentials.password) throw new Error('服务器需要密码，请重新输入');
   const access = await request('check-access', { userName: credentials.userName, password: credentials.password, identity: credentials.identity });
   if (!Array.isArray(access.easytierPeers)) throw new Error('请更新服务端以使用统一组网节点');
+  if(credentials.networkRevision&&access.network?.revision!==credentials.networkRevision)throw Error('组网配置已变更，请重新进入服务器');
   let joined = await request('join-server', {
     userName: credentials.userName, identity: credentials.identity, password: credentials.password,
-    easytierPeers: access.easytierPeers, channelId: previousChannel, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true',
+    easytierPeers: access.easytierPeers,networkRevision:access.network?.revision, channelId: previousChannel, virtualIp: state.virtualIp, avatar: state.userAvatar, voiceDeafened: localStorage.getItem('voiceDeafened') === 'true',
   });
   if (generation !== reconnectGeneration || !connection.connected) throw new Error('连接已断开');
   if (previousChannel === null || previousChannel !== 'main' && joined.channels.some(c => c.id === previousChannel)) joined = await request('switch-channel', { channelId: previousChannel });
@@ -190,6 +194,7 @@ async function reconnectJoin(deadline, previousChannel) {
 }
 function startReconnect() {
   if (reconnectPromise) return;
+  if(state.activeShareRelay||state.startingShare)void stopSharing();
   const deadline = Date.now() + 5000;
   const previousChannel = state.channelId;
   const generation = reconnectGeneration;
@@ -212,6 +217,7 @@ function startReconnect() {
         return;
       } catch (error) {
         lastError = error;
+        if(error.message==='组网配置已变更，请重新进入服务器')break;
         if (generation !== reconnectGeneration || !state.roomId || state.leaving || kickedOut) break;
         await new Promise(resolve => setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now()))));
       }

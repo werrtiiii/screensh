@@ -1,3 +1,4 @@
+const {isPrivateVirtualIp}=require('./virtual-address.cjs');
 const { execFile } = require('node:child_process');
 const { isIPv4 } = require('node:net');
 const path = require('node:path');
@@ -21,7 +22,7 @@ function createMemberPinger({ execute = execFile, now = Date.now } = {}) {
   }
   return {
     ping(ip) {
-      if (typeof ip !== 'string' || !isIPv4(ip) || !ip.startsWith('10.144.')) return Promise.reject(new Error('无效的成员虚拟 IP'));
+      if (!isPrivateVirtualIp(ip)) return Promise.reject(new Error('无效的成员虚拟 IP'));
       const cached = cache.get(ip); if (cached && cached.expires > now()) return Promise.resolve(cached.result);
       if (pending.has(ip)) return pending.get(ip);
       if (queue.length >= 100) return Promise.reject(new Error('网络检测繁忙，请稍后重试'));

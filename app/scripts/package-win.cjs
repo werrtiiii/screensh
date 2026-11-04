@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { collectResources } = require('./package-resources.cjs');
+const {keepLocaleFile}=require('./package-locales.cjs');
 const root = path.resolve(__dirname, "..");
 const manifest = require('../package.json');
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('请在 Windows x64 上打包');
@@ -25,6 +26,7 @@ const copy = (from, to, filter) => fs.cpSync(from, to, { recursive: true, derefe
 // ScreenSh uses native screen/window capture, not OBS browser/media/device sources.
 const obsPlugins = new Set(['image-source', 'obs-ffmpeg', 'obs-filters', 'obs-transitions', 'obs-nvenc', 'obs-qsv11', 'obs-outputs', 'obs-webrtc', 'obs-x264', 'rtmp-services', 'win-capture', 'win-wasapi']);
 function dependencyFilter(source, name, file) {
+  if(!keepLocaleFile(file))return false;
   if (['node_modules', '.git'].includes(path.basename(file)) || /\.(pdb|lib)$/i.test(file)) return false;
   if (name !== 'obs-studio-node') return true;
   const relative = path.relative(source, file).split(path.sep);
@@ -35,7 +37,7 @@ function dependencyFilter(source, name, file) {
   return true;
 }
 console.log('复制 Electron...');
-copy(path.join(runtime, 'dist'), output, file => path.basename(file) !== 'default_app.asar');
+copy(path.join(runtime, 'dist'), output, file => path.basename(file) !== 'default_app.asar' && keepLocaleFile(file));
 fs.renameSync(path.join(output, 'electron.exe'), path.join(output, 'ScreenSh.exe'));
 const executable = path.join(output, 'ScreenSh.exe');
 const resources = path.join(output, 'resources');
@@ -99,7 +101,7 @@ fs.writeFileSync(path.join(output, '使用说明.md'), `# ScreenSh Windows 便�
 resources 中的 Packet.dll、wintun.dll 和驱动文件属于随附依赖，请完整保留。
 服务器需另行运行本项目 server；客户端包不包含信令服务。
 防火墙需允许客户端通信：信令服务 TCP 31012（默认），共享端虚拟网卡 TCP 8889、UDP/TCP 8189。
-用户设置保存在用户账户的应用数据目录中，不随压缩包分发。
+用户设置、聊天缓存、更新包保存在 ScreenSh.exe 同目录的 data 文件夹；首次启动自动复制旧应用数据，原位置保留备份。不要把自己的 data 文件夹加入分发包。
 `);
 console.log('压缩便携版...');
 const zip = path.join(dist, `${name}.zip`);

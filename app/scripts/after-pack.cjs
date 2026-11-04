@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const {keepLocaleFile}=require('./package-locales.cjs');
 
 const keptPlugins = new Set([
   'image-source', 'obs-ffmpeg', 'obs-filters', 'obs-transitions', 'obs-nvenc',
@@ -19,7 +20,7 @@ function pruneObs(root) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const full = path.join(directory, entry.name);
       const relative = path.relative(root, full).split(path.sep);
-      if (/\.(pdb|lib|exp|ilk|obj)$/i.test(entry.name)
+      if (!keepLocaleFile(full) || /\.(pdb|lib|exp|ilk|obj)$/i.test(entry.name)
         || (relative[0] === 'obs-plugins' && relative[1] === '64bit' && relative.length === 3
           && !keptPlugins.has(path.basename(entry.name, '.dll')))
         || (relative[0] === 'data' && relative[1] === 'obs-plugins' && relative.length === 3

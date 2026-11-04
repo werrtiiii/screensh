@@ -11,7 +11,7 @@ export function sampleVideoStats(report, previous) {
   const format = (value, unit, digits = 1) => finite(value) ? `${value.toFixed(digits)} ${unit}` : '—';
   const transport = report.get(video.transportId);
   const pair = report.get(transport?.selectedCandidatePairId);
-  const codec = report.get(video.codecId);
+  const codec = report.get(video.codecId)||entries.find(row=>row.type==='codec'&&video.payloadType!==undefined&&row.payloadType===video.payloadType);
   const received = delta('packetsReceived'), lost = delta('packetsLost');
   const fps = perSecond('framesDecoded');
   const kbps = perSecond('bytesReceived') === null ? null : perSecond('bytesReceived') * 8 / 1000;
@@ -37,6 +37,10 @@ export function sampleVideoStats(report, previous) {
     ['网络抖动', format(jitter, 'ms'), jitter >= 30],
     ['区间丢包率', format(loss, '%'), loss >= 2],
     ['累计丢帧', format(video.framesDropped, '帧', 0), delta('framesDropped') > 0],
+    ['接收完整帧', format(video.framesReceived,'帧',0)],
+    ['已解码帧', format(video.framesDecoded,'帧',0)],
+    ['已解码关键帧', format(video.keyFramesDecoded,'帧',0)],
+    ['关键帧请求数', format(video.pliCount,'次',0)],
     ['视频编码', codec?.mimeType || '—'],
   ] };
 }

@@ -1,0 +1,10 @@
+# Optional independent MediaMTX service. Never part of the signaling deployment.
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MTX_MOQ: "false"
+    volumes:
+      - ./mediamtx.external.yml:/mediamtx.yml:ro

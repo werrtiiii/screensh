@@ -1,0 +1,12 @@
+# 这是现有 MediaMTX 配置的替换片段，不是完整部署配置。
+# 替换原配置中的同名键，不要在文件末尾重复添加。
+# 保留现有 NAS 的 HTTP 18889 和媒体 UDP 35686 端口。
+# 10.126.126.1 应为 NAS 的 EasyTier 虚拟 IP。
+udpMaxPayloadSize: 1200
+udpReadBufferSize: 8388608
+webrtcAddress: 10.126.126.1:18889
+webrtcLocalUDPAddress: 10.126.126.1:35686
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts:
+  - 10.126.126.1

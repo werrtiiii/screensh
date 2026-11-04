@@ -13,8 +13,8 @@ const tick = () => new Promise(setImmediate);
 
 // Run the real renderer function bodies with deterministic DOM and IPC doubles.
 // Browser module loading and real rendering remain covered by test:ui.
-function renderer(ipc = {}) {
-  const nodes = new Map(), notifications = [];
+function renderer(ipc = {},request=async()=>({})) {
+  const nodes = new Map(), notifications = [],emitted=[];
   function element() {
     const classes = new Set();
     return {
@@ -33,10 +33,11 @@ function renderer(ipc = {}) {
   $('#btnRetryCleanup').classList.add('hidden');
   const api = { startSharing: async () => ({}), stopSharing: async () => {}, leaveRuntime: async () => {}, ...ipc };
   const context = vm.createContext({
-    console, setTimeout, clearTimeout, closeContextMenu() {}, syncLolPing() {},
-    document: { querySelector: $, querySelectorAll: () => [], pictureInPictureElement: null },
+    initServerPeerTests:()=>({reset(){}}),initRelaySettings(){},requestServer:request,
+    Event, console, setTimeout, clearTimeout, closeContextMenu() {}, syncLolPing() {},
+    document: { dispatchEvent(){},querySelector: $, querySelectorAll: () => [], pictureInPictureElement: null },
     window: { electronAPI: api },
-    socket: { connected: true, id: 'self', emit() {} }, roomUsers: new Map(), disconnectSignaling() {},
+    socket: { connected: true, id: 'self', emit(...args) {emitted.push(args);} }, roomUsers: new Map(), disconnectSignaling() {},
     toast: message => notifications.push(message),
   });
   for (const file of ['shared.js', 'share-adaptation.mjs', 'media.js', 'room.js']) {
@@ -48,7 +49,7 @@ function renderer(ipc = {}) {
   const { state } = context.testApi;
   Object.assign(state, { roomId: 'test', channelId: 'main', virtualIp: '10.144.1.1', isSharing: true, autoPreview: false });
   context.testApi.updateSharingUI(true);
-  return { ...context.testApi, $, ipc: api, notifications };
+  return { ...context.testApi, $, ipc: api, notifications,emitted };
 }
 
 test('a server member outside channels cannot start screen capture', async()=>{
@@ -78,6 +79,14 @@ test('stopping during a quality change never restarts sharing after cleanup',asy
   const adjusting=r.adjustShareQuality(0,{resolution:'854x480'},{});
   const stopped=r.stopSharing();gate.resolve();await Promise.all([adjusting,stopped]);
   assert.equal(starts,0);assert.equal(r.state.isSharing,false);assert.equal(r.state.adjustingShare,false);
+});
+
+for(const fallback of [false,true])test(`stopping during relay credential refresh cannot restart ${fallback?'the previous':'the new'} quality profile`,async()=>{
+  const gate=deferred();let starts=0,requests=0;
+  const r=renderer({startSharing:async()=>{starts++;throw Error('profile failed');}},async()=>{requests++;return gate.promise;});
+  const adjusting=r.adjustShareQuality(0,fallback?{}:{videoRelay:{}},{videoRelay:{}});
+  await tick();assert.equal(requests,1);await r.stopSharing();gate.resolve({host:'10.0.0.1'});
+  assert.equal(await adjusting,false);assert.equal(starts,fallback?1:0);assert.equal(r.state.isSharing,false);assert.equal(r.state.adjustingShare,false);
 });
 
 test('failed quality change restores previous profile without changing FPS or settings',async()=>{
@@ -173,3 +182,9 @@ test('leaving waits for cleanup, reports failure persistently, and supports retr
   assert.equal(r.$('#btnConnect').disabled, false);
 });
 
+
+test('renderer revokes server publication only after native output cleanup finishes',async()=>{
+  const gate=deferred(),r=renderer({stopSharing:()=>gate.promise});
+  const pending=r.stopSharing();await tick();assert.equal(r.emitted.some(([event])=>event==='stop-sharing'),false);
+  gate.resolve();await pending;assert.equal(r.emitted.filter(([event])=>event==='stop-sharing').length,1);
+});

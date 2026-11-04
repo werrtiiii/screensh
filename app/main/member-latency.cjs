@@ -1,3 +1,4 @@
+const {isPrivateVirtualIp}=require('./virtual-address.cjs');
 const {isIPv4}=require('node:net');
 
 // Prefer the same end-to-end measurement in both adapter modes. ICMP is only
@@ -5,7 +6,7 @@ const {isIPv4}=require('node:net');
 function createMemberLatency({getContext,probe,pinger,routes}) {
   const valid=(result,ip)=>result?.ip===ip&&Number.isFinite(result.rttMs)&&result.rttMs>=0;
   return {async ping(ip) {
-    if(typeof ip!=='string'||!isIPv4(ip)||!ip.startsWith('10.144.'))throw Error('无效的成员虚拟 IP');
+    if(!isPrivateVirtualIp(ip))throw Error('无效的成员虚拟 IP');
     const context=getContext();
     const empty=()=>({ip,rttMs:null,noTun:!!context?.noTun,source:'unavailable'});
     if(!context)return empty();
