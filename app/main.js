@@ -152,7 +152,8 @@ ipcMain.handle('check-for-update', () => updates.check());
 ipcMain.handle('download-and-install-update', async () => {
   if (!app.isPackaged) throw new Error('开发模式不能安装更新');
   await updates.download();
-  await prepareQuit(() => getUpdater().quitAndInstall(false, true));
+  try{await prepareQuit(() => {if(!updates.install(false,true))throw Error(updates.get().message);});}
+  catch(error){quitPromise=null;quitting=false;quitReady=false;throw error;}
   return true;
 });
 const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i.address);
@@ -397,12 +398,13 @@ else {
   app.on('second-instance', () => trayController?.show());
   app.whenReady().then(async () => {
     if (app.isPackaged && await updates.restoreAtStartup()) {
-      getUpdater().quitAndInstall(true, true);
+      updates.install(true, true);
       if (getUpdater().quitAndInstallCalled) return;
     }
     const { createTrayController } = require('./main/tray-controller.cjs');
     trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
     createWindow();
+    if(updates.get().installFailed)void require('electron').dialog.showMessageBox(mainWindow,{type:'warning',title:'更新未完成',message:'上次自动更新未完成，已恢复打开当前版本',detail:updates.get().message});
     updates.start();
   }).catch?.(reportStartupError);
   app.on('activate', () => trayController?.show());

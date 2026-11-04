@@ -68,3 +68,21 @@ test('new checks wait for successful-startup cache cleanup rather than racing pe
   let release;const pendingUpdates={confirmInstalled:()=>new Promise(resolve=>{release=resolve;}),remember(){},restore:async()=>null};
   const {updates,counts}=fixture(t,{pendingUpdates});const cleanup=updates.confirmStartup();await wait(()=>release);const checking=updates.check();assert.equal(counts.check,0);release(null);await cleanup;await checking;assert.equal(counts.check,1);
 });
+
+test('a failed installation never repeats silently on every startup and remains manually retryable',async t=>{
+  let attempted=false,installs=0;
+  const pendingUpdates={restore:async()=>({version:'9.0.0'}),markInstallAttempt(){attempted=true;},wasInstallAttempted:()=>attempted};
+  const {updates,client,args,counts}=fixture(t,{pendingUpdates});
+  client.quitAndInstall=()=>{installs++;client.quitAndInstallCalled=true;};
+  assert.equal(await updates.restoreAtStartup(),true);assert.equal(updates.install(true,true),true);assert.equal(installs,1);
+  const restarted=createAutoUpdate(args);t.after(()=>restarted.stop());
+  assert.equal(await restarted.restoreAtStartup(),false);assert.equal(restarted.get().installFailed,true);assert.match(restarted.get().message,/上次自动更新未完成/);
+  restarted.start();await new Promise(resolve=>setTimeout(resolve,25));assert.equal(installs,1);assert.deepEqual(counts,{check:0,download:0});
+  await restarted.download();assert.equal(restarted.install(false,true),true);assert.equal(installs,2);
+});
+
+test('a synchronous installer launch failure keeps normal startup available',async t=>{
+  const {updates,client}=fixture(t,{pendingUpdates:{restore:async()=>({version:'9.0.0'}),markInstallAttempt(){}}});
+  client.quitAndInstall=()=>{client.quitAndInstallCalled=false;};
+  assert.equal(await updates.restoreAtStartup(),true);assert.equal(updates.install(true,true),false);assert.equal(updates.get().installFailed,true);
+});

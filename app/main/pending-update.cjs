@@ -7,6 +7,8 @@ async function sha512(file){const hash=createHash('sha512');for await(const byte
 // Keep only the version and verified download metadata. Installer paths are
 // always resolved inside electron-updater's own pending cache.
 function createPendingUpdate({file}) {
+  const attemptFile=file+'.install-attempt';
+  function readAttempt(){try{return JSON.parse(fs.readFileSync(attemptFile,'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw Error('无法读取更新安装记录，请手动覆盖安装');}}
   function clear() { try { fs.unlinkSync(file); } catch(error) { if(error.code!=='ENOENT')throw error; } }
   function valid(record) {
     return record && /^\d+\.\d+\.\d+$/.test(record.version)
@@ -14,6 +16,13 @@ function createPendingUpdate({file}) {
       && /^[A-Za-z0-9+/]{86}==$/.test(record.sha512);
   }
   return {
+    wasInstallAttempted(updater){const attempt=readAttempt(),metadata=updater.downloadedUpdateHelper?.downloadedFileInfo;return !!(attempt&&metadata&&attempt.fileName===metadata.fileName&&attempt.sha512===metadata.sha512);},
+    markInstallAttempt(updater,currentVersion){
+      const metadata=updater.downloadedUpdateHelper?.downloadedFileInfo;
+      if(!metadata?.fileName||!metadata.sha512)throw Error('缺少更新安装信息');
+      fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.writeFileSync(attemptFile+'.tmp',JSON.stringify({fromVersion:currentVersion,fileName:metadata.fileName,sha512:metadata.sha512,startedAt:new Date().toISOString()}),{mode:0o600});fs.renameSync(attemptFile+'.tmp',attemptFile);
+    },
     remember(updater, info) {
       const helper=updater.downloadedUpdateHelper, metadata=helper?.downloadedFileInfo;
       const record={version:info.version, ...metadata};
@@ -76,7 +85,7 @@ function createPendingUpdate({file}) {
         const version=entry.name.match(/^(?:temp-)?ScreenSh-(\d+\.\d+\.\d+)-Setup\.exe(?:\.blockmap)?$/)?.[1];
         if(entry.name==='update-info.json'||entry.name==='current.blockmap'||version&&compareVersions(version,currentVersion)<=0)await fs.promises.unlink(path.join(pending,entry.name));
       }
-      clear();return {version:currentVersion,base};
+      clear();await fs.promises.unlink(attemptFile).catch(error=>{if(error.code!=='ENOENT')throw error;});return {version:currentVersion,base};
     },
   };
 }

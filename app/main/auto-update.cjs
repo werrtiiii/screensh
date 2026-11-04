@@ -6,6 +6,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
   try { enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabled !== false; } catch {}
   let client, checking, downloading, cleaning, timer, startup, ready = false;
   let state = {status:'idle', currentVersion};
+  function installLog(event){try{const log=path.join(path.dirname(file),'../logs/update-install.log');fs.mkdirSync(path.dirname(log),{recursive:true});fs.appendFileSync(log,JSON.stringify({time:new Date().toISOString(),currentVersion,...event})+'\n');}catch{}}
   const publish = value => { state = {...state, ...value}; send({enabled, ...state}); };
   function updater() {
     if (client) return client;
@@ -16,7 +17,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     client.disableWebInstaller = true;
     downloadMirror?.configure(client);
     // Download now; only a later startup or an explicit install can install it.
-    client.on('error', error => console.error('[Updater]', error.message));
+    client.on('error', error => {console.error('[Updater]', error.message);if(client.quitAndInstallCalled)installLog({stage:'launch-error',code:String(error.code||'unknown')});});
     client.on('download-progress', progress => {
       const total=Number.isFinite(progress.total)&&progress.total>0?progress.total:0;
       const transferred=Number.isFinite(progress.transferred)&&progress.transferred>=0?progress.transferred:0;
@@ -65,6 +66,14 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
   function stop() { clearTimeout(startup); clearInterval(timer); startup = timer = null; }
   return {
     get: () => ({enabled, ...state}), check, download,
+    install(isSilent,isForceRunAfter){
+      try{
+        const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'launch',version:state.version,silent:isSilent});
+        client.quitAndInstall(isSilent,isForceRunAfter);
+        if(!client.quitAndInstallCalled)throw Error('无法启动更新安装器，请手动覆盖安装');
+        return true;
+      }catch(error){installLog({stage:'launch-rejected',code:String(error.code||'unknown')});publish({status:'error',installFailed:true,message:'无法启动更新安装器，请在系统设置中重试更新，或下载安装包覆盖安装。'});return false;}
+    },
     set(value) {
       if (typeof value !== 'boolean') throw Error('无效的自动更新设置');
       fs.mkdirSync(path.dirname(file), {recursive:true});
@@ -86,6 +95,10 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
       try {
         const info = await pendingUpdates.restore(updater(),currentVersion);
         if (!info) return false;
+        if(pendingUpdates.wasInstallAttempted?.(updater())){
+          ready=true;installLog({stage:'previous-install-incomplete',version:info.version});
+          publish({status:'error',version:info.version,installFailed:true,message:'上次自动更新未完成，已恢复打开当前版本。请在系统设置中重试更新，或下载安装包覆盖安装。'});return false;
+        }
         ready = true; publish({status:'ready',version:info.version});return true;
       } catch(error) { publish({status:'error',message:error.message});return false; }
     },

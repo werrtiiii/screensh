@@ -23,6 +23,15 @@ test('completed update metadata restores the real updater cache offline after re
   assert.equal(f.nextHelper.file,f.installer);assert.equal(f.nextHelper.versionInfo.version,'9.0.0');
   assert.equal(f.nextHelper.downloadedFileInfo.isAdminRightsRequired,true);assert.equal(f.signatures(),1);
 });
+
+test('installation attempts persist across launches, match the exact package and clear only after successful startup',async t=>{
+  const f=await fixture(t);await f.pending.restore(f.updater,'8.0.0');f.updater.downloadedUpdateHelper=f.nextHelper;
+  assert.equal(f.pending.wasInstallAttempted(f.updater),false);f.pending.markInstallAttempt(f.updater,'8.0.0');
+  const restarted=createPendingUpdate({file:f.file});assert.equal(restarted.wasInstallAttempted(f.updater),true);
+  assert.equal(restarted.wasInstallAttempted({downloadedUpdateHelper:{downloadedFileInfo:{...f.nextHelper.downloadedFileInfo,sha512:'other package'}}}),false);
+  assert.equal(await restarted.confirmInstalled(f.updater,'8.0.0'),null);assert.equal(fs.existsSync(f.file+'.install-attempt'),true);
+  await restarted.confirmInstalled(f.updater,'9.0.0');assert.equal(fs.existsSync(f.file+'.install-attempt'),false);
+});
 test('already installed and older packages are skipped without clearing receipts before successful startup',async t=>{
   for(const current of ['9.0.0','10.0.0']) {
     const f=await fixture(t);assert.equal(await f.pending.restore(f.updater,current),null);assert.equal(fs.existsSync(f.file),true);assert.equal(f.signatures(),0);
