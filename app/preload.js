@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
+  confirmStartup:()=>ipcRenderer.invoke('confirm-startup'),
   openWebLink: url => ipcRenderer.invoke('open-web-link',url),
   downloadChatFile: url => ipcRenderer.invoke('download-chat-file',url),
   getLolPing: id => ipcRenderer.invoke('lolping-get', id),

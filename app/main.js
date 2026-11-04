@@ -18,9 +18,15 @@ const { isIPv4 } = require('net');
 const { randomInt, randomUUID } = require('crypto');
 const { ManagedProcess } = require('./main/managed-process');
 let localStoragePaths;
+function reportStartupError(error){
+  const message=error?.message||String(error);let log='';
+  try{const directory=path.join(localStoragePaths?.root||app.getPath('userData'),'logs');fs.mkdirSync(directory,{recursive:true});log=path.join(directory,'startup.log');fs.appendFileSync(log,`${new Date().toISOString()} ${String(error?.stack||message).slice(0,6000)}\n`);}
+  catch{}
+  console.error('[Startup]',message);require('electron').dialog.showErrorBox('ScreenSh 启动失败',message+(log?'\n\n启动日志：'+log:''));app.exit(1);
+}
 if(typeof app.setPath==='function'&&typeof app.getName==='function'){
   try{localStoragePaths=require('./main/local-storage.cjs').configureLocalStorage(app,{developmentDir:__dirname,legacyUpdates:path.join(require('electron-updater/out/AppAdapter').getAppCacheDir(),'screensh-updater')});}
-  catch(error){require('electron').dialog.showErrorBox('无法初始化本地数据',error.message);app.exit(1);throw error;}
+  catch(error){reportStartupError(error);throw error;}
 }
 let easytierSettings;
 async function getEasyTierSettings(){const {normalizeEasyTierSettings}=await import('./renderer/easytier-options.mjs');return easytierSettings ||= require('./main/easytier-settings.cjs').createEasyTierSettings({file:path.join(app.getPath('userData'),'easytier-settings.json'),normalize:normalizeEasyTierSettings});}
@@ -139,6 +145,8 @@ const updates = require('./main/auto-update.cjs').createAutoUpdate({
   send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);},
 });
 ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});
+let startupConfirmed;
+ipcMain.handle('confirm-startup',event=>{requireMainWindow(event);return startupConfirmed||=(updates.confirmStartup());});
 ipcMain.handle('set-auto-update', (event,enabled) => {requireMainWindow(event);return updates.set(enabled);});
 ipcMain.handle('check-for-update', () => updates.check());
 ipcMain.handle('download-and-install-update', async () => {
@@ -205,7 +213,7 @@ function createWindow() {
         (modifier && input.shift && ['i', 'j', 'c'].includes(key)) ||
         (input.alt && ['left', 'right'].includes(key))) event.preventDefault();
   });
-  mainWindow.loadFile(path.join(__dirname, "./renderer/index.html"));
+  mainWindow.loadFile(path.join(__dirname, "./renderer/index.html"))?.catch(reportStartupError);
   if (!app.isPackaged && process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
 }
 
@@ -396,7 +404,7 @@ else {
     trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
     createWindow();
     updates.start();
-  });
+  }).catch?.(reportStartupError);
   app.on('activate', () => trayController?.show());
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {

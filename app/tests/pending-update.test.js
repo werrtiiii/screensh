@@ -23,10 +23,25 @@ test('completed update metadata restores the real updater cache offline after re
   assert.equal(f.nextHelper.file,f.installer);assert.equal(f.nextHelper.versionInfo.version,'9.0.0');
   assert.equal(f.nextHelper.downloadedFileInfo.isAdminRightsRequired,true);assert.equal(f.signatures(),1);
 });
-test('already installed and older packages are skipped and their startup markers removed',async t=>{
+test('already installed and older packages are skipped without clearing receipts before successful startup',async t=>{
   for(const current of ['9.0.0','10.0.0']) {
-    const f=await fixture(t);assert.equal(await f.pending.restore(f.updater,current),null);assert.equal(fs.existsSync(f.file),false);assert.equal(f.signatures(),0);
+    const f=await fixture(t);assert.equal(await f.pending.restore(f.updater,current),null);assert.equal(fs.existsSync(f.file),true);assert.equal(f.signatures(),0);
   }
+});
+
+test('successful startup verifies and promotes the new installer before removing old and redundant pending packages',async t=>{
+  const f=await fixture(t),expected=fs.readFileSync(f.installer);fs.writeFileSync(path.join(f.cache,'installer.exe'),'old installer');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe'),'obsolete');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe'),'future');
+  assert.equal(await f.pending.confirmInstalled(f.updater,'8.0.0'),null,'future downloaded update is untouched');assert.ok(fs.existsSync(f.installer));
+  const result=await f.pending.confirmInstalled(f.updater,'9.0.0');assert.equal(result.version,'9.0.0');assert.deepEqual(fs.readFileSync(path.join(f.cache,'installer.exe')),expected);assert.equal(fs.existsSync(f.installer),false);assert.equal(fs.existsSync(f.file),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe')),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe')),true);
+  assert.equal(await f.pending.confirmInstalled(f.updater,'9.0.0'),null);
+});
+
+test('a failed integrity check leaves the old base, new installer and receipt untouched',async t=>{
+  const f=await fixture(t);fs.writeFileSync(path.join(f.cache,'installer.exe'),'old installer');fs.appendFileSync(f.installer,'tampered');await assert.rejects(f.pending.confirmInstalled(f.updater,'9.0.0'),/校验失败/);assert.equal(fs.readFileSync(path.join(f.cache,'installer.exe'),'utf8'),'old installer');assert.ok(fs.existsSync(f.installer));assert.ok(fs.existsSync(f.file));
+});
+
+test('a cached installed package can be promoted even if an older client already cleared its startup receipt',async t=>{
+  const f=await fixture(t);fs.unlinkSync(f.file);assert.equal((await f.pending.confirmInstalled(f.updater,'9.0.0')).version,'9.0.0');assert.ok(fs.existsSync(path.join(f.cache,'installer.exe')));assert.equal(fs.existsSync(f.installer),false);
 });
 test('modified, missing and incomplete packages never become installable',async t=>{
   for(const mode of ['modified','missing','incomplete']) {

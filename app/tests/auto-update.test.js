@@ -63,3 +63,8 @@ test('update progress reports changed-byte download size and identifies full-dow
   client.emit('download-progress',{percent:10,total:200000000,transferred:20000000});
   assert.equal(events.at(-1).downloadMode,'full');assert.equal(events.at(-1).total,200000000);
 });
+
+test('new checks wait for successful-startup cache cleanup rather than racing pending files',async t=>{
+  let release;const pendingUpdates={confirmInstalled:()=>new Promise(resolve=>{release=resolve;}),remember(){},restore:async()=>null};
+  const {updates,counts}=fixture(t,{pendingUpdates});const cleanup=updates.confirmStartup();await wait(()=>release);const checking=updates.check();assert.equal(counts.check,0);release(null);await cleanup;await checking;assert.equal(counts.check,1);
+});

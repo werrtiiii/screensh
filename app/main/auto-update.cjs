@@ -4,7 +4,7 @@ const path = require('node:path');
 function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, intervalMs = 6 * 60 * 60 * 1000, startupMs = 10000, downloadMirror, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
   let enabled = true;
   try { enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabled !== false; } catch {}
-  let client, checking, downloading, timer, startup, ready = false;
+  let client, checking, downloading, cleaning, timer, startup, ready = false;
   let state = {status:'idle', currentVersion};
   const publish = value => { state = {...state, ...value}; send({enabled, ...state}); };
   function updater() {
@@ -27,6 +27,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     return client;
   }
   function check() {
+    if(cleaning)return cleaning.then(()=>check());
     if (!packaged) return Promise.resolve({available:false, currentVersion, development:true});
     if (checking) return checking;
     if (downloading || ready) return Promise.resolve({available:true, currentVersion, version:state.version});
@@ -47,6 +48,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     return checking;
   }
   function download() {
+    if(cleaning)return cleaning.then(()=>download());
     if (!packaged) return Promise.reject(Error('开发模式不能安装更新'));
     if (ready) return Promise.resolve(true);
     if (downloading) return downloading;
@@ -74,6 +76,11 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     },
     start() { stop(); if (!packaged) return; startup = setTimeout(automatic, startupMs); timer = setInterval(automatic, intervalMs); startup.unref?.(); timer.unref?.(); },
     stop,
+    confirmStartup(){
+      if(cleaning)return cleaning;
+      if(!packaged||checking||downloading||ready)return null;
+      cleaning=Promise.resolve().then(()=>pendingUpdates.confirmInstalled?.(updater(),currentVersion)).catch(error=>{console.warn('[Updater cleanup]',error.message);return null;}).finally(()=>{cleaning=null;});return cleaning;
+    },
     async restoreAtStartup() {
       if (!packaged || !enabled) return false;
       try {

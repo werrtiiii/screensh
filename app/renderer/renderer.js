@@ -688,6 +688,7 @@ $('#bookmarkEditForm')?.addEventListener('submit', event => {
 });
 
 const startupServer = lastConnectedServer();
+if(window.electronAPI?.confirmStartup)void window.electronAPI.confirmStartup().catch(error=>console.warn('启动确认失败',error.message));
 if (startupServer) {
   $('#serverUrl').value = startupServer.url;
   $('#userName').value = localStorage.getItem('userName') || startupServer.userName;
