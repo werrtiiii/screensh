@@ -1,10 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, intervalMs = 6 * 60 * 60 * 1000, startupMs = 10000, downloadMirror, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
+function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, downloadMirror, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
   let enabled = true;
   try { enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabled !== false; } catch {}
-  let client, checking, downloading, cleaning, timer, startup, ready = false;
+  let client, checking, downloading, cleaning, ready = false;
   let state = {status:'idle', currentVersion};
   function installLog(event){try{const log=path.join(path.dirname(file),'../logs/update-install.log');fs.mkdirSync(path.dirname(log),{recursive:true});fs.appendFileSync(log,JSON.stringify({time:new Date().toISOString(),currentVersion,...event})+'\n');}catch{}}
   const publish = value => { state = {...state, ...value}; send({enabled, ...state}); };
@@ -31,14 +31,15 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     if(cleaning)return cleaning.then(()=>check());
     if (!packaged) return Promise.resolve({available:false, currentVersion, development:true});
     if (checking) return checking;
-    if (downloading || ready) return Promise.resolve({available:true, currentVersion, version:state.version});
-    publish({status:'checking'});
+    if (downloading) return Promise.resolve({available:true, currentVersion, version:state.version});
+    publish({status:'checking',installFailed:false,message:null});
     checking = (async () => {
       try {
         const result = await updater().checkForUpdates();
         const info = {available:result?.isUpdateAvailable === true, currentVersion, version:result?.updateInfo?.version || null};
         const installer=result?.updateInfo?.files?.find(file=>/\.exe(?:$|[?#])/i.test(file.url||''));
-        publish({status:info.available?'available':'current', version:info.version,packageBytes:Number(installer?.size)||0});
+        if(!info.available||state.version!==info.version)ready=false;
+        publish({status:info.available?(ready?'ready':'available'):'current', version:info.version,packageBytes:Number(installer?.size)||0});
         return info;
       } catch (error) {
         const message = /404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')
@@ -59,13 +60,20 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     })().finally(() => { downloading = null; });
     return downloading;
   }
-  async function automatic() {
-    if (!enabled || !packaged) return;
-    try { const result = await check(); if (enabled && result.available) await download(); } catch { /* Status is visible in settings; retry on the next check. */ }
-  }
-  function stop() { clearTimeout(startup); clearInterval(timer); startup = timer = null; }
+  function stop() {}
   return {
     get: () => ({enabled, ...state}), check, download,
+    async prepareUpdate({automatic=false,retry=false}={}){
+      if(automatic&&!enabled)return {enter:true};
+      const info=await check();if(!info.available)return {enter:true};
+      const restored=await pendingUpdates.restore(updater(),currentVersion);
+      ready=restored?.version===info.version;
+      if(ready&&!retry&&pendingUpdates.wasInstallAttempted?.(updater())){publish({status:'error',installFailed:true});throw Error('上次安装未完成。请点击重试，或进入当前版本。');}
+      if(!ready)await download();
+      publish({status:'ready',version:info.version,installFailed:false});return {install:true};
+    },
+    beginInstall(){const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'handoff',version:state.version});return {installer:client.installerPath,sha512:client.downloadedUpdateHelper.downloadedFileInfo.sha512,version:state.version};},
+    reportFailure(error){publish({status:'error',message:error.message});},
     install(isSilent,isForceRunAfter){
       try{
         const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'launch',version:state.version,silent:isSilent});
@@ -80,10 +88,9 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
       fs.writeFileSync(file + '.tmp', JSON.stringify({enabled:value}), {mode:0o600});
       fs.renameSync(file + '.tmp', file); enabled = value;
       publish({});
-      if (enabled) void automatic();
       return enabled;
     },
-    start() { stop(); if (!packaged) return; startup = setTimeout(automatic, startupMs); timer = setInterval(automatic, intervalMs); startup.unref?.(); timer.unref?.(); },
+    start() {},
     stop,
     confirmStartup(){
       if(cleaning)return cleaning;

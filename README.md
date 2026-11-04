@@ -1,42 +1,24 @@
 # ScreenSh
 
-ScreenSh 是 Windows 屏幕共享客户端，支持频道、成员管理和观看共享画面。客户端使用 Electron、OBS Studio Node、MediaMTX 和 EasyTier；Node.js 信令服务器管理频道、成员和连接信息。屏幕画面由客户端之间传输，不经过信令服务器。
+ScreenSh 是一款 Windows 屏幕共享与语音交流软件，可自建服务器，适合远程协作、一起观看和游戏交流。
 
-## 目录
+## 主要功能
 
-- `app/`：Windows 客户端及其构建脚本。
-- `server/`：信令服务器、Docker 配置和 [部署教程](server/部署教程.md)。
-- `obs-studio-node/`：客户端使用的原生 OBS 模块。
-- `.github/workflows/release.yml`：Windows 安装包的 GitHub Release 工作流。
+- **屏幕共享**：共享屏幕、程序窗口或外部 OBS 场景，支持画质、帧率、码率和编码器设置。
+- **语音与伴奏**：频道语音、麦克风控制、程序音频和独立伴奏音量。
+- **频道与成员管理**：服务器密码、临时与持久频道、房主及管理员权限。
+- **文字聊天**：图片、表情、文件和视频预览，支持聊天记录保存与清理。
+- **网络与视频转发**：支持 EasyTier 的 TUN / 无 TUN 模式，可选外部 MediaMTX 转发或直连服务器 WHIP / WHEP。
+- **互动与外观**：lolPing 屏幕标记、表情、文字和投票，以及浅色、深色主题。
+- **软件更新**：自动更新开启时，启动前检查、下载并安装；关闭后可手动更新。主界面运行期间不自动后台下载。
 
-## 下载和使用
+## 下载与使用
 
-从 [GitHub Releases](https://github.com/werrtiiii/screensh/releases) 下载 Windows 安装包。安装后启动 ScreenSh，在首页填写信令服务器地址和名称，再连接频道。首次成功进入新服务器的客户端成为房主。房主可在「服务器设置」中管理连接密码和组网节点。
+从 [GitHub Releases](https://github.com/werrtiiii/screensh/releases) 下载安装包，填写服务器地址和名称后连接。第一个成功进入新服务器的客户端成为房主，可在服务器设置中管理频道、成员及组网参数。
 
-服务器部署方法见 [部署教程](server/部署教程.md)。客户端和服务端需要使用兼容的频道协议版本；当前服务端 `/health` 返回 `protocol: 2`。
+配置、聊天缓存和更新包保存在安装目录的 `data` 文件夹。
 
-自己的卡片名称旁提供“播放伴奏”按钮。先在本机音乐软件中播放歌曲，再选择网易云音乐、QQ 音乐、酷狗音乐、汽水音乐或“更多音源”中的程序。伴奏会混入频道语音；伴奏音量独立保存，麦克风静音不影响伴奏。菜单中可停止伴奏，切换频道或退出服务器也会停止。选择“全部音源”会包含系统声音和正在收听的语音。
+## 服务器部署
 
-伴奏验证：`node app/scripts/run-electron.cjs smoke-accompaniment.cjs` 验证菜单、混音和音量；`node app/scripts/run-electron.cjs smoke-accompaniment-native.cjs` 播放较轻的测试音，验证真实程序音频采集及麦克风进程隔离。
-
-## 本地开发
-
-服务器连接意外中断时，客户端会在断线后的5秒内自动尝试重新连接，并恢复身份和原频道；原频道被删除时返回主频道。被踢出或主动退出时不重连，5秒内未恢复则返回主界面。验证：`node app/scripts/run-electron.cjs smoke-reconnect.cjs`。
-
-需要 Node.js 24、Windows x64，以及项目所需的 OBS、EasyTier、MediaMTX、Wintun 等原生资源。原生资源必须在构建前放到 `obs-studio-node/` 和 `app/res/` 的预期位置；发布工作流会检查这些文件。
-
-```powershell
-npm ci --prefix server
-npm test --prefix server
-$env:SCREENSH_EASYTIER_PEERS = '你的节点域名:11010'
-npm start --prefix server
-```
-
-另开终端启动客户端：
-
-```powershell
-npm ci --prefix app
-npm test --prefix app
-npm run dev --prefix app
-```
-客户端首页可填写 `127.0.0.1`，先使用 HTTP/HTTPS 的默认端口，连接失败后再尝试 31012 端口，输入框与书签保留原地址，也可填写 `example.com:端口` 或完整 HTTP/HTTPS 地址。Windows 安装包使用 `npm run pack:win --prefix app` 构建。客户端使用服务器下发的 EasyTier 节点；新服务器没有节点部署配置时会拒绝启动。
+- [服务器部署教程](server/部署教程.md)：安装、组网节点、域名、数据备份和更新。
+- [视频流转发部署](server/视频流转发部署.md)：外部 MediaMTX 的 EasyTier 与直连转发配置。

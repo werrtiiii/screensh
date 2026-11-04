@@ -15,29 +15,33 @@ function fixture(t, options={}) {
   const updates=createAutoUpdate(args);t.after(()=>{updates.stop();fs.rmSync(dir,{recursive:true,force:true});});
   return {updates, client, counts, events, args};
 }
-test('automatic downloads become installable only through the startup restore path',async t=>{
-  const {updates,client,counts,events,args}=fixture(t);assert.equal(updates.get().enabled,true);assert.equal(await updates.restoreAtStartup(),false);
-  updates.start();await wait(()=>updates.get().status==='ready');
-  assert.deepEqual(counts,{check:1,download:1});
-  assert.equal(client.autoDownload,false);assert.equal(client.autoInstallOnAppQuit,false);
-  assert.equal(client.disableDifferentialDownload,false);assert.equal(client.disableWebInstaller,true);
-  assert.ok(events.some(state=>state.status==='downloading'&&state.percent===55));
-  updates.stop();const restarted=createAutoUpdate(args);t.after(()=>restarted.stop());
-  assert.equal(await restarted.restoreAtStartup(),true);assert.deepEqual(counts,{check:1,download:1},'restoring a local download makes no network requests');
-  assert.equal(updates.set(false),false);assert.equal(await updates.restoreAtStartup(),false);
+test('startup gate checks and downloads before installation without background activity',async t=>{
+ const {updates,client,counts}=fixture(t);updates.start();await new Promise(r=>setTimeout(r,20));assert.deepEqual(counts,{check:0,download:0});
+ assert.deepEqual(await updates.prepareUpdate({automatic:true}),{install:true});assert.deepEqual(counts,{check:1,download:1});assert.equal(updates.get().status,'ready');
+ assert.equal(client.autoDownload,false);assert.equal(client.autoInstallOnAppQuit,false);assert.equal(client.disableDifferentialDownload,false);
+ await new Promise(r=>setTimeout(r,20));assert.deepEqual(counts,{check:1,download:1});
 });
+
+test('an already current version passes the startup gate without downloading',async t=>{
+ const {updates,client,counts}=fixture(t);client.checkForUpdates=async()=>{counts.check++;return {isUpdateAvailable:false,updateInfo:{version:'1.5.2'}};};
+ assert.deepEqual(await updates.prepareUpdate({automatic:true}),{enter:true});assert.deepEqual(counts,{check:1,download:0});
+});
+
+test('turning automatic update on saves preference but never downloads in the running main UI',async t=>{
+ const {updates,counts}=fixture(t);updates.set(false);updates.set(true);await new Promise(r=>setTimeout(r,20));assert.deepEqual(counts,{check:0,download:0});
+});
+
 test('disabled preference survives restart and manual update remains available',async t=>{
   const {updates,args,counts}=fixture(t);updates.set(false);
   const restarted=createAutoUpdate(args);t.after(()=>restarted.stop());assert.equal(restarted.get().enabled,false);
   restarted.start();await new Promise(resolve=>setTimeout(resolve,20));assert.deepEqual(counts,{check:0,download:0});
   await restarted.check();await restarted.download();assert.deepEqual(counts,{check:1,download:1});assert.equal(await restarted.restoreAtStartup(),false);
 });
-test('turning auto update off during a check prevents its automatic download',async t=>{
-  const {updates,client,counts}=fixture(t);let release;
-  client.checkForUpdates=()=>{counts.check++;return new Promise(resolve=>{release=resolve;});};
-  updates.start();await wait(()=>release);updates.set(false);release({isUpdateAvailable:true,updateInfo:{version:'9.0.0'}});
-  await wait(()=>updates.get().status==='available');assert.equal(counts.download,0);
+test('disabled startup updates enter immediately while a manual update remains available',async t=>{
+ const {updates,counts}=fixture(t);updates.set(false);assert.deepEqual(await updates.prepareUpdate({automatic:true}),{enter:true});assert.deepEqual(counts,{check:0,download:0});
+ assert.deepEqual(await updates.prepareUpdate(),{install:true});assert.deepEqual(counts,{check:1,download:1});
 });
+
 test('concurrent checks and downloads are shared and failures can be retried',async t=>{
   const {updates,client,counts}=fixture(t);await Promise.all([updates.check(),updates.check()]);assert.equal(counts.check,1);
   client.downloadUpdate=async()=>{counts.download++;throw Error('offline');};

@@ -139,21 +139,21 @@ const updateAcceleration=require('./main/update-acceleration.cjs').createUpdateA
 ipcMain.handle('get-update-acceleration',event=>{requireMainWindow(event);return updateAcceleration.get();});
 ipcMain.handle('set-update-acceleration',(event,value)=>{requireMainWindow(event);return updateAcceleration.set(value);});
 ipcMain.handle('test-update-acceleration',(event,customUrl)=>{requireMainWindow(event);return updateAcceleration.test(customUrl);});
+let updateWindow;
 const updates = require('./main/auto-update.cjs').createAutoUpdate({
   file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
   downloadMirror:require('./main/update-mirror.cjs').createUpdateMirror(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options),{getAcceleration:()=>updateAcceleration.get()}),
-  send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);},
+  send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);updateWindow?.send(state);},
 });
 ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});
 let startupConfirmed;
 ipcMain.handle('confirm-startup',event=>{requireMainWindow(event);return startupConfirmed||=(updates.confirmStartup());});
 ipcMain.handle('set-auto-update', (event,enabled) => {requireMainWindow(event);return updates.set(enabled);});
 ipcMain.handle('check-for-update', () => updates.check());
-ipcMain.handle('download-and-install-update', async () => {
+ipcMain.handle('download-and-install-update', async event => {
+  requireMainWindow(event);
   if (!app.isPackaged) throw new Error('开发模式不能安装更新');
-  await updates.download();
-  try{await prepareQuit(() => {if(!updates.install(false,true))throw Error(updates.get().message);});}
-  catch(error){quitPromise=null;quitting=false;quitReady=false;throw error;}
+  updateWindow.open(true);
   return true;
 });
 const addresses = () => Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i.address);
@@ -395,19 +395,16 @@ ipcMain.on('window-close', () => mainWindow?.close());
 // Fixed media ports mean a second local instance cannot safely share simultaneously.
 if (!(localStoragePaths?.hasLock??app.requestSingleInstanceLock())) app.quit();
 else {
-  app.on('second-instance', () => trayController?.show());
+  app.on('second-instance', () => {updateWindow?.show();trayController?.show();});
   app.whenReady().then(async () => {
-    if (app.isPackaged && await updates.restoreAtStartup()) {
-      updates.install(true, true);
-      if (getUpdater().quitAndInstallCalled) return;
-    }
-    const { createTrayController } = require('./main/tray-controller.cjs');
-    trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
-    createWindow();
-    if(updates.get().installFailed)void require('electron').dialog.showMessageBox(mainWindow,{type:'warning',title:'更新未完成',message:'上次自动更新未完成，已恢复打开当前版本',detail:updates.get().message});
-    updates.start();
+    updateWindow=require('./main/update-window.cjs').createUpdateWindow({BrowserWindow,ipcMain,updates,enter:enterMain,quit:()=>app.quit(),install:async window=>{
+      const job=updates.beginInstall();const theme=await window.webContents.executeJavaScript('document.documentElement.dataset.theme');
+      await require('./main/update-installer.cjs').launchInstaller({...job,exe:app.getPath('exe'),theme,directory:app.getPath('temp')});
+      await prepareQuit(()=>app.quit());
+    }});
+    if(app.isPackaged&&updates.get().enabled&&!process.argv.includes('--update-recovery'))updateWindow.open();else enterMain();
   }).catch?.(reportStartupError);
-  app.on('activate', () => trayController?.show());
+  app.on('activate', () => {updateWindow?.show();trayController?.show();});
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
     if (quitReady) return;
@@ -415,13 +412,19 @@ else {
     void prepareQuit(() => app.quit());
   });
 }
+function enterMain(){
+    if(mainWindow&&!mainWindow.isDestroyed()){trayController?.show();return;}
+    const { createTrayController } = require('./main/tray-controller.cjs');
+    trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
+    createWindow();
+}
 
 
 function prepareQuit(exit) {
   if (quitPromise) return quitPromise;
   quitting = true;
   quitPromise = Promise.allSettled([leaveRuntime(), peerTester.stop()]).then(async () => {
-    try { await obs?.shutdown(); } finally { trayController?.destroy(); quitReady = true; exit(); }
+    try { await obs?.shutdown(); } finally { trayController?.destroy(); quitReady = true; return await exit(); }
   });
   return quitPromise;
 }

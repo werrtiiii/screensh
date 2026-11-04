@@ -20,7 +20,7 @@ function checkLocales(directory){
 checkLocales(path.join(root,'locales'));
 checkLocales(path.join(resources,'app.asar.unpacked/node_modules/obs-studio-node'));
 for(const locale of ['en-US','zh-CN','zh-TW'])if(!fs.existsSync(path.join(root,'locales',locale+'.pak')))throw Error('Installer is missing '+locale+' language pack');
-for (const file of ['ScreenSh.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
+for (const file of ['ScreenSh.exe', 'resources/screensh-install-processes.ps1', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
   'resources/easytier-core-no-tun.exe', 'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node',
   ...['nvenc', 'amf', 'qsv'].map(vendor => `resources/app.asar.unpacked/node_modules/obs-studio-node/obs-${vendor}-test.exe`)]) {

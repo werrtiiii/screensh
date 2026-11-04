@@ -1,3 +1,21 @@
+!macro customCheckAppRunning
+  InitPluginsDir
+  !ifdef BUILD_UNINSTALLER
+    CopyFiles /SILENT "$INSTDIR\resources\screensh-install-processes.ps1" "$PLUGINSDIR\screensh-install-processes.ps1"
+  !else
+    File /oname=$PLUGINSDIR\screensh-install-processes.ps1 "${BUILD_RESOURCES_DIR}\..\res\screensh-install-processes.ps1"
+  !endif
+  System::Call 'kernel32::GetCurrentProcessId()i.r0'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\screensh-install-processes.ps1" -InstallRoot "$INSTDIR" -InstallerPid $0'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Please close ScreenSh and retry. Application data has been preserved." /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+
 !macro customRemoveFiles
   # Preserve mutable data on both update and uninstall.
   SetOutPath $TEMP

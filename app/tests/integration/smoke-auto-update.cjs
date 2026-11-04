@@ -12,6 +12,7 @@ app.whenReady().then(async()=>{
   client.downloadUpdate=async()=>{downloads++;client.emit('download-progress',{percent:50,total:4*1048576,transferred:2*1048576});await new Promise(resolve=>{releaseDownload=resolve;});client.emit('update-downloaded',{version:'9.0.0'});};
   const updates=createAutoUpdate({file:path.join(data,'updates.json'),packaged:true,currentVersion:'1.5.2',getUpdater:()=>client,pendingUpdates:{remember(){},restore:async()=>null},send:state=>win.webContents.send('update-state',state)});
   ipcMain.handle('get-update-settings',()=>updates.get());ipcMain.handle('set-auto-update',(_e,value)=>updates.set(value));
+  ipcMain.handle('confirm-startup',()=>null);
   ipcMain.handle('check-for-update',()=>updates.check());
   const acceleration=createUpdateAcceleration({file:path.join(data,'acceleration.json'),repository:'werrtiiii/screensh',fetchFile:async url=>{
     if(String(url).startsWith('https://api.github.com/'))return Response.json({assets:[{name:'ScreenSh-1.5.4-Setup.exe',browser_download_url:'https://github.com/werrtiiii/screensh/releases/download/1.5.4/ScreenSh-1.5.4-Setup.exe'}]});
@@ -33,11 +34,12 @@ app.whenReady().then(async()=>{
     await run(`document.querySelector('#btnCheckUpdate').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('9.0.0')`);
     assert.equal(checks,1);assert.equal(downloads,0);
     await win.reload();await wait(`!document.querySelector('#autoUpdateCheckbox').checked`);
-    await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('差分下载')`);
+    await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`!document.querySelector('#autoUpdateCheckbox').disabled`);assert.equal(downloads,0);
+    void updates.download();await wait(`document.querySelector('#updateStatus').textContent.includes('差分下载')`);
     assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('2.0 / 4.0 MB'));
     releaseDownload();await wait(`document.querySelector('#updateStatus').textContent.includes('已下载')`);
     assert.equal(downloads,1);assert.equal(client.autoInstallOnAppQuit,false);
-    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('下次启动时安装'));
+    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('可点击立即安装'));
     assert.equal(await run(`document.querySelector('#btnDownloadUpdate').textContent`),'立即安装');
     await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`!document.querySelector('#autoUpdateCheckbox').disabled`);
     assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('可点击立即安装'));
@@ -60,7 +62,7 @@ app.whenReady().then(async()=>{
     await run(`document.querySelector('#btnSettings').click();document.querySelector('.setting-update').scrollIntoView({block:'start'});`);await new Promise(resolve=>setTimeout(resolve,200));
     fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'settings.png'),(await win.webContents.capturePage()).toPNG());
     console.log('UPDATE_ACCELERATION_UI_OK',JSON.stringify({defaultOn:true,persistentCustom:true,disableBypasses:true,probeResults:true,screenshot:path.join(data,'settings.png')}));
-    console.log('AUTO_UPDATE_UI_OK',JSON.stringify({defaultOn:true,persistentToggle:true,manualCheck:true,backgroundDownload:true,deferredInstall:true,screenshot:path.join(data,'settings.png')}));
+    console.log('AUTO_UPDATE_UI_OK',JSON.stringify({defaultOn:true,persistentToggle:true,manualCheck:true,backgroundDownload:false,manualProgress:true,screenshot:path.join(data,'settings.png')}));
   }catch(error){console.error(error.stack);process.exitCode=1;}
   finally{releaseDownload?.();updates.stop();win?.destroy();app.exit(process.exitCode||0);}
 });
