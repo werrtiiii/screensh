@@ -1,3 +1,7 @@
+!ifdef VERSION
+  !include "${__FILEDIR__}\installer-ui.nsh"
+!endif
+
 !macro customInit
   !ifndef BUILD_UNINSTALLER
     # Old clients launch setup from data/updates and pass data/temp as TEMP.

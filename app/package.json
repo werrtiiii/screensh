@@ -113,7 +113,7 @@
       "uninstallerIcon": "assets/branding/icon.ico",
       "oneClick": false,
       "perMachine": true,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "deleteAppDataOnUninstall": false
     },
