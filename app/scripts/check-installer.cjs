@@ -135,3 +135,6 @@ if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS
   throw result.error || new Error(`Packaged OBS failed: ${result.stderr || result.stdout}`);
 }
 console.log(result.stdout.trim());
+const bootstrapCheck=spawnSync(process.execPath,[path.resolve(__dirname,'../tests/integration/check-installer-bootstrap.cjs')],{env:process.env,windowsHide:true,encoding:'utf8',timeout:60000});
+if(bootstrapCheck.error||bootstrapCheck.status!==0)throw bootstrapCheck.error||new Error('Installer shell-context bootstrap check failed: '+bootstrapCheck.stderr+bootstrapCheck.stdout);
+console.log(bootstrapCheck.stdout.trim());

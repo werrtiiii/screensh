@@ -10,9 +10,19 @@
     ClearErrors
     ${GetOptions} $R6 "--screensh-staged" $R7
     ${If} ${Errors}
-      CreateDirectory "$LOCALAPPDATA\Temp"
+      # $LOCALAPPDATA follows SetShellVarContext and becomes ProgramData in an
+      # all-users install. Resolve the process user's local profile explicitly,
+      # matching Environment.SpecialFolder.LocalApplicationData in the helper.
+      System::Call 'shell32::SHGetFolderPathW(p 0, i 0x1c, p 0, i 0, w .r9)i.r0'
+      ${If} $0 != 0
+      ${OrIf} $9 == ""
+        MessageBox MB_OK|MB_ICONSTOP "Cannot locate the current user's temporary directory." /SD IDOK
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      CreateDirectory "$9\Temp"
       System::Call 'kernel32::GetCurrentProcessId()i.r0'
-      StrCpy $R8 "$LOCALAPPDATA\Temp\ScreenSh-bootstrap-$0.tmp"
+      StrCpy $R8 "$9\Temp\ScreenSh-bootstrap-$0.tmp"
       CreateDirectory "$R8"
       ClearErrors
       CopyFiles /SILENT "$EXEPATH" "$R8\setup.exe"

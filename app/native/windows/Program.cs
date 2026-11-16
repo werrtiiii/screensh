@@ -85,6 +85,10 @@ namespace ScreenSh.Windows
                 catch { }
 #if UPDATER
   try{File.AppendAllText(Path.Combine(Path.GetDirectoryName(Common.Self),"native-error.log"),DateTime.UtcNow.ToString("o")+" "+error.ToString()+Environment.NewLine);}catch{}
+                if (args.Length > 0 && args[0] == "--bootstrap")
+                {
+                    try { System.Windows.Forms.MessageBox.Show("无法启动 ScreenSh 安装程序：" + error.Message + Environment.NewLine + "日志：" + Path.Combine(Path.GetDirectoryName(Common.Self), "native-error.log"), "ScreenSh 安装启动失败", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Error); } catch { }
+                }
 #endif
                 return 1;
             }
