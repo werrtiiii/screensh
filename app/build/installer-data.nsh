@@ -19,22 +19,29 @@
       IfErrors 0 +3
         SetErrorLevel 2
         Quit
-      File /oname=$R8\bootstrap.ps1 "${BUILD_RESOURCES_DIR}\..\res\screensh-bootstrap-install.ps1"
-      StrCpy $R9 ""
+      File /oname=$R8\updater.exe "${BUILD_RESOURCES_DIR}\..\res\screensh-updater.exe"
+      StrCpy $R5 "false"
+      StrCpy $R4 "false"
+      StrCpy $R3 "false"
       ${If} ${Silent}
-        StrCpy $R9 "$R9 -Silent"
+        StrCpy $R5 "true"
       ${EndIf}
       ClearErrors
       ${GetOptions} $R6 "--updated" $R7
       ${IfNot} ${Errors}
-        StrCpy $R9 "$R9 -Updated"
+        StrCpy $R4 "true"
       ${EndIf}
       ClearErrors
       ${GetOptions} $R6 "--force-run" $R7
       ${IfNot} ${Errors}
-        StrCpy $R9 "$R9 -ForceRun"
+        StrCpy $R3 "true"
       ${EndIf}
-      Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$R8\bootstrap.ps1" -Stage "$R8" -InstallRoot "$INSTDIR" -ParentPid $0 $R9'
+      ClearErrors
+      Exec '"$R8\updater.exe" --bootstrap "$R8" "$INSTDIR" $0 $R5 $R4 $R3'
+      ${If} ${Errors}
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
       SetErrorLevel 0
       Quit
     ${EndIf}
@@ -44,12 +51,12 @@
 !macro customCheckAppRunning
   InitPluginsDir
   !ifdef BUILD_UNINSTALLER
-    CopyFiles /SILENT "$INSTDIR\resources\screensh-install-processes.ps1" "$PLUGINSDIR\screensh-install-processes.ps1"
+    CopyFiles /SILENT "$INSTDIR\resources\screensh-platform.exe" "$PLUGINSDIR\screensh-platform.exe"
   !else
-    File /oname=$PLUGINSDIR\screensh-install-processes.ps1 "${BUILD_RESOURCES_DIR}\..\res\screensh-install-processes.ps1"
+    File /oname=$PLUGINSDIR\screensh-platform.exe "${BUILD_RESOURCES_DIR}\..\res\screensh-platform.exe"
   !endif
   System::Call 'kernel32::GetCurrentProcessId()i.r0'
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\screensh-install-processes.ps1" -InstallRoot "$INSTDIR" -InstallerPid $0'
+  nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" stop-installed "$INSTDIR" $0 apply'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -57,6 +64,22 @@
     SetErrorLevel 2
     Quit
   ${EndIf}
+  !ifndef BUILD_UNINSTALLER
+    # Replace the legacy uninstaller before electron-builder invokes it. This
+    # prevents an older installation from reintroducing script dependencies.
+    File /oname=$PLUGINSDIR\native-uninstaller.exe "${UNINSTALLER_OUT_FILE}"
+    ReadRegStr $R2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${If} $R2 != ""
+      nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" prepare-upgrade "$R2" "$PLUGINSDIR\native-uninstaller.exe"'
+      Pop $0
+      Pop $1
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Cannot prepare ScreenSh upgrade; data has been preserved." /SD IDOK
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+    ${EndIf}
+  !endif
 !macroend
 
 !macro customRemoveFiles

@@ -31,7 +31,7 @@ async function fetchUpdateRange(url,offset,length,packSize,token,fetchFile){
   }finally{clearTimeout(timer);token?.removeListener?.('cancel',cancel);}
 }
 class PortableUpdater extends NsisUpdater {
-  constructor(...args) { super(...args); this.usePortableUpdates = true; }
+  constructor(...args) { super(...args); this.usePortableUpdates = true;this.verifyUpdateCodeSignature=require('./windows-signature.cjs').createNativeSignatureVerifier(); }
   async doDownloadUpdate(options) {
     const { info, provider } = options.updateInfoAndProvider;
     const artifact = portableArtifact(info);

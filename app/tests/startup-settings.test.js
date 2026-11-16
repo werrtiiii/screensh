@@ -22,13 +22,10 @@ test('saved passwords are encrypted, scoped by origin and server ID, replaceable
 });
 test('login startup uses current-user interactive elevated task and passes paths as data', async () => {
   const calls=[];
-  const startup=createLoginStartup({exe:'C:\\Program Files\\ScreenSh\\ScreenSh.exe',appPath:'E:\\project with spaces\\app',packaged:true,execute:(exe,args,options,callback)=>{calls.push({exe,args,options});callback(null,options.env.SCREENSH_STARTUP_MODE==='enable'?'true\r\n':'false\r\n');}});
+  const startup=createLoginStartup({exe:'C:\\Program Files\\ScreenSh\\ScreenSh.exe',appPath:'E:\\project with spaces\\app',packaged:true,execute:(exe,args,options,callback)=>{calls.push({exe,args,options});callback(null,args[1]==='enable'?'true\r\n':'false\r\n');}});
   assert.equal(await startup.get(),false);assert.equal(await startup.set(true),true);assert.equal(await startup.set(false),false);
-  const call=calls[1],script=Buffer.from(call.args.at(-1),'base64').toString('utf16le');
-  assert.equal(call.options.windowsHide,true);assert.equal(call.options.env.SCREENSH_STARTUP_ARGS,'--startup');
-  assert.ok(script.includes('-LogonType Interactive -RunLevel Highest'));
-  assert.ok(script.includes('-AtLogOn -User $identity.Name'));
-  assert.ok(!script.includes('Program Files'));
+  const call=calls[1];assert.match(call.exe,/screensh-platform\.exe$/);
+  assert.equal(call.options.windowsHide,true);assert.deepEqual(call.args,['login','enable','C:\\Program Files\\ScreenSh\\ScreenSh.exe','--startup','C:\\Program Files\\ScreenSh']);
   assert.throws(()=>startup.set('true'),/无效/);
 });
 test('auto connect is enabled by default but only restores a valid successful server', async t => {

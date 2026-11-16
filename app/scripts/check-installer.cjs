@@ -27,6 +27,11 @@ for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${v
 
 const root = path.resolve(__dirname, "../dist/win-unpacked");
 const resources = path.join(root, 'resources');
+const packagedArchive=path.join(resources,'app.asar');
+if(require('@electron/asar').listPackage(packagedArchive).some(file=>/\.ps1$/i.test(file)))throw Error('Packaged application contains a runtime script');
+if(fs.readdirSync(resources).some(file=>/\.(?:ps1|log|tmp)$/i.test(file)))throw Error('Packaged resources contain a runtime script or development output');
+const nativeHelper=spawnSync(path.join(resources,'screensh-platform.exe'),['self-test'],{encoding:'utf8',windowsHide:true,timeout:10000});
+if(nativeHelper.status!==0||JSON.parse(nativeHelper.stdout).runtime!=='windows')throw Error('Packaged Windows helper failed');
 function checkLocales(directory){
   for(const entry of fs.readdirSync(directory,{withFileTypes:true})){
     const full=path.join(directory,entry.name);
@@ -37,7 +42,7 @@ function checkLocales(directory){
 checkLocales(path.join(root,'locales'));
 checkLocales(path.join(resources,'app.asar.unpacked/node_modules/obs-studio-node'));
 for(const locale of ['en-US','zh-CN','zh-TW'])if(!fs.existsSync(path.join(root,'locales',locale+'.pak')))throw Error('Installer is missing '+locale+' language pack');
-for (const file of ['ScreenSh.exe', 'resources/screensh-bootstrap-install.ps1', 'resources/screensh-install-processes.ps1', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
+for (const file of ['ScreenSh.exe', 'resources/screensh-updater.exe', 'resources/screensh-platform.exe', 'resources/mediamtx.yml', 'resources/easytier-core.exe','resources/easytier-cli.exe',
   'resources/easytier-core-no-tun.exe', 'resources/mediamtx.exe', 'resources/screensh-process-audio.exe', 'resources/screensh-media-udp.exe', 'resources/lolping-hook-helper.exe', 'resources/wintun.dll', 'resources/Packet.dll',
   'resources/app.asar.unpacked/node_modules/obs-studio-node/obs_studio_client.node',
   ...['nvenc', 'amf', 'qsv'].map(vendor => `resources/app.asar.unpacked/node_modules/obs-studio-node/obs-${vendor}-test.exe`)]) {
@@ -77,7 +82,7 @@ const probe = `
   const fs = require('node:fs'), path = require('node:path'), root = path.dirname(${JSON.stringify(manifest)});
   for (const file of ['main/local-storage.cjs','main/saved-passwords.cjs','main/login-startup.cjs','main/capture-sources.js','renderer/ui.css','renderer/ui.js','renderer/app-presence.mjs','renderer/channel-sound-tracker.mjs',
     'renderer/chat.js','renderer/chat.css','renderer/chat-cache.mjs','renderer/chat-image-type.mjs','renderer/chat-markup.mjs','renderer/chat-video.mjs',
-    'main/screen-obs-runtime.cjs','main/screen-obs-worker.cjs','main/network-config.cjs','main/virtual-address.cjs','main/easytier-settings.cjs','main/ipv6-network.cjs','main/ipv6-network.ps1','main/member-routes.cjs','main/tunnel-forwarder.cjs','main/media-udp-pacer.cjs','main/audio-timing.cjs','main/realtime-policy.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
+    'main/screen-obs-runtime.cjs','main/screen-obs-worker.cjs','main/network-config.cjs','main/virtual-address.cjs','main/easytier-settings.cjs','main/ipv6-network.cjs','main/member-routes.cjs','main/tunnel-forwarder.cjs','main/media-udp-pacer.cjs','main/audio-timing.cjs','main/realtime-policy.cjs','renderer/media-tunnel.mjs','renderer/easytier-options.mjs','renderer/easytier-settings.mjs','renderer/server-address.mjs','renderer/server-identity.mjs','renderer/server-info.mjs','renderer/voice-icons.mjs','assets/branding/icon.png','assets/branding/tray.png',
     'lolping/runtime.cjs','lolping/room.cjs','lolping/easytier.cjs','lolping/windows.cjs',
     'lolping/dist/main/core.cjs','lolping/dist/preload/overlay.cjs','lolping/dist/ui/preload.cjs','lolping/dist/settings-tools.mjs',
     'lolping/dist/renderer/overlay/index.html','lolping/dist/renderer/overlay/main.js','lolping/dist/renderer/overlay/main.css',
@@ -107,9 +112,9 @@ const probe = `
   console.log('PACKAGED_EXTERNAL_OBS_OK');
   console.log('PACKAGED_LOLPING_ASSETS_OK');
   load('./main/ipv6-network.cjs').createIpv6Network({platform:'win32',execute:(_exe,args,_options,done)=>{
-    if(!args.includes('-EncodedCommand') || args.includes('-File') || !Buffer.from(args.at(-1),'base64').toString('utf16le').includes('Get-NetAdapter -Physical'))throw Error('Packaged IPv6 script is not available outside ASAR');
+    if(args[0]!=='ipv6'||args[1]!=='inspect')throw Error('Packaged IPv6 helper arguments are invalid');
     done(null,JSON.stringify({policyBlocked:false,adapters:[{name:'fixture',enabled:true}],addresses:[],failures:[]}));
-  }}).inspect().then(result=>{if(result.code!=='no-address')throw Error('Packaged IPv6 script check failed');console.log('PACKAGED_IPV6_SCRIPT_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
+  }}).inspect().then(result=>{if(result.code!=='no-address')throw Error('Packaged IPv6 script check failed');console.log('PACKAGED_IPV6_NATIVE_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   const { ObsEngine } = load('./main/obs-engine.js');
   const probePath = path.join(process.env.TEMP || process.cwd(),'screensh-installer-probe-'+process.pid);
   const engine = new ObsEngine(probePath,undefined,undefined,true);
@@ -126,7 +131,7 @@ const result = spawnSync(require('electron'), ['-e', probe], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true,
   encoding: 'utf8', timeout: 60000,
 });
-if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK') || !result.stdout.includes('PACKAGED_IPV6_SCRIPT_OK') || updateManifest.incremental&&!result.stdout.includes('PACKAGED_BLOCKS_WORKER_OK')) {
+if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK') || !result.stdout.includes('PACKAGED_IPV6_NATIVE_OK') || updateManifest.incremental&&!result.stdout.includes('PACKAGED_BLOCKS_WORKER_OK')) {
   throw result.error || new Error(`Packaged OBS failed: ${result.stderr || result.stdout}`);
 }
 console.log(result.stdout.trim());

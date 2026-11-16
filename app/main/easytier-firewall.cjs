@@ -1,7 +1,7 @@
-const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { execFile } = require('node:child_process');
+const {windowsHelper}=require('./windows-helper.cjs');
 
 function createEasyTierFirewall({ installRoot, backupDirectory, platform = process.platform, execute = execFile, warn = message => console.warn('[EasyTier firewall]', message) }) {
   // A stable name prevents eight new interface rules on every reconnect.
@@ -12,13 +12,7 @@ function createEasyTierFirewall({ installRoot, backupDirectory, platform = proce
     if (platform !== 'win32') return Promise.resolve();
     if (running) return running;
     running = (async () => {
-      const script = fs.readFileSync(path.join(__dirname, 'easytier-firewall.ps1'), 'utf8');
-      const quote = value => "'" + String(value).replace(/'/g, "''") + "'";
-      // Read from asar in Electron and execute the fixed script without a shell.
-      const command = `& {\n${script}\n} -Apply -InterfaceName ${quote(interfaceName)} -BackupDirectory ${quote(backupDirectory)}`;
-      const encoded = Buffer.from(command, 'utf16le').toString('base64');
-      const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-      return await new Promise((resolve, reject) => execute(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { windowsHide: true, encoding: 'utf8', timeout: 30000, maxBuffer: 65536 }, (error, stdout) => {
+      return await new Promise((resolve, reject) => execute(windowsHelper(), ['firewall',interfaceName,backupDirectory,'apply'], { windowsHide: true, encoding: 'utf8', timeout: 30000, maxBuffer: 65536 }, (error, stdout) => {
         if (error) return reject(error);
         try { resolve(JSON.parse(stdout.replace(/^\uFEFF/, '').trim())); } catch { reject(Error('Invalid firewall cleanup result')); }
       }));

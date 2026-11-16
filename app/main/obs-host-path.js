@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { createHash } = require('crypto');
 const { execFile } = require('child_process');
+const {windowsHelper}=require('./windows-helper.cjs');
 const preparedDirectories = new Set();
 const cleaning = new Map();
 
@@ -40,10 +41,8 @@ function prepareVoiceHost(bin, dataPath) {
 
 function activeHostPaths() {
   if (process.platform !== 'win32') return Promise.reject(Error('OBS process inspection requires Windows'));
-  const script = `$ErrorActionPreference='Stop'; $rows=@(Get-CimInstance Win32_Process -Filter "Name LIKE 'voice-obs-%' OR Name='obs64.exe' OR Name='obs-nvenc-test.exe' OR Name='obs-amf-test.exe' OR Name='obs-qsv-test.exe'"); $paths=@($rows | ForEach-Object {if(!$_.ExecutablePath){throw 'Cannot inspect OBS process path'}; $_.ExecutablePath}); ConvertTo-Json -InputObject $paths -Compress`;
   return new Promise((resolve, reject) => {
-    const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-    execFile(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    execFile(windowsHelper(), ['processes','obs'],
       {windowsHide:true, timeout:5000, maxBuffer:1048576, encoding:'utf8'}, (error, stdout) => {
         if (error) return reject(error);
         try { const value=JSON.parse(stdout.replace(/^\uFEFF/, '').trim()); if(!Array.isArray(value)||value.some(item=>typeof item!=='string'||!path.isAbsolute(item)))throw Error('Invalid OBS process paths'); resolve(value); }

@@ -1,4 +1,4 @@
-# Isolated fixture applications only. Never installs or closes the real client.
+﻿# Isolated fixture applications only. Never installs or closes the real client.
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Add-Type -AssemblyName System.IO.Compression
@@ -34,8 +34,9 @@ foreach($scenario in @('success','startup-failure','bad-checksum','bad-file-hash
  }finally{$zip.Dispose()}
  $job=Join-Path $fixtureRoot ($scenario+'-job.json');$sha=Digest $archive 'SHA512';if($scenario -eq 'bad-checksum'){$sha='A'*86+'=='}
  @{root=$root;exe=(Join-Path $root 'ScreenSh.exe');installer=$archive;sha512=$sha;version='9.0.0'}|ConvertTo-Json -Compress|Set-Content -LiteralPath $job -Encoding UTF8
- & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $appRoot 'main\update-files.ps1') -JobFile $job
- $exit=$LASTEXITCODE
+ $native=Start-Process -FilePath (Join-Path $appRoot 'res\screensh-updater.exe') -ArgumentList ('--worker "'+$job+'"') -WindowStyle Hidden -PassThru
+ $native.WaitForExit()
+ $exit=$native.ExitCode
  $receipt=Get-Content -LiteralPath (Join-Path $fixtureRoot 'portable-result.json') -Raw -Encoding UTF8|ConvertFrom-Json
  Assert (([IO.File]::ReadAllText((Join-Path $root 'data\profile.json'))) -eq 'keep-profile') 'User data changed'
  Assert (([IO.File]::ReadAllText((Join-Path $root 'Uninstall ScreenSh.exe'))) -eq 'keep-uninstaller') 'Uninstaller changed'

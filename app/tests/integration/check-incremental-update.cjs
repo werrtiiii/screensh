@@ -23,7 +23,7 @@ async function run(scenario){
   if(scenario==='changed-base')fs.appendFileSync(path.join(root,'ScreenSh.exe'),'tampered after download');
   const before=fs.readFileSync(path.join(root,'ScreenSh.exe'));
   const job=path.join(base,'job.json');fs.writeFileSync(job,JSON.stringify({root,exe:path.join(root,'ScreenSh.exe'),installer:path.join(pending,artifact.url),sha512:artifact.sha512,version:'9.0.0'}));
-  const child=spawnSync(powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(app,'main/update-files.ps1'),'-JobFile',job],{windowsHide:true,encoding:'utf8',timeout:80000});
+  const child=spawnSync(path.join(app,'res/screensh-updater.exe'),['--worker',job],{windowsHide:true,encoding:'utf8',timeout:80000});
   if(child.error)throw child.error;
   const receipt=JSON.parse(fs.readFileSync(path.join(base,'portable-result.json'),'utf8').replace(/^\uFEFF/,''));
   assert.equal(fs.readFileSync(path.join(root,'data/profile'),'utf8'),'keep');assert.equal(fs.readFileSync(path.join(root,'Uninstall ScreenSh.exe'),'utf8'),'keep uninstaller');

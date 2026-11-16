@@ -16,6 +16,8 @@ ScreenSh 是一款 Windows 屏幕共享与语音交流软件，可自建服务�
 
 从 [GitHub Releases](https://github.com/werrtiiii/screensh/releases) 下载安装包，填写服务器地址和名称后连接。第一个成功进入新服务器的客户端成为房主，可在服务器设置中管理频道、成员及组网参数。
 
+支持 Windows 10 / 11 x64。客户端运行、安装和更新无需 PowerShell；系统辅助程序使用 Windows 自带的 .NET Framework，无需另装 .NET Desktop Runtime。
+
 配置、聊天缓存和临时更新文件保存在安装目录的 `data` 文件夹。更新成功后清理更新包和临时文件，不再保留完整安装包作为差分基础。
 
 ## 服务器部署

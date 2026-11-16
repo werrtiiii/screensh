@@ -1,4 +1,4 @@
-# Optional elevated test of the built application, in a new workspace fixture.
+﻿# Optional elevated test of the built application, in a new workspace fixture.
 param([switch]$Incremental,[string]$Node='node')
 $ErrorActionPreference='Stop'
 $appRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -24,7 +24,9 @@ $hash=[Security.Cryptography.SHA512]::Create();$stream=[IO.File]::OpenRead($arch
 $job=Join-Path $root 'data\job.json'
 @{root=$root;exe=(Join-Path $root 'ScreenSh.exe');installer=$archive;sha512=$sha;version=$version}|ConvertTo-Json|Set-Content -LiteralPath $job -Encoding UTF8
 try{
- & (Join-Path $appRoot 'main\update-files.ps1') -JobFile $job
+ $native=Start-Process -FilePath (Join-Path $appRoot 'res\screensh-updater.exe') -ArgumentList ('--worker "'+$job+'"') -WindowStyle Hidden -PassThru
+ $native.WaitForExit()
+ $global:LASTEXITCODE=$native.ExitCode
  if($Incremental -and $LASTEXITCODE -eq 0){
   $deadline=[DateTime]::UtcNow.AddSeconds(10)
   while((Test-Path -LiteralPath $archive) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 100}

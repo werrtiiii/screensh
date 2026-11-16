@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createIpv6Network}=require('../main/ipv6-network.cjs');
 const snapshot=(extra={})=>({policyBlocked:false,adapters:[{name:'Wi-Fi',enabled:true,changed:false}],addresses:['2408:1234::2'],failures:[],...extra});
-function fixture(value,extra={}){return createIpv6Network({platform:'win32',execute:(exe,args,options,done)=>{assert.match(exe,/WindowsPowerShell.*powershell\.exe$/);assert.ok(args.includes('-EncodedCommand'));assert.ok(!args.includes('-File'));const script=Buffer.from(args.at(-1),'base64').toString('utf16le');assert.match(script,/Get-NetAdapter -Physical/);assert.match(script,/\} -EnableIPv6$/);assert.equal(options.windowsHide,true);assert.equal(options.timeout,45000);done(null,JSON.stringify(value));},probe:async()=>true,...extra});}
+function fixture(value,extra={}){return createIpv6Network({platform:'win32',execute:(exe,args,options,done)=>{assert.match(exe,/screensh-platform\.exe$/);assert.deepEqual(args,['ipv6','enable']);assert.equal(options.windowsHide,true);assert.equal(options.timeout,45000);done(null,JSON.stringify(value));},probe:async()=>true,...extra});}
 test('IPv6 result distinguishes protocol binding, global address, reachability and EasyTier conflicts',async()=>{
   const success=await fixture(snapshot({adapters:[{name:'Wi-Fi',enabled:true,changed:true}]}),{getEasyTierDisabled:async()=>true}).run();assert.equal(success.code,'reachable');assert.match(success.message,/已启用/);assert.match(success.warnings[0],/EasyTier/);
   let probes=0;

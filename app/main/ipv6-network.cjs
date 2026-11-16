@@ -1,5 +1,4 @@
-const path=require('node:path');
-const {readFileSync}=require('node:fs');
+const {windowsHelper}=require('./windows-helper.cjs');
 const {execFile}=require('node:child_process');
 const {connect,isIPv6}=require('node:net');
 
@@ -10,11 +9,7 @@ function createIpv6Network({execute=execFile,probe=probeAddress,platform=process
   let running=null;
   async function perform(enable){
     if(platform!=='win32')throw Error('此功能仅支持 Windows');
-    // PowerShell cannot open files inside app.asar. Electron reads the bundled
-    // fixed script and passes it as UTF-16LE, without interpolating user input.
-    const script=readFileSync(path.join(__dirname,'ipv6-network.ps1'),'utf8');
-    const encoded=Buffer.from('& {\n'+script+'\n}'+(enable?' -EnableIPv6':''),'utf16le').toString('base64');
-    const snapshot=await new Promise((resolve,reject)=>execute(path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',encoded],{windowsHide:true,encoding:'utf8',timeout:45000,maxBuffer:512*1024},(error,stdout)=>{
+    const snapshot=await new Promise((resolve,reject)=>execute(windowsHelper(),['ipv6',enable?'enable':'inspect'],{windowsHide:true,encoding:'utf8',timeout:45000,maxBuffer:512*1024},(error,stdout)=>{
       if(error)return reject(Error(error.killed?'IPv6 检测超时，请重试':'无法检测或启用 IPv6，请确认以管理员身份运行软件'));
       try{const data=JSON.parse(stdout.replace(/^\uFEFF/,''));if(!Array.isArray(data.adapters)||!Array.isArray(data.addresses)||!Array.isArray(data.failures))throw Error();resolve(data);}catch{reject(Error('无法读取 Windows IPv6 检测结果'));}
     }));
