@@ -46,6 +46,50 @@
       Quit
     ${EndIf}
   !endif
+  !ifndef BUILD_UNINSTALLER
+    # Fallback handoff does not use the independent updater. The NSIS installer
+    # itself signals readiness, then waits before it may stop the old client.
+    ${GetParameters} $R6
+    ClearErrors
+    ${GetOptions} $R6 "--screensh-wait-parent=" $R7
+    ${IfNot} ${Errors}
+      IfFileExists "$EXEDIR\fallback.cancel" 0 +3
+        SetErrorLevel 2
+        Quit
+      System::Call 'kernel32::OpenProcess(i 0x100000, i 0, i $R7)p.r8'
+      ${If} $8 == 0
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      ClearErrors
+      FileOpen $R9 "$EXEDIR\fallback.ready" w
+      ${If} ${Errors}
+        System::Call 'kernel32::CloseHandle(p r8)'
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      FileWrite $R9 "ready"
+      FileClose $R9
+      StrCpy $R5 0
+      screensh_parent_wait:
+        IfFileExists "$EXEDIR\fallback.cancel" screensh_parent_cancel
+        System::Call 'kernel32::WaitForSingleObject(p r8, i 100)i.r7'
+        IntCmp $7 0 screensh_parent_done
+        IntCmp $7 258 0 screensh_parent_cancel screensh_parent_cancel
+        IntOp $R5 $R5 + 1
+        IntCmp $R5 900 screensh_parent_cancel screensh_parent_wait screensh_parent_cancel
+      screensh_parent_cancel:
+        StrCpy $7 1
+      screensh_parent_done:
+      System::Call 'kernel32::CloseHandle(p r8)'
+      IfFileExists "$EXEDIR\fallback.cancel" 0 +2
+        StrCpy $7 1
+      ${If} $7 != 0
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+    ${EndIf}
+  !endif
 !macroend
 
 !macro customCheckAppRunning

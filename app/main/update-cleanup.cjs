@@ -49,4 +49,22 @@ async function cleanupTransactions(root,currentVersion,skip=[]){
   }
   return report;
 }
-module.exports={packageVersion,unlinkOwned,removeTree,cleanupIncrementalCache,cleanupTransactions};
+async function cleanupFallbackStages(root,currentVersion,{temp=path.join(process.env.LOCALAPPDATA||require('node:os').tmpdir(),'Temp'),now=Date.now()}={}){
+  const receipts=path.join(root,'data/updates/fallback-stages');noLinks(receipts);if(!fs.existsSync(receipts))return;
+  for(const entry of fs.readdirSync(receipts,{withFileTypes:true})){
+    if(!entry.isFile()||!/^ScreenSh-fallback-[a-f0-9-]{36}\.json$/.test(entry.name))continue;
+    try{
+      const file=path.join(receipts,entry.name);noLinks(file);if(fs.statSync(file).size>8192)continue;
+      const record=JSON.parse(fs.readFileSync(file,'utf8')),stage=path.resolve(record.stage);
+      if(path.resolve(record.root).toLowerCase()!==path.resolve(root).toLowerCase()||path.dirname(stage).toLowerCase()!==path.resolve(temp).toLowerCase()||path.basename(stage)+'.json'!==entry.name||!/^\d+\.\d+\.\d+$/.test(record.version))continue;
+      noLinks(stage);
+      const cancelled=fs.existsSync(path.join(stage,'fallback.cancel'))&&Number.isFinite(record.created)&&now-record.created>180000;
+      if(!cancelled&&compareVersions(record.version,currentVersion)>0)continue;
+      // Keep the cancellation marker while the executable is still mapped by
+      // Windows; otherwise a delayed installer could miss cancellation.
+      await unlinkOwned(path.join(stage,'setup.exe'));
+      await removeTree(stage);await fs.promises.unlink(file);
+    }catch{/* An installer still using the directory is retried after a later healthy startup. */}
+  }
+}
+module.exports={packageVersion,unlinkOwned,removeTree,cleanupIncrementalCache,cleanupTransactions,cleanupFallbackStages};

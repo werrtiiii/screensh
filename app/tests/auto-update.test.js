@@ -16,6 +16,19 @@ function fixture(t, options={}) {
   const updates=createAutoUpdate(args);t.after(()=>{updates.stop();fs.rmSync(dir,{recursive:true,force:true});});
   return {updates, client, counts, events, args};
 }
+test('full installer fallback reuses an EXE without downloading and only downloads after a portable handoff failure',async t=>{
+ const f=fixture(t);await f.updates.check();
+ f.client.installerPath='ScreenSh-9.0.0-Setup.exe';f.client.downloadedUpdateHelper={downloadedFileInfo:{sha512:'A'.repeat(86)+'=='}};f.args.pendingUpdates.markInstallAttempt=()=>{};
+ assert.equal((await f.updates.prepareInstallerFallback('9.0.0')).installer,f.client.installerPath);assert.equal(f.counts.download,0);
+ f.client.installerPath='ScreenSh-9.0.0-Update.json';
+ f.client.downloadUpdate=async()=>{assert.equal(f.client.forceFullInstaller,true);f.counts.download++;f.client.installerPath='ScreenSh-9.0.0-Setup.exe';f.client.emit('update-downloaded',{version:'9.0.0'});};
+ await f.updates.prepareInstallerFallback('9.0.0');assert.equal(f.counts.download,1);assert.equal(f.client.forceFullInstaller,false);
+ await assert.rejects(f.updates.prepareInstallerFallback('8.0.0'),/版本已变化/);assert.equal(f.counts.download,1);
+});
+test('failed fallback download resets full-installer mode and does not acknowledge installation',async t=>{
+ const f=fixture(t);await f.updates.check();f.client.installerPath='ScreenSh-9.0.0-Update.zip';f.client.downloadUpdate=async()=>{throw Error('offline');};
+ await assert.rejects(f.updates.prepareInstallerFallback('9.0.0'),/下载更新失败/);assert.equal(f.client.forceFullInstaller,false);assert.equal(f.updates.get().status,'error');
+});
 test('closing during metadata check prevents download and leaves no installation failure',async t=>{
   const f=fixture(t);let finish;
   f.client.checkForUpdates=()=>new Promise(resolve=>{finish=resolve;});

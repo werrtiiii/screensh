@@ -414,8 +414,8 @@ else {
   app.whenReady().then(async () => {
     updateWindow=require('./main/update-window.cjs').createUpdateWindow({BrowserWindow,ipcMain,updates,enter:enterMain,quit:()=>app.quit(),canQuit:()=>quitReady,install:async window=>{
       const theme=await window.webContents.executeJavaScript('document.documentElement.dataset.theme');const job=updates.beginInstall();
-      await require('./main/update-installer.cjs').launchInstaller({...job,exe:app.getPath('exe'),theme,directory:app.getPath('temp')});
-      await prepareQuit(()=>app.quit());
+      const {launchInstaller}=require('./main/update-installer.cjs');
+      await require('./main/update-handoff.cjs').createUpdateHandoff({launch:launchInstaller,launchSetup:require('./main/setup-fallback.cjs').launchSetupFallback,prepareSetup:version=>updates.prepareInstallerFallback(version),quit:()=>prepareQuit(()=>app.quit())})({...job,exe:app.getPath('exe'),theme,directory:app.getPath('temp')});
     }});
     if(app.isPackaged&&updates.get().enabled&&!process.argv.includes('--update-recovery')&&!process.argv.includes('--portable-updated'))updateWindow.open();else enterMain();
   }).catch?.(reportStartupError);

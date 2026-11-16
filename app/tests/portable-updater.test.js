@@ -2,6 +2,13 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {portableArtifact,PortableUpdater}=require('../main/portable-updater.cjs');
 const {confirmPortableStartup}=require('../main/portable-confirm.cjs');
 const artifact={url:'ScreenSh-9.0.0-Update.zip',size:1234,sha512:'A'.repeat(86)+'=='};
+test('explicit startup fallback downloads only the complete EXE through checked NSIS transport',async()=>{
+ const setup={url:'ScreenSh-9.0.0-Setup.exe',size:2000,sha512:artifact.sha512};let task;
+ const fake={forceFullInstaller:true,executeDownload:value=>{task=value;return Promise.resolve(['setup']);}};
+ const provider={resolveFiles:info=>{assert.deepEqual(info.files,[setup]);assert.equal(info.packages,undefined);return [{url:new URL('https://github.com/owner/repo/'+setup.url),info:setup}];}};
+ await PortableUpdater.prototype.doDownloadUpdate.call(fake,{updateInfoAndProvider:{info:{version:'9.0.0',files:[setup],portable:artifact},provider},disableDifferentialDownload:false});
+ assert.equal(task.fileExtension,'exe');assert.equal(task.downloadUpdateOptions.disableDifferentialDownload,true);assert.equal(task.downloadUpdateOptions.disableWebInstaller,true);
+});
 test('portable metadata is version-bound and never accepts URLs or other package names',()=>{
  assert.equal(portableArtifact({version:'9.0.0',portable:artifact}),artifact);
  assert.equal(portableArtifact({version:'9.0.0'}),null);

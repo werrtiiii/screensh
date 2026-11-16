@@ -85,9 +85,23 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     return preparing;
   }
   const stop=cancel;
+  function beginInstall(){const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'handoff',version:state.version});return {installer:client.installerPath,sha512:client.downloadedUpdateHelper.downloadedFileInfo.sha512,version:state.version};}
   return {
     get: () => ({enabled, ...state}), check, download, prepareUpdate, cancel,
-    beginInstall(){const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'handoff',version:state.version});return {installer:client.installerPath,sha512:client.downloadedUpdateHelper.downloadedFileInfo.sha512,version:state.version};},
+    beginInstall,
+    async prepareInstallerFallback(version){
+      if(state.version!==version)throw Error('更新版本已变化，已取消备用安装');
+      const client=updater();
+      if(!/\.exe$/i.test(client.installerPath||'')){
+        if(!/\.(zip|json)$/i.test(client.installerPath||''))throw Error('没有可用的更新包');
+        ready=false;client.forceFullInstaller=true;
+        installLog({stage:'fallback-download',version});
+        try{await download();}finally{client.forceFullInstaller=false;}
+      }
+      if(state.version!==version||!client.installerPath?.endsWith(`ScreenSh-${version}-Setup.exe`))throw Error('未获取到匹配版本的完整安装包');
+      installLog({stage:'fallback-handoff',version});publish({status:'installing',version,message:'正在启动备用安装程序…'});
+      return beginInstall();
+    },
     reportFailure(error){publish({status:'error',message:error.message});},
     install(isSilent,isForceRunAfter){
       try{
@@ -110,7 +124,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     confirmStartup(){
       if(cleaning)return cleaning;
       if(!packaged||checking||downloading||ready)return null;
-      cleaning=Promise.resolve().then(()=>require('./portable-confirm.cjs').confirmPortableStartup(path.resolve(path.dirname(file),'../..'),currentVersion)).then(async confirming=>{await require('./update-cleanup.cjs').cleanupTransactions(path.resolve(path.dirname(file),'../..'),currentVersion,confirming);return pendingUpdates.confirmInstalled?.(updater(),currentVersion);}).catch(error=>{console.warn('[Updater cleanup]',error.message);return null;}).finally(()=>{cleaning=null;});return cleaning;
+      cleaning=Promise.resolve().then(()=>require('./portable-confirm.cjs').confirmPortableStartup(path.resolve(path.dirname(file),'../..'),currentVersion)).then(async confirming=>{const root=path.resolve(path.dirname(file),'../..'),cleanup=require('./update-cleanup.cjs');await cleanup.cleanupTransactions(root,currentVersion,confirming);await cleanup.cleanupFallbackStages(root,currentVersion);return pendingUpdates.confirmInstalled?.(updater(),currentVersion);}).catch(error=>{console.warn('[Updater cleanup]',error.message);return null;}).finally(()=>{cleaning=null;});return cleaning;
     },
     async restoreAtStartup() {
       if (!packaged || !enabled) return false;

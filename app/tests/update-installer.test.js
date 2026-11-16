@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{Eve
 const {createInstallerLauncher}=require('../main/update-installer.cjs');
 function fixture(t,behavior){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-installer-test-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const child=new EventEmitter();child.unref=()=>child.unreferenced=true;child.kill=()=>child.killed=true;
+ const child=new EventEmitter();child.unref=()=>child.unreferenced=true;child.kill=()=>{child.killed=true;child.exitCode=1;child.emit('exit',1);};
  const launch=createInstallerLauncher({pollMs:1,timeoutMs:100,spawnProcess:(command,args,options)=>{
   assert.equal(options.detached,true);assert.equal(options.windowsHide,true);assert.equal(options.stdio[0],'ignore');assert.equal(typeof options.stdio[1],'number');assert.equal(options.stdio[1],options.stdio[2]);
   const job=JSON.parse(fs.readFileSync(args[1],'utf8'));
@@ -26,4 +26,8 @@ test('spawn errors retain the diagnostic path and never acknowledge readiness',a
 });
 test('startup timeout terminates only the unready child and leaves diagnostic files',async t=>{
  const f=fixture(t,()=>{});await assert.rejects(f.run(),/启动超时.*startup.log/);assert.equal(f.child.killed,true);assert.equal(fs.existsSync(path.join(f.root,'data/temp')),true);
+});
+test('a worker that cannot be confirmed stopped disables installer fallback',async t=>{
+ const f=fixture(t,()=>{});f.child.kill=()=>{};
+ await assert.rejects(f.run(),error=>error.code==='INSTALLER_HANDOFF_FAILED'&&error.canFallback===false);
 });

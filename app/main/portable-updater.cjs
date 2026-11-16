@@ -34,6 +34,11 @@ class PortableUpdater extends NsisUpdater {
   constructor(...args) { super(...args); this.usePortableUpdates = true;this.verifyUpdateCodeSignature=require('./windows-signature.cjs').createNativeSignatureVerifier(); }
   async doDownloadUpdate(options) {
     const { info, provider } = options.updateInfoAndProvider;
+    if(this.forceFullInstaller){
+      const setup=info.files?.find(file=>file.url===`ScreenSh-${info.version}-Setup.exe`);
+      if(!setup||!Number.isSafeInteger(setup.size)||setup.size<=0||!/^[A-Za-z0-9+/]{86}==$/.test(setup.sha512||''))throw Error('完整安装包清单无效');
+      return super.doDownloadUpdate({...options,disableDifferentialDownload:true,disableWebInstaller:true,updateInfoAndProvider:{...options.updateInfoAndProvider,info:{...info,files:[setup],packages:undefined}}});
+    }
     const artifact = portableArtifact(info);
     if (!artifact) return super.doDownloadUpdate(options);
     const incremental=incrementalArtifact(info);
