@@ -13,7 +13,7 @@
 .chat-empty { text-align:center; color:var(--text2); font-size:12px; padding:20px; }
 .chat-message { position:relative; display:flex; gap:9px; margin:0 0 10px; padding:4px 8px 4px 72px; min-height:48px; border-radius:5px; font-size:13px; transition:background-color 120ms; }
 .chat-message:hover { background:var(--hover); }
-.chat-message-avatar { position:absolute; left:16px; top:4px; display:grid; place-items:center; width:40px; height:40px; border-radius:50%; color:var(--primary); background:var(--accent-soft); font-weight:600; }
+.chat-message-avatar { position:absolute; left:16px; top:4px; display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface2); font-size:22px; }
 .chat-message-main { flex:1; min-width:0; }
 .chat-message-heading { display:flex; align-items:baseline; gap:9px; margin-bottom:4px; }
 .chat-message-heading strong { font-size:13px; font-weight:500; color:var(--text2); }

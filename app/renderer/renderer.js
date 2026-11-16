@@ -326,8 +326,8 @@ function initSettings() {
   });
   state.audioBitrate = parseInt(localStorage.getItem('audioBitrate')) || state.audioBitrate;
   if (!['auto', '1920x1080', '1280x720', '854x480'].includes(state.resolution)) state.resolution = '1280x720';
-  if (![15, 30, 60].includes(state.frameRate)) state.frameRate = 30;
-  if (!Number.isInteger(state.maxBitrate) || (state.maxBitrate !== 0 && (state.maxBitrate < 100 || state.maxBitrate > 10000))) state.maxBitrate = 1500;
+  if (![15, 30, 60].includes(state.frameRate)) state.frameRate = 60;
+  if (!Number.isInteger(state.maxBitrate) || (state.maxBitrate !== 0 && (state.maxBitrate < 100 || state.maxBitrate > 10000))) state.maxBitrate = 0;
   if (![32, 64, 128, 256].includes(state.audioBitrate)) state.audioBitrate = 128;
 
   // 将状态映射到 UI

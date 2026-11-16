@@ -9,6 +9,7 @@ class ScreenObsRuntime{
     const worker=this.worker=(this.options.forkProcess||fork)(this.options.workerFile||path.join(__dirname,'screen-obs-worker.cjs'),[this.dataPath],{execPath:process.execPath,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},windowsHide:true,stdio:['ignore','pipe','pipe','ipc']});
     worker.stdout?.on('data',bytes=>{if(process.env.SCREENSH_OBS_DEBUG==='1')console.log('[Screen OBS]',bytes.toString());});worker.stderr?.on('data',bytes=>console.error('[Screen OBS]',bytes.toString()));
     worker.on('message',message=>{
+      if(message.event==='stats'){if(this.worker===worker)this.lastStats={...message.stats,at:Date.now()};return;}
       if(message.event==='failure'){if(this.worker===worker&&!this.stopping)this.onFailure(message.error);return;}
       const pending=this.pending.get(message.id);if(!pending||pending.worker!==worker)return;
       clearTimeout(pending.timer);this.pending.delete(message.id);message.error?pending.reject(Error(message.error)):pending.resolve(message.result);
@@ -41,7 +42,7 @@ class ScreenObsRuntime{
   }
   async sources(displays){if(this.shuttingDown)await this.shuttingDown;if(this.stopping)await this.stopping;const result=await this.request('sources',{displays},this.options.sourceTimeoutMs);this.scheduleIdle();return result;}
   async start(config){
-    if(this.shuttingDown)await this.shuttingDown;if(this.stopping)await this.stopping;if(this.streaming||this.starting)throw Error('OBS 正在共享');clearTimeout(this.idleTimer);this.starting=true;
+    if(this.shuttingDown)await this.shuttingDown;if(this.stopping)await this.stopping;if(this.streaming||this.starting)throw Error('OBS 正在共享');clearTimeout(this.idleTimer);this.lastStats=null;this.starting=true;
     try{const result=await this.request('start',{config,publishUrl:this.publishUrl});if(this.stopping)throw Error('共享启动已取消');this.streaming=true;return result;}
     finally{this.starting=false;}
   }
@@ -50,6 +51,7 @@ class ScreenObsRuntime{
     this.stopping=(async()=>{if(!this.worker)return;try{await this.request('stop',{},this.options.stopTimeoutMs);}catch(error){if(this.worker)await this.terminate(this.worker);if(process.env.SCREENSH_OBS_DEBUG==='1')console.warn('[Screen OBS cleanup]',error.message);}})().finally(()=>{this.stopping=null;this.scheduleIdle();});return this.stopping;
   }
   stop(){return this.stopAndWait();}
+  stats(){return this.streaming&&this.lastStats&&Date.now()-this.lastStats.at<4000?this.lastStats:null;}
   scheduleIdle(){clearTimeout(this.idleTimer);if(!this.worker||this.streaming||this.starting||this.stopping)return;this.idleTimer=setTimeout(()=>void this.shutdown().catch(error=>this.onFailure(error.message)),this.options.idleMs);this.idleTimer.unref?.();}
   shutdown(){if(this.shuttingDown)return this.shuttingDown;const worker=this.worker;clearTimeout(this.idleTimer);this.shuttingDown=(async()=>{await this.stopAndWait();clearTimeout(this.idleTimer);await this.terminate(worker);})().finally(()=>{this.shuttingDown=null;});return this.shuttingDown;}
 }

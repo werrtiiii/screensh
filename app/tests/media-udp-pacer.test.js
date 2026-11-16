@@ -48,3 +48,38 @@ test('NACK duplicates do not fill the pacing queue, and retransmission remains p
   assert.equal(pacer.stats().dropped,0);assert.ok(pacer.stats().duplicates>0);assert.equal(seen.size,1200);
   const before=firstPacketCount;send(0);const retryUntil=Date.now()+2000;while(firstPacketCount===before){assert.ok(Date.now()<retryUntil,'a packet already sent can be retransmitted');await new Promise(resolve=>setTimeout(resolve,10));}
 });
+
+test('byte pacing gives small RTP packets proportionally less delay than MTU packets',async t=>{
+  if(process.platform!=='win32'){t.skip('Windows media helper');return;}
+  async function duration(size){
+    const backend=dgram.createSocket({type:'udp4',recvBufferSize:2*1024*1024}),client=dgram.createSocket('udp4');let pacer;
+    try{
+      backend.bind(0,'127.0.0.1');await once(backend,'listening');client.bind(0,'127.0.0.1');await once(client,'listening');
+      pacer=createMediaUdpPacer({port:0,targetPort:backend.address().port,mode:'publish',rateKbps:12000,maxQueueMs:2000});const port=await pacer.start(),count=800;let received=0,started;
+      const elapsed=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('byte pacing timeout')),5000);backend.on('message',()=>{started??=performance.now();if(++received===count){clearTimeout(timer);resolve(performance.now()-started);}});for(let i=0;i<count;i++){const bytes=Buffer.alloc(size);bytes[0]=0x80;bytes[1]=96;bytes.writeUInt16BE(i,2);client.send(bytes,port,'127.0.0.1');}});
+      return elapsed;
+    }finally{await pacer?.stop();backend.close();client.close();}
+  }
+  const small=await duration(300),large=await duration(1200);assert.ok(large>small*1.8,`byte pacing must scale with payload size: ${small} / ${large} ms`);
+});
+
+test('overload expires stale RTP frames but keeps control and fresh frames working',async t=>{
+  if(process.platform!=='win32'){t.skip('Windows media helper');return;}
+  const backend=dgram.createSocket({type:'udp4',recvBufferSize:2*1024*1024}),client=dgram.createSocket('udp4');let pacer;
+  t.after(async()=>{await pacer?.stop();backend.close();client.close();});backend.bind(0,'127.0.0.1');await once(backend,'listening');client.bind(0,'127.0.0.1');await once(client,'listening');
+  pacer=createMediaUdpPacer({port:0,targetPort:backend.address().port,mode:'publish',rateKbps:1000,maxQueueMs:100});const port=await pacer.start();let feedback=false,fresh=false;
+  backend.on('message',(bytes,remote)=>{if(bytes.toString()==='control')backend.send(Buffer.from('feedback'),remote.port,remote.address);else if(bytes.readUInt16BE(2)===1000)fresh=true;});client.on('message',bytes=>{if(bytes.toString()==='feedback')feedback=true;});
+  function packet(sequence){const p=Buffer.alloc(1200);p[0]=0x80;p[1]=96;p.writeUInt16BE(sequence,2);p.writeUInt32BE(Math.floor(sequence/10)*3000,4);p.writeUInt32BE(42,8);return p;}
+  for(let i=0;i<300;i++)client.send(packet(i),port,'127.0.0.1');client.send(Buffer.from('control'),port,'127.0.0.1');
+  const until=Date.now()+4000;while(!pacer.stats().dropped){assert.ok(Date.now()<until,'stale media expires');await new Promise(r=>setTimeout(r,20));}
+  assert.equal(feedback,true);assert.equal(pacer.stats().queued,0);assert.ok(pacer.stats().peakQueueDelayMs<300);
+  client.send(packet(1000),port,'127.0.0.1');const freshUntil=Date.now()+1000;while(!fresh){assert.ok(Date.now()<freshUntil,'fresh RTP recovers after overload');await new Promise(r=>setTimeout(r,10));}
+});
+
+test('an oversized local RTP datagram does not get stuck behind the burst credit limit',async t=>{
+  if(process.platform!=='win32'){t.skip('Windows media helper');return;}
+  const backend=dgram.createSocket('udp4'),client=dgram.createSocket('udp4');let pacer;
+  t.after(async()=>{await pacer?.stop();backend.close();client.close();});backend.bind(0,'127.0.0.1');await once(backend,'listening');client.bind(0,'127.0.0.1');await once(client,'listening');
+  pacer=createMediaUdpPacer({port:0,targetPort:backend.address().port,mode:'publish'});const port=await pacer.start(),packet=Buffer.alloc(4000);packet[0]=0x80;packet[1]=96;
+  const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('oversized RTP starved')),1000);backend.once('message',bytes=>{clearTimeout(timer);resolve(bytes);});client.send(packet,port,'127.0.0.1');});assert.deepEqual(result,packet);
+});

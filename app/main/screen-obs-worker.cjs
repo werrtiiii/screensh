@@ -5,6 +5,10 @@ const {listCaptureSources}=require('./capture-sources');
 const engine=new ObsEngine(process.argv[2],error=>process.send?.({event:'failure',error}),'http://127.0.0.1:8889/live/whip',true);
 // The parent owns the idle timer so a stuck native destructor is bounded too.
 engine.scheduleIdleShutdown=()=>{};
+// Passive snapshots: opening the debug panel must never start a worker or
+// impose a diagnostic RPC timeout that can kill an active capture process.
+const statsTimer=setInterval(()=>{try{const stats=engine.stats();if(stats)process.send?.({event:'stats',stats});}catch{}},1000);
+statsTimer.unref();
 if(process.env.SCREENSH_TEST_SYNTHETIC==='1')engine.createSource=()=>{
   if(process.env.SCREENSH_TEST_MOTION==='true'){
     const image=engine.osn.InputFactory.create('image_source','screen-worker-test',{file:require('node:path').join(process.argv[2],'synthetic.bmp')});

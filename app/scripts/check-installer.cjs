@@ -4,6 +4,23 @@ const { spawnSync } = require('node:child_process');
 const {keepLocaleFile}=require('./package-locales.cjs');
 
 const version = require('../package.json').version;
+const updateManifest=require('js-yaml').load(fs.readFileSync(path.resolve(__dirname,'../dist/latest.yml'),'utf8'));
+if(updateManifest.portable){
+  const {portableArtifact}=require('../main/portable-updater.cjs'),file=portableArtifact(updateManifest);
+  const archive=path.resolve(__dirname,'../dist',file.url);
+  if(fs.statSync(archive).size!==file.size)throw Error('Portable update archive size mismatch');
+  const checksum=require('node:crypto').createHash('sha512').update(fs.readFileSync(archive)).digest('base64');
+  if(checksum!==file.sha512)throw Error('Portable update archive checksum mismatch');
+}
+if(updateManifest.incremental){
+  const {incrementalArtifact}=require('../main/portable-updater.cjs');
+  const {parseManifest,digest}=require('../main/update-blocks.cjs');
+  const descriptor=incrementalArtifact(updateManifest),directory=path.resolve(__dirname,'../dist');
+  const raw=fs.readFileSync(path.join(directory,descriptor.url));
+  if(raw.length!==descriptor.size||digest(raw,'sha512','base64')!==descriptor.sha512)throw Error('Incremental manifest checksum mismatch');
+  const manifest=parseManifest(raw,version),packed=fs.readFileSync(path.join(directory,manifest.pack.url));
+  if(packed.length!==manifest.pack.size||digest(packed,'sha512','base64')!==manifest.pack.sha512)throw Error('Incremental block pack checksum mismatch');
+}
 for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${version}-Setup.exe.blockmap`]) {
   if (!fs.statSync(path.resolve(__dirname, '../dist', name), { throwIfNoEntry: false })?.isFile()) throw new Error(`Missing release file: ${name}`);
 }
@@ -79,7 +96,13 @@ const probe = `
   load('./main/member-latency.cjs');
   load('./main/relay-publisher.cjs');
   if(!fs.existsSync(path.join(root,'renderer/relay-settings.mjs')))throw Error('Packaged relay settings are missing');
-  load('./main/update-mirror.cjs');
+  load('./main/update-source.cjs');
+  load('./main/update-cleanup.cjs');
+  const incrementalPath=${JSON.stringify(path.resolve(__dirname,'../dist',`ScreenSh-${version}-Update.json`))};
+  if(fs.existsSync(incrementalPath))load('./main/update-blocks.cjs').verifyInWorker({
+    root:path.resolve(root,'../..'),pending:path.join(path.resolve(root,'../..'),'data/updates/pending'),
+    raw:fs.readFileSync(incrementalPath),version:${JSON.stringify(version)}
+  }).then(valid=>{if(!valid)throw Error('Packaged files do not match incremental manifest');console.log('PACKAGED_BLOCKS_WORKER_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   load('ws');
   console.log('PACKAGED_EXTERNAL_OBS_OK');
   console.log('PACKAGED_LOLPING_ASSETS_OK');
@@ -103,7 +126,7 @@ const result = spawnSync(require('electron'), ['-e', probe], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true,
   encoding: 'utf8', timeout: 60000,
 });
-if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK') || !result.stdout.includes('PACKAGED_IPV6_SCRIPT_OK')) {
+if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS_OK') || !result.stdout.includes('PACKAGED_IPV6_SCRIPT_OK') || updateManifest.incremental&&!result.stdout.includes('PACKAGED_BLOCKS_WORKER_OK')) {
   throw result.error || new Error(`Packaged OBS failed: ${result.stderr || result.stdout}`);
 }
 console.log(result.stdout.trim());

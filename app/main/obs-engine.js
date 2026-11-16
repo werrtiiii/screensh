@@ -165,13 +165,9 @@ class ObsEngine {
       const bitrate = config.maxBitrate || Math.min(10000, Math.max(800, Math.round(width * height / (1280 * 720) * 1500 * config.frameRate / 30)));
       const encoder = config.videoEncoder || 'x264';
       const { createVideoEncoder } = require('./video-encoder');
-      const ve = this.own(createVideoEncoder(o.VideoEncoderFactory, encoder, {
-        bitrate, rate_control: 'CBR', keyint_sec: 2, bf: 0,
-        ...(encoder === 'qsv' ? { target_usage: 'TU4', latency: 'ultra-low', profile: 'high', bframes: 0, repeat_headers: true }
-          : encoder === 'amf' ? { preset: 'balanced', profile: 'high' }
-          : encoder === 'nvenc' ? { preset: 'p4', tune: 'll', multipass: 'disabled', profile: 'high', lookahead: false, adaptive_quantization: false }
-          : { preset: 'veryfast', tune: 'zerolatency', profile: 'baseline' }),
-      }, `h264-${Date.now()}`), e => e.release());
+      const ve = this.own(createVideoEncoder(o.VideoEncoderFactory, encoder,
+        require('./video-encoding.cjs').videoEncoderSettings(encoder, bitrate), `h264-${Date.now()}`), e => e.release());
+      this.videoEncoder = ve;
       // The streaming API requires an audio encoder even when the source is silent.
       const ae = this.own(o.AudioEncoderFactory.create('ffmpeg_opus', `opus-${Date.now()}`), e => e.release());
       ae.bitrate = config.audioBitrate;
@@ -224,11 +220,19 @@ class ObsEngine {
     })().finally(()=>{this.pendingStop=null;});
     return this.pendingStop;
   }
+  stats() {
+    if (!this.streaming || !this.videoEncoder) return null;
+    return { encoder: this.videoEncoder.id, configuredBitrate: this.videoEncoder.settings.bitrate,
+      outputFrames: this.streaming.totalFrames, droppedFrames: this.streaming.droppedFrames,
+      renderFrames: this.osn.Global.totalFrames, laggedFrames: this.osn.Global.laggedFrames,
+      fps: this.osn.Global.currentFrameRate };
+  }
   stop() {
     this.generation = (this.generation || 0) + 1;
     this.stopping = true;
     this.cancelStart?.();
     const o = this.osn;
+    this.videoEncoder = null;
     const attempt = fn => { try { fn(); } catch (e) { console.error('[OBS cleanup]', e.message); } };
     if (this.streaming) {
       const stream = this.streaming; this.streaming = null;

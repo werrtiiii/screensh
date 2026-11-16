@@ -57,10 +57,10 @@ export function initChat({state,getSocket,requestServer}) {
       item.append(name,remove);container.append(item);
     }
   }
-  async function paintAvatar(avatar,message){const member=message.authorId&&context?.members?.find(item=>item.memberId===message.authorId||item.profileId===message.authorId),source=member?.avatar||message.avatar;if(!source)return;
+  async function paintAvatar(avatar,message){const member=message.authorId&&context?.members?.find(item=>item.memberId===message.authorId||item.profileId===message.authorId),source=member?.avatar||message.avatar;if(!source){avatar.textContent='👤';return;}
     const token=generation,key=context.serverId+':chat-avatar:'+(message.avatar||message.authorId);
     try{if(!avatars.has(key))avatars.set(key,(async()=>{let data=await readCachedImage(key);if(!data){data=source.startsWith('data:')?source:(await requestServer('get-image',{ref:source})).data;data=await avatarThumbnail(data);await saveCachedImage(key,data);}return data;})());
-      const data=await avatars.get(key);if(token!==generation||!avatar.isConnected)return;const image=document.createElement('img');image.alt='';image.src=data;avatar.replaceChildren(image);
+      const data=await avatars.get(key);if(token!==generation||!avatar.isConnected)return;const image=document.createElement('img');image.alt='';image.onerror=()=>image.remove();image.src=data;avatar.replaceChildren('👤',image);
     }catch{avatars.delete(key);}
   }
   const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);if(entry.target.classList.contains('chat-video-preview'))void videos.load(entry.target);else void loadImage(entry.target);}}, {root:list,rootMargin:'160px'});
@@ -87,7 +87,7 @@ export function initChat({state,getSocket,requestServer}) {
     for(const message of newMessages)if(!recalled.has(message.id)&&!messages.has(message.id)) {
       messages.set(message.id,message);list.querySelector('.chat-empty')?.remove();
       const node=document.createElement('article');node.className='chat-message';node.dataset.messageId=message.id;
-      const avatar=document.createElement('span');avatar.className='chat-message-avatar';avatar.textContent=[...message.name][0]||'?';
+      const avatar=document.createElement('span');avatar.className='chat-message-avatar default-avatar';avatar.textContent='👤';
       const main=document.createElement('div');main.className='chat-message-main';const heading=document.createElement('div');heading.className='chat-message-heading';
       const name=document.createElement('strong');name.textContent=message.name;const date=new Date(message.time),time=document.createElement('time');const day=date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0'),clock=date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});time.textContent=day+' '+clock;time.dateTime=date.toISOString();time.title=time.textContent;heading.append(name,time);
       const hoverTime=time.cloneNode(true);hoverTime.textContent=day+'\n'+clock;hoverTime.className='chat-message-hover-time';node.append(hoverTime);

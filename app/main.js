@@ -50,7 +50,7 @@ if (!hardwareAccelerationEnabled && app.commandLine?.appendSwitch) {
 let updater = null;
 function getUpdater() {
   if (!updater) {
-    ({ autoUpdater: updater } = require('electron-updater'));
+    updater = new (require('./main/portable-updater.cjs').PortableUpdater)();
     if(localStoragePaths?.hasLock)require('./main/local-storage.cjs').configureUpdateStorage(updater,localStoragePaths.updates);
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
@@ -84,7 +84,15 @@ function failure(message) {
   console.error(message);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('runtime-error', message);
 }
-const easytier = new ManagedProcess('EasyTier', failure);
+const easytierFirewall = require('./main/easytier-firewall.cjs').createEasyTierFirewall({
+  installRoot: app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname,
+  backupDirectory: path.join(localStoragePaths?.root || app.getPath('userData'), 'logs', 'firewall'),
+});
+const easytier = new ManagedProcess('EasyTier', message => { failure(message); void easytierFirewall.cleanup(); });
+async function stopEasyTier() {
+  try { await easytier.stop(); }
+  finally { await easytierFirewall.cleanup(); }
+}
 const mediamtx = new ManagedProcess('MediaMTX', failure);
 const externalObsSettings=require('./main/external-obs-settings.cjs').createExternalObsSettings({file:path.join(app.getPath('userData'),'external-obs.json'),safeStorage});
 const externalObs=new (require('./main/external-obs.cjs').ExternalObs)({getCredentials:()=>externalObsSettings.credentials(),onEnded:notice=>{
@@ -122,6 +130,11 @@ ipcMain.handle('save-server-password', (_event, url, id, password) => savedPassw
 ipcMain.handle('get-login-startup', () => loginStartup.get());
 ipcMain.handle('set-login-startup', (_event, enabled) => loginStartup.set(enabled));
 ipcMain.handle('get-hardware-acceleration', () => hardwareAccelerationEnabled);
+ipcMain.handle('get-video-diagnostics', event => {
+  requireMainWindow(event);
+  return { hardwareDecodeAvailable: app.getGPUFeatureStatus().video_decode === 'enabled',
+    publisher: obs?.stats?.() || null, udp: relayPublisher?.stats?.() || (sharePacer ? [sharePacer.stats()] : []) };
+});
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => {
   if (typeof enabled !== 'boolean') throw new Error('无效的硬件加速设置');
   fs.mkdirSync(path.dirname(renderingConfigPath), { recursive: true });
@@ -142,7 +155,7 @@ ipcMain.handle('test-update-acceleration',(event,customUrl)=>{requireMainWindow(
 let updateWindow;
 const updates = require('./main/auto-update.cjs').createAutoUpdate({
   file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
-  downloadMirror:require('./main/update-mirror.cjs').createUpdateMirror(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options),{getAcceleration:()=>updateAcceleration.get()}),
+  downloadSource:require('./main/update-source.cjs').createUpdateSource(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options),{getAcceleration:()=>updateAcceleration.get()}),
   send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);updateWindow?.send(state);},
 });
 ipcMain.handle('get-update-settings', event => {requireMainWindow(event);return updates.get();});
@@ -229,7 +242,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
   const advancedConfig=(await getEasyTierSettings()).get(),advancedArgs=easyTierAdvancedArgs(advancedConfig);
   await memberProbe.stop();await tunnelForwarder.clear();
   easytierRpc=null;
-  await easytier.stop();
+  await stopEasyTier();
   virtualIp = null;
   // Optional LAN-only validation, without changing virtual adapters or contacting a relay.
   if (process.env.SCREENSH_LOCAL_IP) {
@@ -254,6 +267,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
     await easytier.start(exe, [...(useDhcp?['--dhcp']:['-i',`${ip}/16`]), '--network-name', networkConfig.name,
     '--network-secret', networkConfig.secret,
     '--rpc-portal',easytierRpc.portal,'--instance-name',easytierRpc.instance,
+    ...(!advancedConfig.noTun ? ['--dev-name', easytierFirewall.interfaceName] : []),
     ...EASYTIER_CONNECTION_ARGS,...advancedArgs, '-p', ...peers], {
     cwd: path.dirname(exe),
     probe: () => advancedConfig.noTun?rpcReady:Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && (useDhcp||i.cidr === `${ip}/16`)),
@@ -261,6 +275,7 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
     timeout: 20000,
   });
   } catch (error) {
+    await stopEasyTier().catch(cleanupError => console.warn('[EasyTier cleanup]', cleanupError.message));
     easytierRpc=null;
     console.error('[EasyTier startup]', error);
     if (/Failed to create adapter|Access is denied|拒绝访问/i.test(error.message)) {
@@ -382,7 +397,7 @@ function leaveRuntime() {
     Promise.resolve().then(() => voiceRuntime?.stop()),
     audioTiming.setActive(false),
     Promise.resolve().then(() => Promise.all([accompanimentRuntime?.stop(), processAudio?.stop()])),
-    forwardCleanup.then(() => easytier.stop()),
+    forwardCleanup.then(() => stopEasyTier()),
   ]).then(results => checkCleanup(results, ['lolPing', '媒体', '语音', '语音计时', '伴奏', '虚拟网络']))
     .finally(() => { virtualIp = null; runtimeLeave = null; });
   return runtimeLeave;
@@ -397,12 +412,12 @@ if (!(localStoragePaths?.hasLock??app.requestSingleInstanceLock())) app.quit();
 else {
   app.on('second-instance', () => {updateWindow?.show();trayController?.show();});
   app.whenReady().then(async () => {
-    updateWindow=require('./main/update-window.cjs').createUpdateWindow({BrowserWindow,ipcMain,updates,enter:enterMain,quit:()=>app.quit(),install:async window=>{
-      const job=updates.beginInstall();const theme=await window.webContents.executeJavaScript('document.documentElement.dataset.theme');
+    updateWindow=require('./main/update-window.cjs').createUpdateWindow({BrowserWindow,ipcMain,updates,enter:enterMain,quit:()=>app.quit(),canQuit:()=>quitReady,install:async window=>{
+      const theme=await window.webContents.executeJavaScript('document.documentElement.dataset.theme');const job=updates.beginInstall();
       await require('./main/update-installer.cjs').launchInstaller({...job,exe:app.getPath('exe'),theme,directory:app.getPath('temp')});
       await prepareQuit(()=>app.quit());
     }});
-    if(app.isPackaged&&updates.get().enabled&&!process.argv.includes('--update-recovery'))updateWindow.open();else enterMain();
+    if(app.isPackaged&&updates.get().enabled&&!process.argv.includes('--update-recovery')&&!process.argv.includes('--portable-updated'))updateWindow.open();else enterMain();
   }).catch?.(reportStartupError);
   app.on('activate', () => {updateWindow?.show();trayController?.show();});
   app.on('window-all-closed', () => app.quit());
@@ -417,6 +432,12 @@ function enterMain(){
     const { createTrayController } = require('./main/tray-controller.cjs');
     trayController = createTrayController({ Tray, Menu, nativeImage }, { getWindow: () => mainWindow, canClose: () => quitReady, quit: () => app.quit() });
     createWindow();
+    // Keep startup responsive and retry deferred/locked old hosts each launch.
+    try{
+      const bin=path.dirname(require.resolve('obs-studio-node/package.json')).replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+      const {cleanupVoiceHosts}=require('./main/obs-host-path');
+      void Promise.all(['obs','voice-obs','accompaniment-obs'].map(profile=>cleanupVoiceHosts(bin,path.join(app.getPath('userData'),profile))));
+    }catch(error){console.warn('[OBS host cleanup]',error.message);}
 }
 
 

@@ -17,6 +17,8 @@ $fill=New-Object Windows.Forms.Panel;$fill.Size=New-Object Drawing.Size(120,5);$
 $retry=New-Object Windows.Forms.Button;$retry.Text='重试安装';$retry.Location=New-Object Drawing.Point(358,230);$retry.Size=New-Object Drawing.Size(110,34);$retry.BackColor=[Drawing.ColorTranslator]::FromHtml('#0f6cbd');$retry.ForeColor=[Drawing.Color]::White;$retry.FlatStyle='Flat';$retry.Visible=$false;$form.Controls.Add($retry)
 $open=New-Object Windows.Forms.Button;$open.Text='打开当前版本';$open.Location=New-Object Drawing.Point(218,230);$open.Size=New-Object Drawing.Size(130,34);$open.Visible=$false;$form.Controls.Add($open)
 $script:installerProcess=$null;$script:phase='waiting';$script:started=[DateTime]::UtcNow;$script:stage=$null
+$portable=[IO.Path]::GetExtension($job.installer) -in @('.zip','.json')
+if($portable){$heading.Text='正在应用更新';$retry.Text='重试更新'}
 function Clear-Stage {
  if(!$script:stage){return}
  $tempRoot=[IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'))
@@ -26,10 +28,10 @@ function Clear-Stage {
  }
  $script:stage=$null
 }
-function Fail-Install($message){$script:phase='failed';$heading.Text='更新安装未完成';$detail.Text=$message;$fill.Visible=$false;$retry.Visible=$true;$open.Visible=Test-Path -LiteralPath $job.exe;Write-InstallLog 'failed' $message}
+function Fail-Install($message){$script:phase='failed';$heading.Text='更新未完成';$detail.Text=$message;$fill.Visible=$false;$retry.Visible=$true;$open.Visible=Test-Path -LiteralPath $job.exe;Write-InstallLog 'failed' $message}
 function Open-App {if($script:phase -eq 'complete'){Start-Process -FilePath $job.exe -WorkingDirectory $job.root}else{Start-Process -FilePath $job.exe -ArgumentList '--update-recovery' -WorkingDirectory $job.root}; $form.Close()}
 $open.Add_Click({try{Open-App}catch{Fail-Install $_.Exception.Message}})
-$retry.Add_Click({$script:phase='waiting';$script:started=[DateTime]::UtcNow;$retry.Visible=$false;$open.Visible=$false;$heading.Text='正在安装更新';$fill.Visible=$true})
+$retry.Add_Click({$script:phase='waiting';$script:started=[DateTime]::UtcNow;$retry.Visible=$false;$open.Visible=$false;$heading.Text=if($portable){'正在应用更新'}else{'正在安装更新'};$fill.Visible=$true})
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=250
 $timer.Add_Tick({
  if($script:phase -ne 'failed'){$fill.Left=($fill.Left+35)%440}
@@ -37,7 +39,7 @@ $timer.Add_Tick({
   if($script:phase -eq 'waiting'){
    $parent=Get-Process -Id $job.parentPid -ErrorAction SilentlyContinue
    if($parent){if(([DateTime]::UtcNow-$script:started).TotalSeconds -gt 90){Fail-Install '主程序尚未退出，请退出后重试。'};return}
-   $script:phase='verifying';$detail.Text='正在校验安装包…';$form.Refresh()
+   $script:phase='verifying';$detail.Text='正在校验更新文件…';$form.Refresh()
    $installer=[IO.Path]::GetFullPath($job.installer);$pending=[IO.Path]::GetFullPath((Join-Path $job.root 'data\updates\pending'))
    if([IO.Path]::GetDirectoryName($installer) -ne $pending){throw '更新包路径无效'}
    $hash=[Security.Cryptography.SHA512]::Create();$stream=[IO.File]::OpenRead($installer);try{$actual=[Convert]::ToBase64String($hash.ComputeHash($stream))}finally{$stream.Dispose();$hash.Dispose()}
@@ -47,6 +49,14 @@ $timer.Add_Tick({
    Clear-Stage
    $script:stage=Join-Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp') ('ScreenSh-install-'+[Guid]::NewGuid().ToString())
    [IO.Directory]::CreateDirectory($script:stage)|Out-Null
+   if($portable){
+    $worker=Join-Path $script:stage 'update-files.ps1';[IO.File]::Copy((Join-Path $PSScriptRoot 'update-files.ps1'),$worker)
+    $detail.Text='正在校验、备份并替换程序文件，个人数据保持不变。'
+    $info=New-Object Diagnostics.ProcessStartInfo;$info.FileName=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $info.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$worker+'" -JobFile "'+$JobFile+'"';$info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.WorkingDirectory=$script:stage
+    $script:installerProcess=[Diagnostics.Process]::Start($info);$script:phase='installing';Write-InstallLog 'portable-started' $null
+    return
+   }
    $stagedSetup=Join-Path $script:stage 'setup.exe';[IO.File]::Copy($installer,$stagedSetup)
    $hash=[Security.Cryptography.SHA512]::Create();$stream=[IO.File]::OpenRead($stagedSetup);try{$copied=[Convert]::ToBase64String($hash.ComputeHash($stream))}finally{$stream.Dispose();$hash.Dispose()}
    if($copied -ne $job.sha512){throw '安装临时副本校验失败。'}
@@ -56,12 +66,25 @@ $timer.Add_Tick({
    $script:installerProcess=[Diagnostics.Process]::Start($info);$script:phase='installing';Write-InstallLog 'installer-started' $null
   }elseif($script:phase -eq 'installing' -and $script:installerProcess.HasExited){
    $code=$script:installerProcess.ExitCode;Write-InstallLog 'installer-exited' $code;Clear-Stage
+   if($portable){
+    $receipt=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'portable-result.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    if($code -ne 0 -or !$receipt.success){
+     $message=if($receipt.restored){'更新未完成，已恢复旧版本。可以打开当前版本或重试。'}else{'更新未完成，请查看更新日志。备份已保留。'}
+     Write-InstallLog 'portable-failed' $receipt.message;throw $message
+    }
+    $script:phase='complete';Write-InstallLog 'portable-confirmed' 0;$form.Close();return
+   }
    if($code -ne 0){throw ('安装器返回错误码 '+$code+'。')}
    if(!(Test-Path -LiteralPath $job.exe)){throw '安装后未找到主程序。'}
    $versionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo($job.exe)
    $installed='{0}.{1}.{2}' -f $versionInfo.ProductMajorPart,$versionInfo.ProductMinorPart,$versionInfo.ProductBuildPart
    if($installed -ne $job.version){throw '安装后版本未更新，请重试或手动覆盖安装。'}
    $script:phase='complete';$heading.Text='更新完成';Write-InstallLog 'installed' 0;Open-App
+  }elseif($portable -and $script:phase -eq 'installing'){
+   try{$progress=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'portable-state.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    $labels=@{extracting='正在校验并解压更新文件…';replacing='正在备份并替换程序文件…';starting='正在启动新版并确认运行状态…';rollback='更新未完成，正在恢复旧版本…'}
+    if($labels.ContainsKey($progress.phase)){$detail.Text=$labels[$progress.phase]}
+   }catch{}
   }
  }catch{Fail-Install $_.Exception.Message}
 })

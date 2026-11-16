@@ -1,6 +1,11 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {createUpdateAcceleration,normalizeSettings,accelerateUrl}=require('../main/update-acceleration.cjs');
+test('cancelling metadata aborts the fetch and removes its cancellation listener',async()=>{
+  const {CancellationToken,CancellationError}=require('builder-util-runtime'),{fetchMetadataText}=require('../main/update-acceleration.cjs'),token=new CancellationToken();let aborted=false;
+  const task=fetchMetadataText(new URL('https://example.test'),async(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>{aborted=true;reject(Error('aborted'));})),{},token);
+  const rejected=assert.rejects(task,CancellationError);token.cancel();await rejected;assert.equal(aborted,true);assert.equal(token.listenerCount('cancel'),0);
+});
 function fixture(t,fetchFile){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-acceleration-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const options={file:path.join(dir,'settings.json'),repository:'werrtiiii/screensh',fetchFile};return {options,settings:createUpdateAcceleration(options)};}
 test('acceleration defaults on and persists disabled and custom selections',t=>{
   const {settings,options}=fixture(t);assert.equal(settings.get().enabled,true);

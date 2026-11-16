@@ -1,11 +1,11 @@
 {
   "name": "screensh",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {
-    "pack:win": "npm run build:lolping && npm run build:process-audio && npm run build:media-pacer && electron-builder --win nsis --publish never",
-    "publish:win": "npm run build:lolping && npm run build:process-audio && npm run build:media-pacer && electron-builder --win nsis --publish always",
+    "pack:win": "npm run build:lolping && npm run build:process-audio && npm run build:media-pacer && electron-builder --win nsis --publish never && node scripts/package-update.cjs",
+    "publish:win": "npm run pack:win && node scripts/publish-artifacts.cjs",
     "pack:portable": "npm run build:lolping && npm run build:process-audio && npm run build:media-pacer && node scripts/package-win.cjs",
     "start": "electron .",
     "dev": "electron . --dev",

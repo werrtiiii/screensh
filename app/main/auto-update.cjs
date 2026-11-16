@@ -1,10 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const {CancellationToken,CancellationError}=require('builder-util-runtime');
+const cancelled=token=>{if(token?.cancelled)throw new CancellationError();};
 
-function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, downloadMirror, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
+function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = () => {}, downloadSource, pendingUpdates = require('./pending-update.cjs').createPendingUpdate({file:file+'.pending'})}) {
   let enabled = true;
   try { enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabled !== false; } catch {}
-  let client, checking, downloading, cleaning, ready = false;
+  let client, checking, downloading, cleaning, preparing, preparationToken, downloadToken, ready = false;
   let state = {status:'idle', currentVersion};
   function installLog(event){try{const log=path.join(path.dirname(file),'../logs/update-install.log');fs.mkdirSync(path.dirname(log),{recursive:true});fs.appendFileSync(log,JSON.stringify({time:new Date().toISOString(),currentVersion,...event})+'\n');}catch{}}
   const publish = value => { state = {...state, ...value}; send({enabled, ...state}); };
@@ -15,33 +17,36 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     client.autoInstallOnAppQuit = false;
     client.disableDifferentialDownload = false;
     client.disableWebInstaller = true;
-    downloadMirror?.configure(client);
+    downloadSource?.configure(client);
     // Download now; only a later startup or an explicit install can install it.
     client.on('error', error => {console.error('[Updater]', error.message);if(client.quitAndInstallCalled)installLog({stage:'launch-error',code:String(error.code||'unknown')});});
     client.on('download-progress', progress => {
+      if(client.updateCancellationToken?.cancelled)return;
       const total=Number.isFinite(progress.total)&&progress.total>0?progress.total:0;
       const transferred=Number.isFinite(progress.transferred)&&progress.transferred>=0?progress.transferred:0;
       publish({status:'downloading',percent:progress.percent,total,transferred,
-        downloadMode:total&&state.packageBytes?(total<state.packageBytes?'differential':'full'):null});
+        downloadMode:progress.downloadMode || (total&&state.packageBytes?(total<state.packageBytes?'differential':'full'):null)});
     });
-    client.on('update-downloaded', info => { pendingUpdates.remember(client,info); ready = true; publish({status:'ready', version:info.version}); });
+    client.on('update-downloaded', info => { if(client.updateCancellationToken?.cancelled)return; pendingUpdates.remember(client,info); ready = true; publish({status:'ready', version:info.version}); });
     return client;
   }
-  function check() {
-    if(cleaning)return cleaning.then(()=>check());
+  function check(token=new CancellationToken()) {
+    if(cleaning)return cleaning.then(()=>check(token));
     if (!packaged) return Promise.resolve({available:false, currentVersion, development:true});
     if (checking) return checking;
     if (downloading) return Promise.resolve({available:true, currentVersion, version:state.version});
     publish({status:'checking',installFailed:false,message:null});
     checking = (async () => {
       try {
-        const result = await updater().checkForUpdates();
+        const updaterClient=updater();updaterClient.updateCancellationToken=token;cancelled(token);
+        const result = await updaterClient.checkForUpdates();cancelled(token);
         const info = {available:result?.isUpdateAvailable === true, currentVersion, version:result?.updateInfo?.version || null};
-        const installer=result?.updateInfo?.files?.find(file=>/\.exe(?:$|[?#])/i.test(file.url||''));
+        const installer=(client.usePortableUpdates && result?.updateInfo?.portable) || result?.updateInfo?.files?.find(file=>/\.exe(?:$|[?#])/i.test(file.url||''));
         if(!info.available||state.version!==info.version)ready=false;
         publish({status:info.available?(ready?'ready':'available'):'current', version:info.version,packageBytes:Number(installer?.size)||0});
         return info;
       } catch (error) {
+        if(token.cancelled||error instanceof CancellationError)throw new CancellationError();
         const message = /404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')
           ? 'GitHub 尚未发布可用安装包，请稍后重试' : '检查更新失败，请确认网络连接后重试';
         publish({status:'error', message}); throw Error(message);
@@ -49,29 +54,39 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     })().finally(() => { checking = null; });
     return checking;
   }
-  function download() {
-    if(cleaning)return cleaning.then(()=>download());
+  function download(token=new CancellationToken()) {
+    if(cleaning)return cleaning.then(()=>download(token));
     if (!packaged) return Promise.reject(Error('开发模式不能安装更新'));
     if (ready) return Promise.resolve(true);
     if (downloading) return downloading;
     downloading = (async () => {
-      try { publish({status:'downloading', percent:0,total:0,transferred:0,downloadMode:null}); const client=updater();await (downloadMirror?downloadMirror.download(client):client.downloadUpdate()); return true; }
-      catch { const message = '下载更新失败，请确认网络连接后重试'; publish({status:'error', message}); throw Error(message); }
-    })().finally(() => { downloading = null; });
+      try { publish({status:'downloading', percent:0,total:0,transferred:0,downloadMode:null}); const client=updater();client.updateCancellationToken=downloadToken=token;cancelled(token);await (downloadSource?downloadSource.download(client,token):client.downloadUpdate(token));cancelled(token); return true; }
+      catch(error) { if(token.cancelled||error instanceof CancellationError)throw new CancellationError();const message = '下载更新失败，请确认网络连接后重试'; publish({status:'error', message}); throw Error(message); }
+    })().finally(() => { downloading = null;downloadToken=null; });
     return downloading;
   }
-  function stop() {}
-  return {
-    get: () => ({enabled, ...state}), check, download,
-    async prepareUpdate({automatic=false,retry=false}={}){
+  function cancel(){
+    preparationToken?.cancel();downloadToken?.cancel();client?.updateCancellationToken?.cancel();
+    publish({status:'idle',message:null,installFailed:false});
+    return Promise.allSettled([checking,downloading,preparing].filter(Boolean));
+  }
+  function prepareUpdate({automatic=false,retry=false}={}){
+    if(preparing)return preparing;
+    const token=preparationToken=new CancellationToken();
+    preparing=(async()=>{
       if(automatic&&!enabled)return {enter:true};
-      const info=await check();if(!info.available)return {enter:true};
-      const restored=await pendingUpdates.restore(updater(),currentVersion);
+      const info=await check(token);cancelled(token);if(!info.available)return {enter:true};
+      const restored=await pendingUpdates.restore(updater(),currentVersion);cancelled(token);
       ready=restored?.version===info.version;
       if(ready&&!retry&&pendingUpdates.wasInstallAttempted?.(updater())){publish({status:'error',installFailed:true});throw Error('上次安装未完成。请点击重试，或进入当前版本。');}
-      if(!ready)await download();
+      if(!ready)await download(token);cancelled(token);
       publish({status:'ready',version:info.version,installFailed:false});return {install:true};
-    },
+    })().finally(()=>{preparing=null;preparationToken=null;});
+    return preparing;
+  }
+  const stop=cancel;
+  return {
+    get: () => ({enabled, ...state}), check, download, prepareUpdate, cancel,
     beginInstall(){const client=updater();pendingUpdates.markInstallAttempt(client,currentVersion);installLog({stage:'handoff',version:state.version});return {installer:client.installerPath,sha512:client.downloadedUpdateHelper.downloadedFileInfo.sha512,version:state.version};},
     reportFailure(error){publish({status:'error',message:error.message});},
     install(isSilent,isForceRunAfter){
@@ -95,7 +110,7 @@ function createAutoUpdate({file, packaged, currentVersion, getUpdater, send = ()
     confirmStartup(){
       if(cleaning)return cleaning;
       if(!packaged||checking||downloading||ready)return null;
-      cleaning=Promise.resolve().then(()=>pendingUpdates.confirmInstalled?.(updater(),currentVersion)).catch(error=>{console.warn('[Updater cleanup]',error.message);return null;}).finally(()=>{cleaning=null;});return cleaning;
+      cleaning=Promise.resolve().then(()=>require('./portable-confirm.cjs').confirmPortableStartup(path.resolve(path.dirname(file),'../..'),currentVersion)).then(async confirming=>{await require('./update-cleanup.cjs').cleanupTransactions(path.resolve(path.dirname(file),'../..'),currentVersion,confirming);return pendingUpdates.confirmInstalled?.(updater(),currentVersion);}).catch(error=>{console.warn('[Updater cleanup]',error.message);return null;}).finally(()=>{cleaning=null;});return cleaning;
     },
     async restoreAtStartup() {
       if (!packaged || !enabled) return false;

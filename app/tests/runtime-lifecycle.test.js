@@ -56,6 +56,7 @@ function runtime(options={}) {
     Menu: { setApplicationMenu() {} },
   };
   const dependencies = {
+    './main/easytier-firewall.cjs': { createEasyTierFirewall: () => ({interfaceName:'ScreenSh-0123456789abcdef',cleanup:async()=>{}}) },
     './main/tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },
     electron, './main/capture-sources': {}, './main/managed-process': { ManagedProcess: FakeProcess },
     './main/screen-obs-runtime.cjs': { ScreenObsRuntime: FakeObs }, './main/peer-test': { createPeerTester: () => ({ stop: async () => {} }) },

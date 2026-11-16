@@ -14,3 +14,15 @@ test('idle native cleanup cannot freeze the parent when switching to external OB
   const obs=runtime('block-idle');obs.options.idleMs=50;let beats=0;const heartbeat=setInterval(()=>beats++,10);
   try{await obs.sources([]);const until=Date.now()+2500;while(obs.worker&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,20));assert.equal(obs.worker,null);assert.ok(beats>5);}finally{clearInterval(heartbeat);await obs.shutdown();}
 });
+
+test('diagnostics only read fresh passive snapshots and never start or reset capture',async()=>{
+  const obs=runtime('stats');assert.equal(obs.stats(),null);assert.equal(obs.worker,undefined);
+  try{
+    await obs.start({});const worker=obs.worker;
+    worker.emit('message',{event:'stats',stats:{encoder:'obs_x264',outputFrames:60,droppedFrames:0}});
+    assert.equal(obs.stats().encoder,'obs_x264');assert.equal(obs.worker,worker);
+    obs.lastStats.at=Date.now()-5000;assert.equal(obs.stats(),null);
+    await obs.stopAndWait();assert.equal(obs.stats(),null);await obs.shutdown();
+    const previous=obs.lastStats;worker.emit('message',{event:'stats',stats:{encoder:'stale'}});assert.equal(obs.lastStats,previous);
+  }finally{await obs.shutdown();}
+});

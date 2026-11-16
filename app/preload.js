@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateState: callback => {const listener=(_event,state)=>callback(state);ipcRenderer.on('update-state',listener);return ()=>ipcRenderer.removeListener('update-state',listener);},
   downloadAndInstallUpdate: () => ipcRenderer.invoke('download-and-install-update'),
   getHardwareAcceleration: () => ipcRenderer.invoke('get-hardware-acceleration'),
+  getVideoDiagnostics: () => ipcRenderer.invoke('get-video-diagnostics'),
   setHardwareAcceleration: enabled => ipcRenderer.invoke('set-hardware-acceleration', enabled),
   onUpdateProgress: callback => {
     const listener = (_event, percent) => callback(percent);

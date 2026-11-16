@@ -38,23 +38,25 @@ using Clock=std::chrono::steady_clock;
 static sockaddr_in address(unsigned long ip,unsigned short port){sockaddr_in a{};a.sin_family=AF_INET;a.sin_addr.s_addr=htonl(ip);a.sin_port=htons(port);return a;}
 static SOCKET udp(const sockaddr_in& bindAddress){SOCKET s=socket(AF_INET,SOCK_DGRAM,0);if(s==INVALID_SOCKET)return s;int rx=2*1024*1024,tx=512*1024;u_long nonblocking=1;setsockopt(s,SOL_SOCKET,SO_RCVBUF,(char*)&rx,sizeof(rx));setsockopt(s,SOL_SOCKET,SO_SNDBUF,(char*)&tx,sizeof(tx));ioctlsocket(s,FIONBIO,&nonblocking);if(bind(s,(sockaddr*)&bindAddress,sizeof(bindAddress))!=0){closesocket(s);return INVALID_SOCKET;}return s;}
 static unsigned long long packetKey(const char* bytes){auto b=(const unsigned char*)bytes;unsigned long long ssrc=((unsigned long long)b[8]<<24)|((unsigned long long)b[9]<<16)|((unsigned long long)b[10]<<8)|b[11];return (ssrc<<16)|((unsigned)b[2]<<8)|b[3];}
-struct Flow{SOCKET back=INVALID_SOCKET;sockaddr_in client{};std::deque<std::vector<char>> queue;std::set<unsigned long long> pending;size_t queued=0;Clock::time_point next=Clock::now(),touched=Clock::now();};
+struct Packet{std::vector<char> bytes;Clock::time_point added;};
+struct Flow{SOCKET back=INVALID_SOCKET;sockaddr_in client{};std::deque<Packet> queue;std::set<unsigned long long> pending;size_t queued=0;double credit=2400;Clock::time_point credited=Clock::now(),next=Clock::now(),touched=Clock::now();};
 int main(int argc,char** argv){
   if(argc>=2&&std::string(argv[1])=="--audio-policy")return audioPolicy(argc,argv);
-  if(argc!=3&&!((argc==4||argc==5)&&(std::string(argv[3])=="publish"||std::string(argv[3])=="receive")))return 2;bool outbound=argc>=4&&std::string(argv[3])=="publish";int port=std::atoi(argv[1]),targetPort=std::atoi(argv[2]);if(port<0||port>65535||targetPort<1024||targetPort>65535)return 2;
-  unsigned long targetIp=outbound?0x7f000001:0x7f000002;if(argc==5){in_addr parsed{};if(InetPtonA(AF_INET,argv[4],&parsed)!=1)return 2;targetIp=ntohl(parsed.s_addr);unsigned long a=targetIp>>24,b=(targetIp>>16)&255;if(!(targetIp==0x7f000001||a==10||(a==172&&b>=16&&b<=31)||(a==192&&b==168)))return 2;}
+  if(argc!=3&&!((argc>=4&&argc<=7)&&(std::string(argv[3])=="publish"||std::string(argv[3])=="receive")))return 2;bool outbound=argc>=4&&std::string(argv[3])=="publish";int port=std::atoi(argv[1]),targetPort=std::atoi(argv[2]);if(port<0||port>65535||targetPort<1024||targetPort>65535)return 2;
+  const int rateKbps=argc>=6?std::atoi(argv[5]):32000,maxQueueMs=argc>=7?std::atoi(argv[6]):500;if(rateKbps<1000||rateKbps>100000||maxQueueMs<100||maxQueueMs>2000)return 2;const double bytesPerSecond=rateKbps*125.0;
+  unsigned long targetIp=outbound?0x7f000001:0x7f000002;if(argc>=5){in_addr parsed{};if(InetPtonA(AF_INET,argv[4],&parsed)!=1)return 2;targetIp=ntohl(parsed.s_addr);unsigned long a=targetIp>>24,b=(targetIp>>16)&255;if(!(targetIp==0x7f000001||a==10||(a==172&&b>=16&&b<=31)||(a==192&&b==168)))return 2;}
   WSADATA wsa{};if(WSAStartup(MAKEWORD(2,2),&wsa)!=0)return 3;
   if(timeBeginPeriod(1)!=TIMERR_NOERROR){WSACleanup();return 4;}
   SOCKET front=udp(address(0x7f000001,(unsigned short)port));if(front==INVALID_SOCKET){timeEndPeriod(1);WSACleanup();return 5;}
   sockaddr_in local{};int localSize=sizeof(local);getsockname(front,(sockaddr*)&local,&localSize);const auto target=address(targetIp,(unsigned short)targetPort);
 
-  HANDLE tick=CreateWaitableTimerExW(nullptr,nullptr,0x2,TIMER_ALL_ACCESS);if(!tick)tick=CreateWaitableTimerW(nullptr,FALSE,nullptr);if(!tick){closesocket(front);timeEndPeriod(1);WSACleanup();return 6;}std::map<unsigned short,Flow> flows;unsigned long long sent=0,bytesSent=0,dropped=0,duplicates=0,errors=0,peak=0;auto lastStats=Clock::now();char buffer[65536];
+  HANDLE tick=CreateWaitableTimerExW(nullptr,nullptr,0x2,TIMER_ALL_ACCESS);if(!tick)tick=CreateWaitableTimerW(nullptr,FALSE,nullptr);if(!tick){closesocket(front);timeEndPeriod(1);WSACleanup();return 6;}std::map<unsigned short,Flow> flows;unsigned long long sent=0,bytesSent=0,dropped=0,duplicates=0,errors=0,peak=0;double peakDelay=0;auto lastStats=Clock::now();char buffer[65536];
   std::cout<<"{\"type\":\"ready\",\"port\":"<<ntohs(local.sin_port)<<",\"direction\":\""<<(outbound?"publish":"receive")<<"\"}"<<std::endl;
   auto send=[&](SOCKET socket,const char* bytes,int count,const sockaddr_in& client){int n=sendto(socket,bytes,count,0,(const sockaddr*)&client,sizeof(client));if(n<0){if(WSAGetLastError()!=WSAEWOULDBLOCK)errors++;return false;}sent++;bytesSent+=n;return true;};
   // NACK can request a packet that is still waiting in this pacing queue.
   // Queueing the retransmission again creates a feedback/backlog storm.
   // Once sent, remove its key so a genuine later retransmission is allowed.
-  auto enqueue=[&](Flow& flow,const char* bytes,int n){auto key=packetKey(bytes);if(flow.pending.count(key)){duplicates++;return;}if(flow.queued+n>2*1024*1024){dropped++;return;}flow.pending.insert(key);flow.queue.emplace_back(bytes,bytes+n);flow.queued+=n;peak=std::max(peak,(unsigned long long)flow.queued);};
+  auto enqueue=[&](Flow& flow,const char* bytes,int n){auto key=packetKey(bytes);if(flow.pending.count(key)){duplicates++;return;}if(flow.queued+n>2*1024*1024){dropped++;return;}flow.pending.insert(key);flow.queue.push_back({std::vector<char>(bytes,bytes+n),Clock::now()});flow.queued+=n;peak=std::max(peak,(unsigned long long)flow.queued);};
   auto isRtp=[](const char* bytes,int n){return n>=12&&((unsigned char)bytes[0]&0xc0)==0x80&&!((unsigned char)bytes[1]>=192&&(unsigned char)bytes[1]<=223);};
   for(;;){
     fd_set reads;FD_ZERO(&reads);FD_SET(front,&reads);for(auto& pair:flows)FD_SET(pair.second.back,&reads);bool pending=false;for(auto& pair:flows)pending=pending||!pair.second.queue.empty();timeval wait{0,pending?0L:10000L};
@@ -71,11 +73,28 @@ int main(int argc,char** argv){
     }}
     auto now=Clock::now();for(auto it=flows.begin();it!=flows.end();){auto& flow=it->second;
       if(now-flow.touched>std::chrono::seconds(120)){closesocket(flow.back);it=flows.erase(it);continue;}
-      if(now>=flow.next&&!flow.queue.empty()){size_t bytes=0;int count=0;while(!flow.queue.empty()){auto& packet=flow.queue.front();if(count&&(count>=1||bytes+packet.size()>1400))break;if(!send(outbound?flow.back:front,packet.data(),(int)packet.size(),outbound?target:flow.client))break;bytes+=packet.size();count++;flow.queued-=packet.size();flow.pending.erase(packetKey(packet.data()));flow.queue.pop_front();}flow.next=now+std::chrono::microseconds(500);}
+      // Bound stale media, while leaving STUN/DTLS/RTCP on the immediate path.
+      // Remove the whole queued RTP frame (SSRC + timestamp), never deliberately
+      // retain just its final FU-A fragments after expiring its first fragment.
+      while(!flow.queue.empty()&&now-flow.queue.front().added>std::chrono::milliseconds(maxQueueMs)){
+        const auto first=flow.queue.front().bytes;for(auto p=flow.queue.begin();p!=flow.queue.end();){if(std::equal(first.begin()+4,first.begin()+12,p->bytes.begin()+4)){flow.queued-=p->bytes.size();flow.pending.erase(packetKey(p->bytes.data()));p=flow.queue.erase(p);dropped++;}else ++p;}
+      }
+      if(!flow.queue.empty())peakDelay=std::max(peakDelay,std::chrono::duration<double,std::milli>(now-flow.queue.front().added).count());
+      const double capacity=flow.queue.empty()?2400.0:std::max(2400.0,(double)flow.queue.front().bytes.size());
+      flow.credit=std::min(capacity,flow.credit+std::chrono::duration<double>(now-flow.credited).count()*bytesPerSecond);flow.credited=now;
+      // Byte-based pacing avoids throttling small RTP packets to the same rate
+      // as 1200-byte packets. Burst at most two MTU-sized packets, or one
+      // oversized input datagram (which must not get permanently credit-starved).
+      while(!flow.queue.empty()){
+        auto& packet=flow.queue.front().bytes;const double cost=(double)packet.size();if(flow.credit<cost)break;
+        if(!send(outbound?flow.back:front,packet.data(),(int)packet.size(),outbound?target:flow.client))break;
+        flow.credit-=cost;flow.queued-=packet.size();flow.pending.erase(packetKey(packet.data()));flow.queue.pop_front();
+      }
+      flow.next=now+std::chrono::microseconds(flow.queue.empty()?500:std::max<long long>(50,(long long)((flow.queue.front().bytes.size()-flow.credit)*1000000.0/bytesPerSecond)));
       ++it;
     }
     bool queued=false;auto due=Clock::now()+std::chrono::microseconds(500);for(auto& pair:flows)if(!pair.second.queue.empty()){queued=true;due=std::min(due,pair.second.next);}if(queued){auto us=std::max<long long>(50,std::chrono::duration_cast<std::chrono::microseconds>(due-Clock::now()).count());LARGE_INTEGER deadline;deadline.QuadPart=-us*10;SetWaitableTimer(tick,&deadline,0,nullptr,nullptr,FALSE);WaitForSingleObject(tick,10);}
-    if(now-lastStats>std::chrono::seconds(2)){size_t queued=0;for(auto& pair:flows)queued+=pair.second.queued;std::cout<<"{\"type\":\"stats\",\"packets\":"<<sent<<",\"direction\":\""<<(outbound?"publish":"receive")<<"\",\"bytes\":"<<bytesSent<<",\"dropped\":"<<dropped<<",\"duplicates\":"<<duplicates<<",\"errors\":"<<errors<<",\"peakQueued\":"<<peak<<",\"queued\":"<<queued<<",\"flows\":"<<flows.size()<<"}"<<std::endl;lastStats=now;}
+    if(now-lastStats>std::chrono::seconds(2)){size_t queued=0;double delay=0;for(auto& pair:flows){queued+=pair.second.queued;if(!pair.second.queue.empty())delay=std::max(delay,std::chrono::duration<double,std::milli>(now-pair.second.queue.front().added).count());}std::cout<<"{\"type\":\"stats\",\"packets\":"<<sent<<",\"direction\":\""<<(outbound?"publish":"receive")<<"\",\"bytes\":"<<bytesSent<<",\"dropped\":"<<dropped<<",\"duplicates\":"<<duplicates<<",\"errors\":"<<errors<<",\"peakQueued\":"<<peak<<",\"queued\":"<<queued<<",\"queueDelayMs\":"<<delay<<",\"peakQueueDelayMs\":"<<peakDelay<<",\"rateKbps\":"<<rateKbps<<",\"flows\":"<<flows.size()<<"}"<<std::endl;lastStats=now;}
   }
   for(auto& pair:flows)closesocket(pair.second.back);closesocket(front);CloseHandle(tick);timeEndPeriod(1);WSACleanup();return 0;
 }

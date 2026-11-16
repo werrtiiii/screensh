@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const {createAutoUpdate} = require('../main/auto-update.cjs');
+const {CancellationError}=require('builder-util-runtime');
 const wait = async condition => {const end=Date.now()+2000;while(!condition()){if(Date.now()>end)throw Error('update test timeout');await new Promise(resolve=>setTimeout(resolve,5));}};
 function fixture(t, options={}) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-update-')),file=path.join(dir,'settings.json');
@@ -15,6 +16,21 @@ function fixture(t, options={}) {
   const updates=createAutoUpdate(args);t.after(()=>{updates.stop();fs.rmSync(dir,{recursive:true,force:true});});
   return {updates, client, counts, events, args};
 }
+test('closing during metadata check prevents download and leaves no installation failure',async t=>{
+  const f=fixture(t);let finish;
+  f.client.checkForUpdates=()=>new Promise(resolve=>{finish=resolve;});
+  const task=f.updates.prepareUpdate(),rejected=assert.rejects(task,CancellationError);await wait(()=>finish);
+  const drain=f.updates.cancel();finish({isUpdateAvailable:true,updateInfo:{version:'9.0.0'}});await rejected;await drain;
+  assert.equal(f.counts.download,0);assert.equal(f.updates.get().status,'idle');assert.equal(f.updates.get().installFailed,false);
+});
+test('download cancellation reaches the transport and a subsequent retry gets a fresh token',async t=>{
+  const f=fixture(t);let firstToken;
+  f.client.downloadUpdate=token=>{firstToken=token;return new Promise((_resolve,reject)=>token.once('cancel',()=>reject(new CancellationError())));};
+  const task=f.updates.prepareUpdate(),rejected=assert.rejects(task,CancellationError);await wait(()=>firstToken);
+  await f.updates.cancel();await rejected;assert.equal(firstToken.cancelled,true);
+  f.client.downloadUpdate=async token=>{assert.equal(token.cancelled,false);assert.notEqual(token,firstToken);f.client.emit('update-downloaded',{version:'9.0.0'});};
+  assert.deepEqual(await f.updates.prepareUpdate({retry:true}),{install:true});
+});
 test('startup gate checks and downloads before installation without background activity',async t=>{
  const {updates,client,counts}=fixture(t);updates.start();await new Promise(r=>setTimeout(r,20));assert.deepEqual(counts,{check:0,download:0});
  assert.deepEqual(await updates.prepareUpdate({automatic:true}),{install:true});assert.deepEqual(counts,{check:1,download:1});assert.equal(updates.get().status,'ready');

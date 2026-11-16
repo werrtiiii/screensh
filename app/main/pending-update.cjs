@@ -1,4 +1,4 @@
-const fs = require('node:fs');
+let fs;try{fs=require('original-fs');}catch{fs=require('node:fs');}
 const path = require('node:path');
 const {compareVersions} = require('./updater');
 const {createHash}=require('node:crypto');
@@ -12,7 +12,7 @@ function createPendingUpdate({file}) {
   function clear() { try { fs.unlinkSync(file); } catch(error) { if(error.code!=='ENOENT')throw error; } }
   function valid(record) {
     return record && /^\d+\.\d+\.\d+$/.test(record.version)
-      && typeof record.fileName==='string' && /^[^\\/:]+\.exe$/i.test(record.fileName)
+      && typeof record.fileName==='string' && (/^[^\\/:]+\.exe$/i.test(record.fileName)||record.fileName===`ScreenSh-${record.version}-Update.zip`||record.fileName===`ScreenSh-${record.version}-Update.json`)
       && /^[A-Za-z0-9+/]{86}==$/.test(record.sha512);
   }
   return {
@@ -46,46 +46,62 @@ function createPendingUpdate({file}) {
       const installer=await helper.getValidCachedUpdateFile(fileInfo,updater.logger || console);
       if (!installer) { clear(); throw Error('本地更新包缺失或校验失败，请重新下载更新'); }
       if (path.resolve(installer)!==path.resolve(helper.cacheDirForPendingUpdate,record.fileName)) throw Error('本地更新包路径无效');
-      if (typeof updater.verifySignature!=='function') throw Error('当前平台不支持本地更新包安装');
-      const signatureError=await updater.verifySignature(installer);
+      if(record.fileName.endsWith('-Update.json')&&!await require('./update-blocks.cjs').verifyInWorker({root:path.resolve(helper.cacheDir,'../..'),pending:helper.cacheDirForPendingUpdate,raw:fs.readFileSync(installer),version:record.version})){clear();await helper.clear();return null;}
+      if (/\.exe$/i.test(record.fileName)&&typeof updater.verifySignature!=='function') throw Error('当前平台不支持本地更新包安装');
+      const signatureError=/\.exe$/i.test(record.fileName)?await updater.verifySignature(installer):null;
       if (signatureError) { clear(); throw Error('本地更新包签名校验失败，请重新下载更新'); }
       await helper.setDownloadedFile(installer,null,{version:record.version},fileInfo,record.fileName,false);
       return {version:record.version};
     },
     async confirmInstalled(updater,currentVersion){
       const helper=await updater.getOrCreateDownloadHelper(),cache=helper.cacheDir,pending=helper.cacheDirForPendingUpdate;
-      if(fs.existsSync(pending)&&fs.lstatSync(pending).isSymbolicLink())throw Error('更新缓存目录不能是符号链接');
+      const {packageVersion,unlinkOwned,removeTree,cleanupIncrementalCache}=require('./update-cleanup.cjs');
+      const {noLinks,parseManifest,digest}=require('./update-blocks.cjs');
+      noLinks(pending);
       let record;try{record=JSON.parse(await fs.promises.readFile(file,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
       if(record&&!valid(record))return null;
-      if(record&&compareVersions(record.version,currentVersion)>0)return null;
-      let metadata;try{metadata=JSON.parse(await fs.promises.readFile(path.join(pending,'update-info.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
-      // Also recover receipts cleared by older clients before showing the UI.
-      const match=metadata?.fileName?.match(/^ScreenSh-(\d+\.\d+\.\d+)-Setup\.exe$/);
-      const candidate=record||match&&{...metadata,version:match[1]};
-      if(!valid(candidate)||candidate.version!==currentVersion)return null;
-      const base=path.join(cache,'installer.exe'),stage=path.join(cache,'installer.exe.new');
-      const receiptFile=path.join(cache,'installed-update.json');let receipt;
-      try{receipt=JSON.parse(await fs.promises.readFile(receiptFile,'utf8'));}catch{}
-      const completed=receipt?.version===candidate.version&&receipt.sha512===candidate.sha512&&fs.existsSync(base)&&!fs.lstatSync(base).isSymbolicLink()&&await sha512(base)===candidate.sha512;
-      if(!completed){
-        if(metadata?.fileName!==candidate.fileName||metadata.sha512!==candidate.sha512)throw Error('已安装更新的缓存信息不一致，保留原缓存');
-        const input=path.join(pending,candidate.fileName),stat=await fs.promises.lstat(input);
-        if(!stat.isFile()||stat.isSymbolicLink()||await sha512(input)!==candidate.sha512)throw Error('已安装更新包校验失败，保留原缓存');
-        if(typeof updater.verifySignature!=='function'||await updater.verifySignature(input))throw Error('已安装更新包签名校验失败，保留原缓存');
-        await fs.promises.copyFile(input,stage);
-        if(await sha512(stage)!==candidate.sha512)throw Error('更新基包复制校验失败，保留原缓存');
-        await fs.promises.rename(stage,base);
-        const map=path.join(pending,'current.blockmap'),baseMap=path.join(cache,'current.blockmap');
-        if(fs.existsSync(map)&&fs.lstatSync(map).isFile()&&!fs.lstatSync(map).isSymbolicLink())await fs.promises.copyFile(map,baseMap);
-        else await fs.promises.unlink(baseMap).catch(error=>{if(error.code!=='ENOENT')throw error;});
-        await fs.promises.writeFile(receiptFile+'.tmp',JSON.stringify(candidate),{mode:0o600});await fs.promises.rename(receiptFile+'.tmp',receiptFile);
+      const metadataPath=path.join(pending,'update-info.json');noLinks(metadataPath);
+      let metadata;try{metadata=JSON.parse(await fs.promises.readFile(metadataPath,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+      const metadataVersion=packageVersion(metadata?.fileName);
+      const candidate=record||(metadataVersion&&{...metadata,version:metadataVersion});
+      const future=candidate&&compareVersions(candidate.version,currentVersion)>0;
+      // When present, verify the package of the running version before cleanup.
+      // A missing package after healthy startup is safe to clean: a preceding
+      // cleanup or a manual install may already have removed it.
+      if(valid(candidate)&&candidate.version===currentVersion){
+        const input=path.join(pending,candidate.fileName);noLinks(input);
+        const stat=await fs.promises.lstat(input).catch(error=>{if(error.code!=='ENOENT')throw error;});
+        if(stat){
+          if(!stat.isFile()||stat.isSymbolicLink()||await sha512(input)!==candidate.sha512)throw Error('已安装更新包校验失败，保留原缓存');
+          if(/\.exe$/i.test(candidate.fileName)&&(typeof updater.verifySignature!=='function'||await updater.verifySignature(input)))throw Error('已安装更新包签名校验失败，保留原缓存');
+        }
       }
-      for(const entry of await fs.promises.readdir(pending,{withFileTypes:true})){
+      let changed=false;
+      // Stages survive failed downloads and are retired only after a healthy
+      // startup of that version or a newer version. Future downloads stay intact.
+      await cleanupIncrementalCache(cache,currentVersion);
+      const remove=[];
+      if(fs.existsSync(pending))for(const entry of await fs.promises.readdir(pending,{withFileTypes:true})){
         if(!entry.isFile()||entry.isSymbolicLink())continue;
-        const version=entry.name.match(/^(?:temp-)?ScreenSh-(\d+\.\d+\.\d+)-Setup\.exe(?:\.blockmap)?$/)?.[1];
-        if(entry.name==='update-info.json'||entry.name==='current.blockmap'||version&&compareVersions(version,currentVersion)<=0)await fs.promises.unlink(path.join(pending,entry.name));
+        const version=packageVersion(entry.name);
+        if(!version||compareVersions(version,currentVersion)>0)continue;
+        // Migrate cleanup of checkpoints created by the earlier pending layout.
+        if(entry.name.endsWith('-Update.json'))try{
+          const raw=fs.readFileSync(path.join(pending,entry.name));parseManifest(raw,version);
+          await removeTree(path.join(pending,'incremental-'+digest(raw)));
+        }catch(error){if(error.code&&error.code!=='ENOENT')throw error;}
+        remove.push(path.join(pending,entry.name));
       }
-      clear();await fs.promises.unlink(attemptFile).catch(error=>{if(error.code!=='ENOENT')throw error;});return {version:currentVersion,base};
+      for(const target of remove)changed=await unlinkOwned(target)||changed;
+      for(const name of ['installer.exe','portable.zip','current.blockmap','installed-update.json'])changed=await unlinkOwned(path.join(cache,name))||changed;
+      // The metadata and receipts are removed last. Every step is idempotent,
+      // including a retry after the archive was deleted but metadata was locked.
+      if(metadataVersion&&compareVersions(metadataVersion,currentVersion)<=0){changed=await unlinkOwned(path.join(pending,'current.blockmap'))||changed;changed=await unlinkOwned(metadataPath)||changed;}
+      if(record&&compareVersions(record.version,currentVersion)<=0){clear();changed=true;}
+      const attempt=readAttempt(),attemptVersion=packageVersion(attempt?.fileName);
+      if(attemptVersion&&compareVersions(attemptVersion,currentVersion)<=0)await unlinkOwned(attemptFile);
+      return !future&&(changed||candidate)?{version:currentVersion}:null;
+
     },
   };
 }

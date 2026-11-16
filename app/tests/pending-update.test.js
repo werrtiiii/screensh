@@ -5,9 +5,9 @@ const {createHash}=require('node:crypto');
 const {DownloadedUpdateHelper}=require('electron-updater/out/DownloadedUpdateHelper');
 const {createPendingUpdate}=require('../main/pending-update.cjs');
 
-async function fixture(t) {
+async function fixture(t,fileName='ScreenSh-9.0.0-Setup.exe') {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-pending-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  const cache=path.join(dir,'cache'),file=path.join(dir,'pending.json'),fileName='ScreenSh-9.0.0-Setup.exe';
+  const cache=path.join(dir,'cache'),file=path.join(dir,'pending.json');
   const helper=new DownloadedUpdateHelper(cache),installer=path.join(helper.cacheDirForPendingUpdate,fileName);
   fs.mkdirSync(path.dirname(installer),{recursive:true});fs.writeFileSync(installer,'not an executable: update checksum fixture');
   const sha512=createHash('sha512').update(fs.readFileSync(installer)).digest('base64');
@@ -38,10 +38,10 @@ test('already installed and older packages are skipped without clearing receipts
   }
 });
 
-test('successful startup verifies and promotes the new installer before removing old and redundant pending packages',async t=>{
-  const f=await fixture(t),expected=fs.readFileSync(f.installer);fs.writeFileSync(path.join(f.cache,'installer.exe'),'old installer');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe'),'obsolete');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe'),'future');
+test('successful startup verifies the applied package and removes archives and obsolete pending packages',async t=>{
+  const f=await fixture(t);fs.writeFileSync(path.join(f.cache,'installer.exe'),'old installer');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe'),'obsolete');fs.writeFileSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe'),'future');
   assert.equal(await f.pending.confirmInstalled(f.updater,'8.0.0'),null,'future downloaded update is untouched');assert.ok(fs.existsSync(f.installer));
-  const result=await f.pending.confirmInstalled(f.updater,'9.0.0');assert.equal(result.version,'9.0.0');assert.deepEqual(fs.readFileSync(path.join(f.cache,'installer.exe')),expected);assert.equal(fs.existsSync(f.installer),false);assert.equal(fs.existsSync(f.file),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe')),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe')),true);
+  const result=await f.pending.confirmInstalled(f.updater,'9.0.0');assert.equal(result.version,'9.0.0');assert.equal(fs.existsSync(path.join(f.cache,'installer.exe')),false);assert.equal(fs.existsSync(f.installer),false);assert.equal(fs.existsSync(f.file),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-1.0.0-Setup.exe')),false);assert.equal(fs.existsSync(path.join(f.cache,'pending/ScreenSh-10.0.0-Setup.exe')),true);
   assert.equal(await f.pending.confirmInstalled(f.updater,'9.0.0'),null);
 });
 
@@ -49,8 +49,8 @@ test('a failed integrity check leaves the old base, new installer and receipt un
   const f=await fixture(t);fs.writeFileSync(path.join(f.cache,'installer.exe'),'old installer');fs.appendFileSync(f.installer,'tampered');await assert.rejects(f.pending.confirmInstalled(f.updater,'9.0.0'),/校验失败/);assert.equal(fs.readFileSync(path.join(f.cache,'installer.exe'),'utf8'),'old installer');assert.ok(fs.existsSync(f.installer));assert.ok(fs.existsSync(f.file));
 });
 
-test('a cached installed package can be promoted even if an older client already cleared its startup receipt',async t=>{
-  const f=await fixture(t);fs.unlinkSync(f.file);assert.equal((await f.pending.confirmInstalled(f.updater,'9.0.0')).version,'9.0.0');assert.ok(fs.existsSync(path.join(f.cache,'installer.exe')));assert.equal(fs.existsSync(f.installer),false);
+test('a cached installed package is cleaned even if an older client already cleared its startup receipt',async t=>{
+  const f=await fixture(t);fs.unlinkSync(f.file);assert.equal((await f.pending.confirmInstalled(f.updater,'9.0.0')).version,'9.0.0');assert.equal(fs.existsSync(path.join(f.cache,'installer.exe')),false);assert.equal(fs.existsSync(f.installer),false);
 });
 test('modified, missing and incomplete packages never become installable',async t=>{
   for(const mode of ['modified','missing','incomplete']) {
@@ -68,4 +68,28 @@ test('startup rejects out-of-cache names and failed publisher signature verifica
   await assert.rejects(badPath.pending.restore(badPath.updater,'1.5.2'),/更新信息无效/);assert.equal(badPath.signatures(),0);
   const badSignature=await fixture(t);badSignature.updater.verifySignature=async()=> 'publisher mismatch';
   await assert.rejects(badSignature.pending.restore(badSignature.updater,'1.5.2'),/签名校验失败/);assert.equal(badSignature.nextHelper.file,null);
+});
+
+
+test('portable cache restores by checksum and deletes both ZIP and old setup baseline after startup',async t=>{
+  const f=await fixture(t,'ScreenSh-9.0.0-Update.zip');
+  fs.writeFileSync(path.join(f.cache,'installer.exe'),'old setup');
+  assert.deepEqual(await f.pending.restore(f.updater,'8.0.0'),{version:'9.0.0'});
+  assert.equal(f.signatures(),0,'An archive is hash-verified, not passed to the EXE signature checker');
+  assert.equal(await f.pending.confirmInstalled(f.updater,'8.0.0'),null);
+  await f.pending.confirmInstalled(f.updater,'9.0.0');
+  assert.equal(fs.existsSync(path.join(f.cache,'portable.zip')),false);
+  assert.equal(fs.existsSync(path.join(f.cache,'installer.exe')),false);
+  assert.equal(fs.existsSync(f.installer),false);
+});
+test('manual upgrade removes older packages and baselines but preserves future pending packages',async t=>{
+  const f=await fixture(t,'ScreenSh-9.0.0-Update.zip');fs.writeFileSync(path.join(f.cache,'installer.exe'),'old setup');
+  const future=path.join(f.cache,'pending/ScreenSh-11.0.0-Update.zip');fs.writeFileSync(future,'future');
+  await f.pending.confirmInstalled(f.updater,'10.0.0');assert.equal(fs.existsSync(f.installer),false);assert.equal(fs.existsSync(path.join(f.cache,'installer.exe')),false);assert.ok(fs.existsSync(future));
+});
+test('cleanup retries after an archive was deleted but its metadata was locked',async t=>{
+  const f=await fixture(t,'ScreenSh-9.0.0-Update.zip'),unlink=fs.promises.unlink,metadata=path.join(f.cache,'pending/update-info.json');
+  t.mock.method(fs.promises,'unlink',async target=>{if(target===metadata)throw Error('metadata busy');return unlink.call(fs.promises,target);});
+  await assert.rejects(f.pending.confirmInstalled(f.updater,'9.0.0'),/metadata busy/);assert.equal(fs.existsSync(f.installer),false);
+  t.mock.restoreAll();await f.pending.confirmInstalled(f.updater,'9.0.0');assert.equal(fs.existsSync(metadata),false);assert.equal(fs.existsSync(f.file),false);
 });

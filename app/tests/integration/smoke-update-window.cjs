@@ -15,5 +15,12 @@ app.whenReady().then(async()=>{
  await window.webContents.executeJavaScript("document.documentElement.dataset.theme='dark'");await tick(100);fs.writeFileSync(path.join(dir,'download-dark.png'),(await window.webContents.capturePage()).toPNG());
  release();await wait(()=>state.status==='error');await tick(50);assert.equal(await window.webContents.executeJavaScript("document.getElementById('enter').hidden"),false);assert.equal(entered,0);
  await window.webContents.executeJavaScript('window.updater.retry()');await window.webContents.executeJavaScript('void window.updater.enter(); true');await wait(()=>entered===1);
- controller.open(false);await wait(()=>entered===2);assert.equal(checks,3);console.log('STARTUP_GATE_MANUAL_RETRY_AND_THEMED_UI_OK');app.quit();
+ controller.open(false);await wait(()=>entered===2);assert.equal(checks,3);console.log('STARTUP_GATE_MANUAL_RETRY_AND_THEMED_UI_OK');
+ for(const name of ['updater-state','updater-retry','updater-enter','updater-close'])ipcMain.removeHandler(name);
+ let quitting=false,handedOff=false;
+ const handoff=require('../../main/update-window.cjs').createUpdateWindow({BrowserWindow,ipcMain,updates:{get:()=>({}),prepareUpdate:async()=>({install:true}),reportFailure:error=>{throw error;},cancel:()=>assert.fail('installer handoff cancelled')},enter(){},quit(){},canQuit:()=>quitting,install:async target=>{
+  target.close();assert.equal(target.isDestroyed(),false,'manual close must be blocked during handoff');
+  const closed=new Promise(resolve=>target.once('closed',resolve));quitting=true;target.close();await closed;assert.equal(target.isDestroyed(),true,'normal application quit must be allowed after handoff');handedOff=true;
+ }});
+ handoff.open(true);await wait(()=>handedOff);console.log('UPDATE_HANDOFF_CAN_QUIT_OK');app.quit();
 }).catch(error=>{console.error(error);app.exit(1);});

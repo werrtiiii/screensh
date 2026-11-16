@@ -1,5 +1,6 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
 $taskProject=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $taskVersion=(Get-Content -LiteralPath (Join-Path $taskProject 'app/package.json') -Raw | ConvertFrom-Json).version
 $taskOutput=Join-Path $taskProject 'app/dist'

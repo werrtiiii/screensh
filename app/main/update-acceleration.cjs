@@ -28,10 +28,16 @@ function accelerateMetadataUrl(proxy,original,repository) {
   if(!allowed||url.username||url.password||url.search||url.hash)throw Error('更新信息地址不属于指定 GitHub 仓库');
   return new URL(normalizeProxy(proxy)+'/'+url.href);
 }
-async function fetchMetadataText(url,fetchFile,headers={}) {
-  const response=await fetchFile(url,{credentials:'omit',headers,signal:AbortSignal.timeout(8000)});
-  if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('更新信息请求失败');}
-  return (await readBody(response,524288)).toString('utf8');
+async function fetchMetadataText(url,fetchFile,headers={},token) {
+  const controller=new AbortController(),cancel=()=>controller.abort(),timer=setTimeout(cancel,8000);
+  token?.on?.('cancel',cancel);
+  try{
+    if(token?.cancelled)throw new (require('builder-util-runtime').CancellationError)();
+    const response=await fetchFile(url,{credentials:'omit',headers,signal:controller.signal});
+    if(!response.ok){await response.body?.cancel().catch(()=>{});throw Error('更新信息请求失败');}
+    return (await readBody(response,524288)).toString('utf8');
+  }catch(error){if(token?.cancelled)throw new (require('builder-util-runtime').CancellationError)();throw error;}
+  finally{clearTimeout(timer);token?.removeListener?.('cancel',cancel);}
 }
 async function readBody(response,limit,truncate=false) {
   if(!response.body)throw Error('响应内容为空');

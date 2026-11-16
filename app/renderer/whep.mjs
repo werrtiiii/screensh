@@ -1,16 +1,18 @@
 import { allowOpusStereo } from './voice-encoding.mjs';
+import { preferVideoReceiveLatency } from './video-latency.mjs';
 export class WhepSession {
   constructor(url, configuration, onTrack, onFailure, options = {}) {
     this.url = url; this.controller = new AbortController(); this.closed = false;
     this.audioOnly = options.audioOnly === true;
     this.directRelay = options.directRelay === true;
     this.videoStartupTimeoutMs=options.videoStartupTimeoutMs??10000;
+    this.videoStallTimeoutMs=options.videoStallTimeoutMs??6000;
     this.stereo = options.stereo === true;
     this.getToken=options.getToken;this.headers={};
     this.tunnel=options.tunnel;this.virtualIp=options.virtualIp;
     this.candidates = []; this.patchChain = Promise.resolve();
     this.pc = new RTCPeerConnection({ ...configuration, bundlePolicy: 'max-bundle' });
-    this.pc.ontrack = onTrack;
+    this.pc.ontrack = event => {if(this.closed)return;if(!this.audioOnly)preferVideoReceiveLatency(event.receiver);onTrack(event);};
     this.pc.onicecandidate = event => {
       if (this.closed || !event.candidate) return;
       this.candidates.push(event.candidate);
@@ -55,15 +57,29 @@ export class WhepSession {
   }
   watchVideoStart() {
     if(this.audioOnly||typeof this.pc.getStats!=='function')return;
-    let connectedAt=null,pending=false;
+    let connectedAt=null,pending=false,previous=null,lastProgress=null;
     this.videoStartTimer=setInterval(async()=>{
       if(this.closed||pending)return;
-      if(this.pc.connectionState!=='connected'){connectedAt=null;return;}
+      if(this.pc.connectionState!=='connected'){connectedAt=null;lastProgress=null;previous=null;return;}
       connectedAt??=Date.now();pending=true;
       try{
         const report=await this.pc.getStats();if(this.closed)return;
         const videos=[...report.values()].filter(row=>row.type==='inbound-rtp'&&row.kind==='video');
-        if(videos.some(row=>row.framesDecoded>0)){clearInterval(this.videoStartTimer);return;}
+        const video=videos.find(row=>row.framesDecoded>0);
+        if(video){
+          const time=Date.now();
+          if(!previous||previous.id!==video.id||video.framesDecoded!==previous.framesDecoded)lastProgress=time;
+          const bytesIncreasing=previous&&video.bytesReceived>previous.bytesReceived;
+          if(!bytesIncreasing)lastProgress=time;
+          // A static source can intentionally stop sending frames. Recover only
+          // when video RTP continues arriving but decoded frames stop advancing.
+          if(bytesIncreasing&&time-lastProgress>=this.videoStallTimeoutMs){
+            clearInterval(this.videoStartTimer);
+            this.onFailure(new Error('视频数据仍在接收但画面持续停滞，正在重新连接视频'));
+          }
+          previous={id:video.id,framesDecoded:video.framesDecoded,bytesReceived:video.bytesReceived};
+          return;
+        }
         if(Date.now()-connectedAt>=this.videoStartupTimeoutMs){
           clearInterval(this.videoStartTimer);
           this.onFailure(new Error(videos.some(row=>row.bytesReceived>0)?'已收到视频数据但未能解码，重新连接视频以请求关键帧':'媒体已连接但未收到可播放的视频帧'));

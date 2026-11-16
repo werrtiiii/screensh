@@ -1,5 +1,5 @@
 const finite = value => Number.isFinite(value);
-export function sampleVideoStats(report, previous) {
+export function sampleVideoStats(report, previous, diagnostics) {
   const entries = [...report.values()];
   const video = entries.find(s => s.type === 'inbound-rtp' && s.kind === 'video');
   if (!video) return { snapshot: null, rows: [['状态', '等待视频数据…']] };
@@ -21,18 +21,18 @@ export function sampleVideoStats(report, previous) {
   const jitter = finite(video.jitter) ? video.jitter * 1000 : null;
   const loss = received !== null && lost !== null && received + lost > 0 ? lost / (received + lost) * 100 : null;
   const stalled = fps === 0;
-  // Scenario estimate, NOT a measurement or guaranteed bound: assume symmetric RTT,
-  // 30 FPS capture (0–33 ms), 60 Hz display (0–17 ms), encode 5–30 ms,
-  // and local publishing/forwarding queue 0–20 ms. These stages aren't measured.
-  const base = !stalled && [rtt, buffer, decode].every(finite) ? rtt / 2 + buffer + decode : null;
-  const estimate = stalled ? '暂停估算：本秒无解码帧' : base === null ? '等待完整采样' : `约 ${Math.round(base + 5)}–${Math.round(base + 100)} ms`;
+  // Capture, encoding and display scanout are not measured by inbound WebRTC
+  // stats. Report the measured receiving stages instead of inventing a total.
+  const receiving = !stalled && [buffer, decode].every(finite) ? buffer + decode : null;
+  const targetBuffer = meanMs('jitterBufferTargetDelay', 'jitterBufferEmittedCount');
   return { snapshot: { ...video }, rows: [
-    ['总画面延迟（估算）', estimate, stalled || (base !== null && base + 100 >= 300)],
+    ['接收缓冲与解码', stalled ? '本秒无解码帧' : format(receiving, 'ms'), stalled || receiving >= 100],
     ['实际分辨率', video.frameWidth && video.frameHeight ? `${video.frameWidth} × ${video.frameHeight}` : '—'],
     ['解码帧率', format(fps, 'FPS'), finite(fps) && fps < 10],
     ['视频接收码率', format(kbps, 'kbps', 0), kbps === 0],
     ['网络往返 RTT', format(rtt, 'ms'), rtt >= 150],
     ['接收缓冲耗时', delta('jitterBufferEmittedCount') === 0 ? '本秒无输出帧' : format(buffer, 'ms'), delta('jitterBufferEmittedCount') === 0 || buffer >= 100],
+    ['接收目标缓冲', format(targetBuffer, 'ms')],
     ['平均解码耗时', stalled ? '本秒无解码帧' : format(decode, 'ms'), stalled || decode >= 33],
     ['网络抖动', format(jitter, 'ms'), jitter >= 30],
     ['区间丢包率', format(loss, '%'), loss >= 2],
@@ -42,6 +42,15 @@ export function sampleVideoStats(report, previous) {
     ['已解码关键帧', format(video.keyFramesDecoded,'帧',0)],
     ['关键帧请求数', format(video.pliCount,'次',0)],
     ['视频编码', codec?.mimeType || '—'],
+    ['实际解码器', video.decoderImplementation || '当前浏览器未报告'],
+    ...(diagnostics ? [
+      ['系统硬件解码', diagnostics.hardwareDecodeAvailable ? '可用（实际使用以解码器为准）' : '不可用'],
+      ...(diagnostics.publisher ? [['本机推流编码器', diagnostics.publisher.encoder], ['本机推流丢帧', format(diagnostics.publisher.droppedFrames, '帧', 0)]] : []),
+      ...(diagnostics.udp?.some(row=>finite(row.queueDelayMs)) ? [
+        ['本机媒体排队', format(Math.max(...diagnostics.udp.map(row=>row.queueDelayMs||0)), 'ms')],
+        ['本机媒体过载丢包', format(diagnostics.udp.reduce((total,row)=>total+(row.dropped||0),0), '包', 0)],
+      ] : []),
+    ] : []),
   ] };
 }
 
@@ -66,9 +75,10 @@ export function attachVideoStats(container, pc) {
     if (pending || disposed) return;
     pending = true;
     try {
-      const report = await pc.getStats();
+      const [report, diagnostics] = await Promise.all([pc.getStats(),
+        Promise.resolve(globalThis.window?.electronAPI?.getVideoDiagnostics?.()).catch(()=>null)]);
       if (disposed || generation !== token) return;
-      const result = sampleVideoStats(report, previous); previous = result.snapshot; render(result.rows);
+      const result = sampleVideoStats(report, previous, diagnostics); previous = result.snapshot; render(result.rows);
     } catch {
       if (!disposed && generation === token) render([['状态', '统计暂不可用']]);
     } finally { pending = false; }

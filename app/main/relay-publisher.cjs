@@ -93,7 +93,7 @@ async function createRelayPublisher({relay,noTun,virtualIp,forwarder,pacerExe,on
     });
     server.requestTimeout=20000;
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-    return {url:`http://127.0.0.1:${server.address().port}${prefix}/whip`,get startupError(){return startupError;},cancel,close(){return scopeClosing||=(async()=>{await cancel();await Promise.allSettled([...pacers.values()].map(async entry=>{await entry.ready.catch(()=>{});await entry.pacer.stop();}));await closeScope();})();}};
+    return {url:`http://127.0.0.1:${server.address().port}${prefix}/whip`,get startupError(){return startupError;},stats(){return [...pacers.values()].map(entry=>entry.pacer.stats?.()||{});},cancel,close(){return scopeClosing||=(async()=>{await cancel();await Promise.allSettled([...pacers.values()].map(async entry=>{await entry.ready.catch(()=>{});await entry.pacer.stop();}));await closeScope();})();}};
   }catch(error){server?.close();await closeScope().catch(()=>{});throw error;}
 }
 module.exports={createRelayPublisher,validateRelay};

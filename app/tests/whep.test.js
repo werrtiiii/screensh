@@ -64,7 +64,7 @@ test('WHEP sends queued ICE using PATCH, deletes session and cancels pending sta
   await assert.rejects(pending, /取消/);
   assert.equal(calls.length, 3);
 });
-test('WHEP detects connected video without decoded frames and stops monitoring after a frame or close', async t=>{
+test('WHEP detects startup failure and tolerates a static decoded image', async t=>{
   const {WhepSession}=await import('../renderer/whep.mjs');
   class Peer{constructor(){this.connectionState='connected';this.frames=0;}addTransceiver(){}async createOffer(){return {type:'offer',sdp:'v=0\r\n'};}async setLocalDescription(){}async setRemoteDescription(){}async getStats(){return new Map([['v',{type:'inbound-rtp',kind:'video',bytesReceived:12345,framesDecoded:this.frames}]]);}close(){}}
   const original=globalThis.RTCPeerConnection;globalThis.RTCPeerConnection=Peer;t.after(()=>{if(original)globalThis.RTCPeerConnection=original;else delete globalThis.RTCPeerConnection;});
@@ -73,6 +73,21 @@ test('WHEP detects connected video without decoded frames and stops monitoring a
   const failures=[],session=new WhepSession('http://127.0.0.1:8889/live/whep',{},()=>{},error=>failures.push(error.message),{videoStartupTimeoutMs:500});
   await session.start();t.mock.timers.tick(1000);await new Promise(resolve=>setImmediate(resolve));assert.equal(failures.length,0);t.mock.timers.tick(1000);await new Promise(resolve=>setImmediate(resolve));assert.match(failures[0],/未能解码/);session.close();
   const healthy=new WhepSession('http://127.0.0.1:8889/live/whep',{},()=>{},()=>failures.push('unexpected'),{videoStartupTimeoutMs:500});await healthy.start();healthy.pc.frames=1;t.mock.timers.tick(1000);await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(10000);await new Promise(resolve=>setImmediate(resolve));assert.equal(failures.length,1);healthy.close();
+});
+
+test('WHEP recovers sustained decode stalls, resets after a static source, and never monitors closed sessions',async t=>{
+  const {WhepSession}=await import('../renderer/whep.mjs');
+  class Peer{constructor(){this.connectionState='connected';this.frames=1;this.bytes=100;}async getStats(){return new Map([['v',{id:'v',type:'inbound-rtp',kind:'video',framesDecoded:this.frames,bytesReceived:this.bytes}]]);}close(){}}
+  const original=globalThis.RTCPeerConnection;globalThis.RTCPeerConnection=Peer;t.after(()=>{if(original)globalThis.RTCPeerConnection=original;else delete globalThis.RTCPeerConnection;});
+  t.mock.timers.enable({apis:['Date','setInterval']});
+  const failures=[],session=new WhepSession('http://127.0.0.1:8889/live/whep',{},()=>{},e=>failures.push(e.message),{videoStallTimeoutMs:3000});
+  session.watchVideoStart();const tick=async()=>{t.mock.timers.tick(1000);await new Promise(r=>setImmediate(r));};
+  await tick();for(let i=0;i<5;i++)await tick();assert.equal(failures.length,0,'static sources do not reconnect');
+  session.pc.bytes+=100;await tick();assert.equal(failures.length,0,'resuming a static source has a fresh grace period');
+  session.pc.frames++;session.pc.bytes+=100;await tick();
+  for(let i=0;i<3;i++){session.pc.bytes+=100;await tick();}
+  assert.equal(failures.length,1);assert.match(failures[0],/持续停滞/);
+  await tick();assert.equal(failures.length,1,'one failure per stalled session');await session.close();await tick();assert.equal(failures.length,1);
 });
 
 test('WHEP keeps forwarding alive for DELETE and bounds cleanup when the server stalls', async t=>{
