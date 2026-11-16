@@ -182,12 +182,20 @@ Function ScreenShSetupPathLeave
     MessageBox MB_OK|MB_ICONEXCLAMATION "$(screenshInvalidPath)"
     Abort
   ${EndIf}
-  GetFullPathName $INSTDIR "$0"
-  GetFullPathName $1 "$INSTDIR\.."
-  ${If} $INSTDIR == $1
+  # NSIS GetFullPathName requires the target to exist. A fresh installation
+  # must also accept a folder that has not been created yet.
+  System::Call 'kernel32::GetFullPathNameW(w r0, i ${NSIS_MAX_STRLEN}, w .r2, p 0)i.r1'
+  ${If} $1 == 0
+  ${OrIf} $1 >= ${NSIS_MAX_STRLEN}
     MessageBox MB_OK|MB_ICONEXCLAMATION "$(screenshInvalidPath)"
     Abort
   ${EndIf}
+  System::Call 'shlwapi::PathIsRootW(w r2)i.r1'
+  ${If} $1 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(screenshInvalidPath)"
+    Abort
+  ${EndIf}
+  StrCpy $INSTDIR $2
 FunctionEnd
 
 Function ScreenShSetupProgress

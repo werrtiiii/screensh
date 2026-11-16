@@ -102,7 +102,41 @@
   !endif
 !macroend
 
+!macro screenshReadInstallerDetail
+  # nsExec decodes console output using the system code page. Read the native
+  # helper's UTF-16 report instead, including on non-Chinese Windows systems.
+  StrCpy $1 "检查程序未能提供详细信息。"
+  ClearErrors
+  FileOpen $R9 "$PLUGINSDIR\installer-detail.txt" r
+  ${IfNot} ${Errors}
+    FileReadUTF16LE $R9 $1
+    FileClose $R9
+  ${EndIf}
+!macroend
+
+!macro screenshWriteInstallerLog STAGE
+  FileSeek $R9 0 END $R8
+  ${If} $R8 == 0
+    FileWriteWord $R9 0xFEFF
+  ${EndIf}
+  FileWriteUTF16LE $R9 "${STAGE}: code=$0; detail=$1$\r$\n"
+!macroend
+
 !macro customCheckAppRunning
+  # Validate before running helpers or writing anything beneath the target.
+  ${If} $INSTDIR == ""
+    MessageBox MB_OK|MB_ICONSTOP "安装目录无效，请重新选择安装位置。" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  System::Call 'shlwapi::PathIsRelativeW(w "$INSTDIR")i.r0'
+  System::Call 'shlwapi::PathIsRootW(w "$INSTDIR")i.r1'
+  ${If} $0 != 0
+  ${OrIf} $1 != 0
+    MessageBox MB_OK|MB_ICONSTOP "安装目录无效，请重新选择安装位置。" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
   InitPluginsDir
   !ifdef BUILD_UNINSTALLER
     CopyFiles /SILENT "$INSTDIR\resources\screensh-platform.exe" "$PLUGINSDIR\screensh-platform.exe"
@@ -110,11 +144,20 @@
     File /oname=$PLUGINSDIR\screensh-platform.exe "${BUILD_RESOURCES_DIR}\..\res\screensh-platform.exe"
   !endif
   System::Call 'kernel32::GetCurrentProcessId()i.r0'
-  nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" stop-installed "$INSTDIR" $0 apply'
+  Delete "$PLUGINSDIR\installer-detail.txt"
+  nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" stop-installed "$INSTDIR" $0 apply --installer-report "$PLUGINSDIR\installer-detail.txt"'
   Pop $0
   Pop $1
+  !insertmacro screenshReadInstallerDetail
+  CreateDirectory "$INSTDIR\data\logs"
+  ClearErrors
+  FileOpen $R9 "$INSTDIR\data\logs\installer-check.log" a
+  ${IfNot} ${Errors}
+    !insertmacro screenshWriteInstallerLog "stop-installed"
+    FileClose $R9
+  ${EndIf}
   ${If} $0 != 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Please close ScreenSh and retry. Application data has been preserved." /SD IDOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "安装前检查未通过（返回码 $0）。$\r$\n$1$\r$\n$\r$\n个人数据已保留。$\r$\n日志：$INSTDIR\data\logs\installer-check.log" /SD IDOK
     SetErrorLevel 2
     Quit
   ${EndIf}
@@ -124,11 +167,19 @@
     File /oname=$PLUGINSDIR\native-uninstaller.exe "${UNINSTALLER_OUT_FILE}"
     ReadRegStr $R2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
     ${If} $R2 != ""
-      nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" prepare-upgrade "$R2" "$PLUGINSDIR\native-uninstaller.exe"'
+      Delete "$PLUGINSDIR\installer-detail.txt"
+      nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" prepare-upgrade "$R2" "$PLUGINSDIR\native-uninstaller.exe" --installer-report "$PLUGINSDIR\installer-detail.txt"'
       Pop $0
       Pop $1
+      !insertmacro screenshReadInstallerDetail
+      ClearErrors
+      FileOpen $R9 "$INSTDIR\data\logs\installer-check.log" a
+      ${IfNot} ${Errors}
+        !insertmacro screenshWriteInstallerLog "prepare-upgrade"
+        FileClose $R9
+      ${EndIf}
       ${If} $0 != 0
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Cannot prepare ScreenSh upgrade; data has been preserved." /SD IDOK
+        MessageBox MB_OK|MB_ICONEXCLAMATION "准备覆盖升级时失败（返回码 $0）。$\r$\n$1$\r$\n$\r$\n个人数据已保留。$\r$\n日志：$INSTDIR\data\logs\installer-check.log" /SD IDOK
         SetErrorLevel 2
         Quit
       ${EndIf}

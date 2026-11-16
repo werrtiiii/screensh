@@ -232,14 +232,40 @@ namespace ScreenSh.Windows
         internal static int StopInstalled(string root, int installer, bool inspect)
         {
             root = Full(root);
-            var rows = Processes().Where(r => !String.IsNullOrEmpty(S(r, "path")) && Inside(S(r, "path"), root) && !Inside(S(r, "path"), Path.Combine(root, "data")) && (int)r["pid"] != installer && (int)r["pid"] != Process.GetCurrentProcess().Id).ToList();
+            // Installation must not depend on WMI availability or its COM
+            // permissions. Inspect native image paths; protected OS processes
+            // cannot own files in this installation and are left untouched.
+            var rows = new List<Dictionary<string, object>>();
+            int self = Process.GetCurrentProcess().Id;
+            foreach (var process in Process.GetProcesses())
+            {
+                using (process)
+                {
+                    int pid = process.Id;
+                    if (pid == installer || pid == self) continue;
+                    IntPtr handle = OpenProcess(0x1000, false, pid);
+                    if (handle == IntPtr.Zero) continue;
+                    try
+                    {
+                        var image = new StringBuilder(32768); int size = image.Capacity;
+                        if (!QueryFullProcessImageName(handle, 0, image, ref size)) continue;
+                        string file = image.ToString();
+                        if (Inside(file, root) && !Inside(file, Path.Combine(root, "data")))
+                            rows.Add(Obj("pid", pid, "path", file));
+                    }
+                    finally { CloseHandle(handle); }
+                }
+            }
             if (inspect)
             {
                 Console.WriteLine(Json.Serialize(rows));
                 return 0;
             }
             foreach (var row in rows)
-                StopChecked((int)row["pid"], S(row, "path"));
+            {
+                try { StopChecked((int)row["pid"], S(row, "path")); }
+                catch (Exception error) { throw new IOException("Cannot close installed process PID " + row["pid"] + " (" + S(row, "path") + "): " + error.Message, error); }
+            }
             return 0;
         }
         internal static void PrepareUpgrade(string root, string replacement)

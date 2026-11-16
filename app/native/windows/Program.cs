@@ -10,8 +10,24 @@ namespace ScreenSh.Windows
         {
             AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
             AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
+            string installerReport = null;
+#if !UPDATER
+            if (args.Length >= 2 && args[args.Length - 2] == "--installer-report")
+            {
+                installerReport = args[args.Length - 1];
+                args = args.Take(args.Length - 2).ToArray();
+            }
+#endif
             try
             {
+#if !UPDATER
+                if (installerReport != null)
+                {
+                    if (!Path.IsPathRooted(installerReport) || args.Length == 0 || (args[0] != "stop-installed" && args[0] != "prepare-upgrade"))
+                        throw new ArgumentException("Invalid installer report arguments");
+                    File.WriteAllText(installerReport, "OK", new System.Text.UnicodeEncoding(false, false));
+                }
+#endif
 #if UPDATER
                 if (args.Length == 0 && Path.GetFileName(Common.Self).Equals("recover.exe", StringComparison.OrdinalIgnoreCase))
                 {
@@ -78,6 +94,8 @@ namespace ScreenSh.Windows
             }
             catch (Exception error)
             {
+                if (installerReport != null)
+                    try { File.WriteAllText(installerReport, error.Message.Replace('\r', ' ').Replace('\n', ' '), new System.Text.UnicodeEncoding(false, false)); } catch { }
                 try
                 {
                     Console.Error.WriteLine(Environment.GetEnvironmentVariable("SCREENSH_HELPER_DEBUG") == "1" ? error.ToString() : error.Message);

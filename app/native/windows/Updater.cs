@@ -447,6 +447,7 @@ namespace ScreenSh.Windows
                 using (var process = Process.Start(info))
                 {
                     process.WaitForExit();
+                    Common.Write(Path.Combine(stage, "bootstrap-result.json"), Common.Obj("exitCode", process.ExitCode, "root", root));
                     return process.ExitCode;
                 }
             }
