@@ -35,6 +35,24 @@ test('busy backup cleanup is retried on a later healthy startup',async t=>{
   const report=await cleanupTransactions(f.root,'9.0.0');assert.deepEqual(report.deferred,[old.id]);assert.ok(fs.existsSync(path.join(old.directory,'backup')));
   t.mock.restoreAll();await cleanupTransactions(f.root,'9.0.0');assert.equal(fs.existsSync(path.join(old.directory,'backup')),false);
 });
+
+test('full setup backups survive until the installed version confirms startup',async t=>{
+  const f=fixture(t),setup=f.transaction('awaiting-startup'),file=path.join(setup.directory,'journal.json');
+  fs.writeFileSync(file,JSON.stringify({root:f.root,kind:'setup',phase:'awaiting-startup',version:'9.0.0'}));
+  assert.deepEqual(confirmPortableStartup(f.root,'8.0.0'),[]);
+  await cleanupTransactions(f.root,'9.0.0');assert.ok(fs.existsSync(path.join(setup.directory,'backup/old.dll')));
+  await cleanupTransactions(f.root,'9.0.0',confirmPortableStartup(f.root,'9.0.0'));
+  assert.equal(fs.existsSync(path.join(setup.directory,'backup')),false);
+  assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).phase,'confirmed');
+});
+
+test('startup cannot retire a full setup backup while its installer can still fail',async t=>{
+  const f=fixture(t),setup=f.transaction('applied'),file=path.join(setup.directory,'journal.json');
+  fs.writeFileSync(file,JSON.stringify({root:f.root,kind:'setup',phase:'applied',version:'9.0.0'}));
+  const skip=confirmPortableStartup(f.root,'9.0.0');
+  assert.ok(skip.includes(setup.id));assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).phase,'applied');
+  await cleanupTransactions(f.root,'9.0.0',skip);assert.ok(fs.existsSync(path.join(setup.directory,'backup/old.dll')));
+});
 test('backup links and journals for a different installation never cause deletion',async t=>{
   const f=fixture(t),linked=f.transaction('confirmed'),foreign=f.transaction('confirmed');
   const outside=path.join(f.root,'outside');fs.mkdirSync(outside);fs.writeFileSync(path.join(outside,'keep'),'keep');

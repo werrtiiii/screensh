@@ -68,7 +68,7 @@ body {
 /* ===== 自定义标题栏 (无边框窗口) ===== */
 .custom-titlebar {
   display: flex;
-  height: 38px;
+  height: var(--titlebar-height, 32px);
   background: var(--glass-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -209,10 +209,6 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 }
 .server-bar input { width: 180px; font-size: 12px; padding: 4px 8px; border: none; background: transparent; }
 .server-bar input:focus { box-shadow: none; border: none; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.status-dot.connected { background: var(--green); }
-.status-dot.disconnected { background: var(--danger); }
-.status-dot.reconnecting { background: #f0b232; }
 
 /* ===== Room ===== */
 .room-topbar {
@@ -490,7 +486,7 @@ input[type="text"]::placeholder { color: var(--text2); opacity: 0.5; }
 .lobby-card { max-width: calc(100vw - 32px); }
 
 .modal {
-  position: fixed; top: 38px; left: 0; right: 0; bottom: 0; padding: 12px; overflow: auto;
+  position: fixed; top: var(--titlebar-height, 32px); left: 0; right: 0; bottom: 0; padding: 12px; overflow: auto;
   background: rgba(0, 0, 0, 0.4); z-index: 1000;
   display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -718,12 +714,12 @@ input.sound-volume-slider {
 .settings-icon { width: 24px; height: 24px; display: block; pointer-events: none; }
 .settings-trigger:hover { color: #fff; background: #475569; }
 .room-topbar { flex: 0 0 auto; }
-#room .room-topbar { position: absolute; left: var(--workspace-sidebar-width); right: 0; top: 0; z-index: 4; }
+#room .room-topbar { position: relative; z-index: 4; }
 #room .room-info { min-width: 0; flex: 1; }
 #room .room-label { white-space: nowrap; flex-shrink: 0; }
 #channelNameDisplay { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #room .room-actions { flex-shrink: 0; flex-wrap: nowrap; }
-#room .room-main { flex: 1; min-width: 0; padding-top: 64px; }
+#room .room-main { flex: 1; min-width: 0; padding-top: 0; }
 #room .sidebar { width: 240px; }
 #room .sidebar { min-height: 0; overflow: hidden; flex-shrink: 0; }
 #room .server-members-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; border-bottom: 0; }

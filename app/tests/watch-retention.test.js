@@ -19,7 +19,7 @@ function fixture() {
   }
   const context = { state, roomUsers, $, socket: { id: 'self', emit: (...args) => events.push(args) }, console,
     document: { pictureInPictureElement: null }, MediaStream: Stream, WhepSession: Session,
-    getIceServers() {}, toast() {}, attachVideoStats: () => () => {},
+    getIceServers() {}, toast() {}, attachVideoStats: () => () => {}, attachLivePlayback: () => () => {},
     watchNetwork: () => () => {},
     setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id) };
   vm.createContext(context);

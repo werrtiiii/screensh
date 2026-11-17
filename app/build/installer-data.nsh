@@ -2,6 +2,10 @@
   !include "${__FILEDIR__}\installer-ui.nsh"
 !endif
 
+!ifndef BUILD_UNINSTALLER
+  Var screenshSetupTransaction
+!endif
+
 !macro customInit
   !ifndef BUILD_UNINSTALLER
     # Old clients launch setup from data/updates and pass data/temp as TEMP.
@@ -165,7 +169,24 @@
     # Replace the legacy uninstaller before electron-builder invokes it. This
     # prevents an older installation from reintroducing script dependencies.
     File /oname=$PLUGINSDIR\native-uninstaller.exe "${UNINSTALLER_OUT_FILE}"
+    !ifdef VERSION
+      File /oname=$PLUGINSDIR\screensh-updater.exe "${BUILD_RESOURCES_DIR}\..\res\screensh-updater.exe"
+      System::Call 'kernel32::GetCurrentProcessId()i.r0'
+      nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" prepare-setup "$INSTDIR" "${VERSION}" $0 "$PLUGINSDIR\screensh-updater.exe" "${INSTALL_REGISTRY_KEY}" "${UNINSTALL_REGISTRY_KEY}" "$PLUGINSDIR\native-uninstaller.exe" --installer-report "$PLUGINSDIR\installer-detail.txt"'
+      Pop $0
+      Pop $1
+      !insertmacro screenshReadInstallerDetail
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONEXCLAMATION "无法备份旧版本，安装已停止。$\r$\n$1" /SD IDOK
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      StrCpy $screenshSetupTransaction $1
+    !else
     ReadRegStr $R2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${If} $R2 == ""
+      ReadRegStr $R2 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${EndIf}
     ${If} $R2 != ""
       Delete "$PLUGINSDIR\installer-detail.txt"
       nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" prepare-upgrade "$R2" "$PLUGINSDIR\native-uninstaller.exe" --installer-report "$PLUGINSDIR\installer-detail.txt"'
@@ -184,7 +205,20 @@
         Quit
       ${EndIf}
     ${EndIf}
+    !endif
   !endif
+!macroend
+
+!macro customInstall
+  ${If} $screenshSetupTransaction != ""
+    nsExec::ExecToStack '"$PLUGINSDIR\screensh-platform.exe" complete-setup "$screenshSetupTransaction"'
+    Pop $0
+    Pop $1
+    ${If} $0 != 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro customRemoveFiles

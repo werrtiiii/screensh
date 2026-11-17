@@ -15,6 +15,12 @@ app.on('window-all-closed', () => {});
 let stops = 0, captureConfig, attempts = 0, networkPeers;
 let hardwareAcceleration = false;
 ipcMain.handle('voice-stop', () => true);
+for (const [name, value] of Object.entries({
+  'lolping-get': {config:{enabled:false}}, 'lolping-sync':null, 'get-login-startup':false,
+  'get-update-settings':{enabled:true,status:'current',currentVersion:'1.5.7'},
+  'get-update-acceleration':{enabled:true,source:'https://gh-proxy.com',customUrl:'',sources:['https://gh-proxy.com']},
+  'confirm-startup':null,'set-voice-timing':null,'save-server-password':null,'get-saved-server-password':'','get-video-diagnostics':null,
+})) ipcMain.handle(name,()=>value);
 ipcMain.handle('voice-devices', () => [{ id: 'default', name: '测试麦克风' }]);
 ipcMain.handle('get-hardware-acceleration', () => hardwareAcceleration);
 ipcMain.handle('set-hardware-acceleration', (_event, enabled) => { hardwareAcceleration = enabled; return enabled; });
@@ -63,6 +69,8 @@ app.whenReady().then(async () => {
       captureMethod.dispatchEvent(new Event('change', { bubbles: true }));
       const encoder = document.querySelector('#videoEncoderSelect');
       encoder.value = 'amf'; encoder.dispatchEvent(new Event('change', { bubbles: true }));
+      const fps = document.querySelector('#frameRateSelect');fps.value='30';fps.dispatchEvent(new Event('change',{bubbles:true}));
+      document.querySelector('#autoBitrateCheckbox').click();
       if(document.querySelector('#lowBandwidthCheckbox')) throw Error('Removed low bandwidth mode still visible');
       const adaptive=document.querySelector('#adaptiveResolutionCheckbox');if(adaptive.checked)throw Error('Adaptive resolution must default off');adaptive.click();
       if(getComputedStyle(hardware).borderRadius!=='999px' || hardware.getAttribute('role')!=='switch') throw Error('Settings switch style missing');
@@ -86,7 +94,7 @@ app.whenReady().then(async () => {
       const enter = new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true});
       $('#serverUrl').dispatchEvent(enter);
       await new Promise(r=>setTimeout(r,50));
-      if (!enter.defaultPrevented || state.joining) throw new Error('Enter still starts a connection');
+      if (enter.defaultPrevented || state.joining) throw new Error('Synthetic Enter must allow native form behavior without directly starting a connection');
       $('#btnConnect').click();
       await until(()=>[...document.querySelectorAll('.toast-msg')].some(n=>n.textContent.includes('无法连接到服务器，请检查服务器地址')));
       await until(()=>!state.joining && !state.leaving);
@@ -146,6 +154,7 @@ app.whenReady().then(async () => {
       const { WhepSession } = await import('./whep.mjs');
       let previewUrl;
       WhepSession.prototype.start = async function () { previewUrl = this.url; Object.defineProperty(this.pc, 'connectionState', { value: 'connected' }); };
+      $('.screen-item').click();
       $('#btnConfirmShare').click();
       await until(() => $('#videoContainer video'));
       const autoPreview = state.watchingId === (await import('./signaling.js')).socket.id
@@ -176,7 +185,7 @@ app.whenReady().then(async () => {
         jitterBufferDelay: 1, totalDecodeTime: 0.1
       }]]) });
       probe.querySelector('button').click();
-      await until(() => probe.querySelector('.is-abnormal')?.textContent.includes('暂停估算'));
+      await until(() => probe.querySelector('.is-abnormal')?.textContent.includes('本秒无解码帧'));
       if (!probe.querySelector('.is-abnormal')?.textContent.includes('⚠')) throw new Error('Missing abnormal warning');
       disposeProbe(); probe.remove();
       $('#btnStopWatch').click();

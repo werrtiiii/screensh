@@ -50,12 +50,14 @@ function runtime(options={}) {
   }
   const electron = {
     app: { commandLine:{appendSwitch(){},getSwitchValue(){return '';}}, isPackaged: false, getPath: () => '.', requestSingleInstanceLock: () => true, whenReady: () => ({ then: fn => fn() }), on() {} },
-    BrowserWindow: class { constructor() { this.webContents = { on() {}, send() {} }; } loadFile() {} },
+    BrowserWindow: class { constructor() { this.webContents = { on() {}, send() {} }; } loadFile() {} setBounds() {} },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} },
     screen: {},
     Menu: { setApplicationMenu() {} },
   };
   const dependencies = {
+    './main/window-state.cjs': {createWindowState:()=>({read:()=>({bounds:{width:1200,height:800},maximized:false}),track(){}})},
+    './main/window-material.cjs': {attachWindowMaterial(){}},
     './main/easytier-firewall.cjs': { createEasyTierFirewall: () => ({interfaceName:'ScreenSh-0123456789abcdef',cleanup:async()=>{}}) },
     './main/tray-controller.cjs': { createTrayController: () => ({ attach() {}, show() {}, destroy() {} }) },
     electron, './main/capture-sources': {}, './main/managed-process': { ManagedProcess: FakeProcess },

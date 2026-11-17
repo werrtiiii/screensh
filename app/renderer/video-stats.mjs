@@ -56,10 +56,12 @@ export function sampleVideoStats(report, previous, diagnostics) {
 
 export function attachVideoStats(container, pc) {
   const button = document.createElement('button');
-  button.className = 'video-debug-button'; button.textContent = '调试';
+  button.type = 'button'; button.className = 'video-debug-button'; button.textContent = '?';
+  button.title = '观看诊断信息'; button.setAttribute('aria-label', '观看诊断信息');
   button.setAttribute('aria-expanded', 'false'); button.setAttribute('aria-controls', 'videoDebugPanel');
   const panel = document.createElement('div');
   panel.id = 'videoDebugPanel'; panel.className = 'video-debug-panel hidden';
+  panel.setAttribute('role', 'region'); panel.setAttribute('aria-label', '观看诊断信息');
   container.append(button, panel);
   let timer, previous, disposed = false, generation = 0, pending = false;
   function render(rows) {

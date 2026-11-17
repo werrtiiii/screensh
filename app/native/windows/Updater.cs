@@ -130,8 +130,14 @@ namespace ScreenSh.Windows
                 throw new IOException("Invalid recovery transaction");
             Common.Tree(tx);
             journal = Common.Read(Path.Combine(tx, "journal.json"));
-            if (!Common.CI.Equals(Common.S(journal, "root"), job.Root) || !new[] { "applying", "applied", "rolling-back" }.Contains(Common.S(journal, "phase")))
+            if (!Common.CI.Equals(Common.S(journal, "root"), job.Root) || !new[] { "applying", "applied", "rolling-back", "awaiting-startup" }.Contains(Common.S(journal, "phase")))
                 throw new IOException("Transaction does not need recovery");
+            if (Common.S(journal, "kind") == "setup")
+            {
+                SetupUpdate.Recover(tx);
+                job.Result(Common.Obj("success", true, "restored", true));
+                return;
+            }
             foreach (var item in Rows(journal["items"]))
                 if (Relative(Common.S(item, "name")) != Common.S(item, "name") || Common.S(item, "name").Contains("\\"))
                     throw new IOException("Invalid recovery item");
@@ -189,7 +195,7 @@ namespace ScreenSh.Windows
                 {
                     string file = Path.Combine(previous, "journal.json");
                     Common.NoLinks(file);
-                    if (File.Exists(file) && new[] { "applying", "applied", "rolling-back" }.Contains(Common.S(Common.Read(file), "phase")))
+                    if (File.Exists(file) && new[] { "applying", "applied", "rolling-back", "awaiting-startup" }.Contains(Common.S(Common.Read(file), "phase")))
                     {
                         // Upgrade the recovery entry point of legacy transactions
                         // without executing or deleting their old scripts/backups.

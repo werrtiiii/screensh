@@ -123,11 +123,9 @@ export function connectServer(url = (state.roomId && connectedServerEndpoint) ||
   connectedServerUrl = address; bookmarkSocketId = null;
   connectedServerEndpoint = url;
   socket = io(url, { transports: ['polling', 'websocket'], tryAllTransports: true, timeout: 5000, reconnection: false });
-  socket.on('connect', () => { $('#serverStatus').className = 'status-dot connected'; });
   socket.on('disconnect', reason => {
     stopLolPing();
     resetInteractions();
-    $('#serverStatus').className = 'status-dot disconnected';
     if (state.roomId && !state.leaving && !kickedOut && reason !== 'io client disconnect') startReconnect();
   });
   socket.on('server-update', applyServerState);
@@ -199,7 +197,6 @@ function startReconnect() {
   const previousChannel = state.channelId;
   const generation = reconnectGeneration;
   const voiceStopping = window.channelVoice?.stop({ keepTest: true });
-  $('#serverStatus').className = 'status-dot reconnecting';
   toast('与服务器连接中断，正在重连…', 'error');
   reconnectPromise = (async () => {
     let lastError = null;
@@ -211,7 +208,6 @@ function startReconnect() {
     while (Date.now() < deadline && state.roomId && !state.leaving && !kickedOut) {
       try {
         await reconnectJoin(deadline, previousChannel);
-        $('#serverStatus').className = 'status-dot connected';
         reconnectPromise = null;
         window.channelVoice?.sync();
         return;

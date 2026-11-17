@@ -33,7 +33,7 @@ export function syncLolPing(supported) {
     if (socket?.connected && state.roomId && serverSupport) await requestServer('lolping-enable', { enabled: enabled && !!endpoint, channelId: context?.channelId, endpoint });
     if (token !== generation) return;
     $('#lolPingEnabled').checked = !!data?.config.enabled;
-    statusText(enabled ? (context.channelId&&data.config.features.rooms?'已启用 · 与同频道成员共享':'已启用 · 仅自己可见') : '开启后可在本机使用，进入频道后与成员共享');
+    statusText(enabled ? '已启用' : '未启用');
   })().catch(error => { if (token === generation) { statusText(error.message); syncingKey = null; } });
 }
 export function stopLolPing() {
@@ -79,7 +79,7 @@ function capture(button,key,kind) {
     const listen=e=>{e.preventDefault();e.stopPropagation();if(e.code==='Escape'){end();return;}const vk=codeToVk(e.code);if(vk===null)return;
       if(kind==='trigger'&&UNSAFE_TRIGGER_VKS.includes(vk)){$('#lolPingError').textContent='请选择其他按键，回车、空格和导航键保留给正常输入';return;}
       const mods=eventMods(e);if(kind==='hotkey'&&!(mods&11)){$('#lolPingError').textContent='快捷键必须包含 Ctrl、Alt 或 Win';return;}
-      key.value=kind==='hotkey'?{mods,vk}:kind==='trigger'?{vk}:vk;$('#lolPingError').textContent='';end();};
+      key.value=kind==='hotkey'?{mods,vk}:kind==='trigger'?{vk}:vk;$('#lolPingError').textContent='';end();scheduleSave();};
     captureEnd=end;document.addEventListener('keydown',listen,true);window.addEventListener('blur',end,{once:true});button.addEventListener('blur',end,{once:true});
   };
 }
@@ -113,7 +113,7 @@ function renderFields(data) {
     const named=p=>names[p.id]||p.name;
     const decorate=(b,p)=>{b.textContent='';const image=document.createElement('img');image.src=kind==='ping'?`../lolping/dist/renderer/textures/${p.icon}.png`:`../lolping/dist/renderer/emotes/${p.id}.png`;image.alt='';image.draggable=false;b.append(image,document.createTextNode(named(p)));};
     const draw=()=>{wheel.replaceChildren();for(let i=0;i<9;i++){const item=catalog.find(p=>p.id===(i===8?center:values[i]));const b=document.createElement('button');b.type='button';decorate(b,item);b.title=i===8?'中心：单击信号':'点击预览，拖动可调整位置';b.draggable=true;if(i===8){b.style.left='50%';b.style.top='50%';}else{b.style.left=50+36*Math.sin(i*Math.PI/4)+'%';b.style.top=50-36*Math.cos(i*Math.PI/4)+'%';}b.onclick=()=>api().previewLolPing?.(kind,item.id).catch(error=>toast(error.message,'error'));b.ondragstart=e=>e.dataTransfer.setData('text/plain',JSON.stringify({key,id:item.id}));b.ondragover=e=>e.preventDefault();b.ondrop=e=>{e.preventDefault();try{const p=JSON.parse(e.dataTransfer.getData('text/plain'));if(p.key!==key||!catalog.some(c=>c.id===p.id))return;if(i===8)center=p.id;else{const old=values.indexOf(p.id);if(old>=0)values[old]=values[i];values[i]=p.id;}apply();}catch{}};wheel.append(b);}};
-    const apply=()=>{for(let i=0;i<8;i++)details.querySelector(`[name="${key+i}"]`).value=values[i];const c=container.querySelector(`[name="${centerKey}"]`);if(c)c.value=center;draw();};
+    const apply=()=>{for(let i=0;i<8;i++)details.querySelector(`[name="${key+i}"]`).value=values[i];const c=container.querySelector(`[name="${centerKey}"]`);if(c)c.value=center;draw();scheduleSave();};
     wheelCenters[centerKey]=value=>{center=value;draw();};
     for(let i=0;i<8;i++)details.querySelector(`[name="${key+i}"]`).onchange=e=>{const old=values.indexOf(e.target.value);if(old>=0)values[old]=values[i];values[i]=e.target.value;apply();};
     const palette=document.createElement('div');palette.className='lolping-palette';for(const p of catalog){const b=document.createElement('button');b.type='button';decorate(b,p);b.draggable=true;b.ondragstart=e=>e.dataTransfer.setData('text/plain',JSON.stringify({key,id:p.id}));b.onclick=()=>api().previewLolPing?.(kind,p.id).catch(error=>toast(error.message,'error'));palette.append(b);}editor.append(palette);
@@ -124,23 +124,62 @@ function renderFields(data) {
   visibility();
 }
 $('#btnLolPingConfig')?.addEventListener('click', async () => {
-  try { const data = await load(); if (!data) return; renderFields(data); $('#lolPingError').textContent = ''; $('#lolPingDialog').classList.remove('hidden'); }
+  try {
+    const data = await load();
+    if (!data || !$('#lolPingDialog').classList.contains('hidden')) return;
+    renderFields(data); savedPatch = JSON.stringify(readPatch());
+    $('#lolPingError').textContent = ''; $('#lolPingDialog').classList.remove('hidden');
+  }
   catch (error) { toast(error.message, 'error'); }
 });
-$('#btnCloseLolPing')?.addEventListener('click', () => {captureEnd?.();$('#lolPingDialog').classList.add('hidden');});
-$('#lolPingForm')?.addEventListener('submit', async event => {
-  event.preventDefault(); const form = event.target, patch = {}; $('#btnSaveLolPing').disabled = true; $('#lolPingError').textContent = '';
-  try {
-    for (const [key,,type] of fields) { const input = form.elements.namedItem(key); patch[key] = type === 'checkbox' ? input.checked : type === 'range' ? Number(input.value) : input.value; }
-    captureEnd?.();for(const key of ['trigger','emoteTrigger'])if(patch[key]==='custom')patch[key]=keyValues[key].value;
-    for(const key of ['toggleHotkey','textHotkey','panelKey'])patch[key]=keyValues[key].value;
-    patch.features=Object.fromEntries(Object.entries(featureInputs).map(([key,input])=>[key,input.checked]));
-    for (const key of ['wheel','emoteWheel']) { patch[key] = Array.from({length:8},(_,i)=>form.elements.namedItem(key+i).value); if (new Set(patch[key]).size !== 8) throw Error('轮盘中的 8 个选项不能重复'); }
-    if (JSON.stringify(patch.trigger) === JSON.stringify(patch.emoteTrigger)) throw Error('标记与表情不能使用相同触发键');
-    for (const key of ['clickPingId','clickEmoteId']) patch[key] = form.elements.namedItem(key).value;
-    const data = await api().saveLolPing(CONFIG_ID, patch);
-    cached = data; syncingKey = null; syncLolPing(); $('#lolPingDialog').classList.add('hidden');
-  } catch (error) { $('#lolPingError').textContent = error.message; }
-  finally { $('#btnSaveLolPing').disabled = false; }
+let saveTimer, saving, savedPatch;
+function readPatch() {
+  const form = $('#lolPingForm'), patch = {};
+  for (const [key,,type] of fields) { const input = form.elements.namedItem(key); patch[key] = type === 'checkbox' ? input.checked : type === 'range' ? Number(input.value) : input.value; }
+  for (const key of ['trigger','emoteTrigger']) if (patch[key] === 'custom') patch[key] = keyValues[key].value;
+  for (const key of ['toggleHotkey','textHotkey','panelKey']) patch[key] = keyValues[key].value;
+  patch.features = Object.fromEntries(Object.entries(featureInputs).map(([key,input]) => [key,input.checked]));
+  for (const key of ['wheel','emoteWheel']) {
+    patch[key] = Array.from({length:8}, (_,i) => form.elements.namedItem(key+i).value);
+    if (new Set(patch[key]).size !== 8) throw Error('轮盘中的 8 个选项不能重复');
+  }
+  if (JSON.stringify(patch.trigger) === JSON.stringify(patch.emoteTrigger)) throw Error('标记与表情不能使用相同触发键');
+  for (const key of ['clickPingId','clickEmoteId']) patch[key] = form.elements.namedItem(key).value;
+  return patch;
+}
+function scheduleSave(delay = 0) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { void saveChanges(); }, delay);
+}
+function saveChanges() {
+  clearTimeout(saveTimer);
+  if (saving) return saving;
+  // Serialize writes and collect the latest draft again after each response.
+  saving = (async () => {
+    try {
+      for (;;) {
+        const patch = readPatch(), signature = JSON.stringify(patch);
+        $('#lolPingError').textContent = '';
+        if (signature === savedPatch) return true;
+        const data = await api().saveLolPing(CONFIG_ID, patch);
+        savedPatch = signature; cached = data; syncingKey = null; syncLolPing();
+      }
+    } catch (error) { $('#lolPingError').textContent = error.message; return false; }
+  })().finally(() => { saving = null; });
+  return saving;
+}
+export async function closeLolPingConfig() {
+  if ($('#lolPingDialog').classList.contains('hidden')) return;
+  captureEnd?.();
+  if (await saveChanges()) $('#lolPingDialog').classList.add('hidden');
+}
+$('#btnCloseLolPing')?.addEventListener('click', () => { void closeLolPingConfig(); });
+$('#lolPingDialog')?.addEventListener('click', event => {
+  if (event.target === event.currentTarget) void closeLolPingConfig();
+});
+$('#lolPingForm')?.addEventListener('input', () => scheduleSave(250));
+$('#lolPingForm')?.addEventListener('change', () => scheduleSave());
+$('#lolPingForm')?.addEventListener('submit', event => {
+  event.preventDefault(); void saveChanges();
 });
 void load().then(() => syncLolPing()).catch(error => statusText(error.message));

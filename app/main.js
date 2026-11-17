@@ -210,10 +210,20 @@ require('./main/realtime-policy.cjs').configureRealtimeScheduling(app.commandLin
 function createWindow() {
   Menu.setApplicationMenu(null);
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure, 'http://127.0.0.1:8889/live/whip', true);
-  mainWindow = new BrowserWindow({ width: 1200, height: 800, minWidth: 960, minHeight: 640, frame: false,
+  const nativeGlass = process.platform === 'win32' && Number(os.release().split('.')[2]) >= 22621;
+  const windowState=require('./main/window-state.cjs').createWindowState({file:path.join(app.getPath('userData'),'window-state.json'),screen});
+  const savedWindow=windowState.read();
+  mainWindow = new BrowserWindow({ ...savedWindow.bounds, minWidth: 960, minHeight: 640, frame: false,
+    backgroundColor: nativeGlass ? '#00000000' : '#f6f7f9',
+    ...(nativeGlass ? { backgroundMaterial: 'acrylic' } : {}),
     icon: path.join(__dirname, 'assets/branding/icon.png'),
-    webPreferences: { preload: path.join(__dirname, "./preload.js"), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged },
+    webPreferences: { preload: path.join(__dirname, "./preload.js"), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, devTools: !app.isPackaged, additionalArguments: nativeGlass ? ['--screensh-native-glass'] : [] },
   });
+  // Reapply outer bounds: Windows frameless creation can add a few pixels.
+  mainWindow.setBounds(savedWindow.bounds);
+  windowState.track(mainWindow);
+  require('./main/window-material.cjs').attachWindowMaterial(mainWindow, { nativeGlass });
+  if(savedWindow.maximized)mainWindow.maximize();
   trayController?.attach(mainWindow);
   mainWindow.webContents.on('render-process-gone', () => { void lolping?.stop().catch(failure); });
   mainWindow.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {

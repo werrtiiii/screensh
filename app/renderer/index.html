@@ -15,22 +15,24 @@
   <div id="app">
     <div class="custom-titlebar">
       <div class="titlebar-drag-region">
-        <span class="titlebar-title" aria-hidden="true"></span>
+        <span class="titlebar-title" aria-hidden="true">ScreenSh</span>
       </div>
       <div class="titlebar-controls">
-        <button id="btnMinWindow" class="control-btn minimize-btn" title="最小化" aria-label="最小化">−</button>
-        <button id="btnMaxWindow" class="control-btn maximize-btn" title="最大化" aria-label="最大化">□</button>
-        <button id="btnCloseWindow" class="control-btn close-btn" title="关闭" aria-label="关闭">×</button>
+        <button id="btnMinWindow" type="button" class="control-btn minimize-btn" title="最小化" aria-label="最小化"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12" /></svg></button>
+        <button id="btnMaxWindow" type="button" class="control-btn maximize-btn" title="最大化" aria-label="最大化"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg></button>
+        <button id="btnCloseWindow" type="button" class="control-btn close-btn" title="关闭" aria-label="关闭"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m2.5 2.5 11 11m0-11-11 11" /></svg></button>
       </div>
     </div>
 
     <!-- ===== Lobby ===== -->
     <div id="lobby" class="screen active workspace-screen">
       <aside class="workspace-sidebar lobby-sidebar">
-        <div class="sidebar-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="serverSearch" type="text" placeholder="搜索服务器" aria-label="搜索服务器" /></div>
+        <div class="sidebar-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="serverSearch" type="text" placeholder="搜索服务器" aria-label="搜索服务器" /><button id="btnClearServerSearch" type="button" class="icon-btn" aria-label="清空搜索" hidden>×</button></div>
+        <p id="bookmarkSearchCount" class="bookmark-search-status" role="status" aria-live="polite"></p>
         <div class="nav-section-title"><span>服务器</span><div class="section-actions"><button id="btnAddBookmark" class="icon-btn" title="添加服务器">＋</button><button id="btnCollapseBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
         <form id="bookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="bookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
         <div id="bookmarkList" class="bookmark-list"></div>
+        <p id="bookmarkSearchEmpty" class="bookmark-search-status" hidden></p>
         <div class="sidebar-spacer"></div>
         <div class="profile-bar">
           <label class="profile-avatar profile-avatar-button" id="btnAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label><input id="avatarInput" class="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
@@ -39,17 +41,16 @@
         </div>
       </aside>
       <main class="empty-workspace">
-        <div class="lobby-connect-panel">
+        <form id="serverConnectForm" class="lobby-connect-panel">
           <span class="connect-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="24" height="17" rx="4"/><path d="M12 27h8m-4-5v5m-5-13 4 3 6-6"/></svg></span>
-          <h1>选择一个服务器开始</h1>
-          <p>从左侧书签选择服务器，或输入地址连接。</p>
+          <h1>连接到服务器</h1>
+          <p>选择左侧书签，或输入服务器地址。</p>
+          <label for="serverUrl" class="server-address-label">服务器地址</label>
           <div class="connect-inline">
             <input type="text" id="serverUrl" placeholder="域名或 IP，可附加端口" aria-label="服务器地址" />
-            <button id="btnTestServer" class="btn btn-outline btn-sm">检测</button>
-            <span id="serverStatus" class="status-dot disconnected"></span>
           </div>
-          <button id="btnConnect" class="btn btn-primary">连接服务器</button>
-        </div>
+          <button id="btnConnect" type="submit" class="btn btn-primary">连接服务器</button>
+        </form>
       </main>
       <aside class="right-blank-panel hidden"></aside>
       <div class="legacy-lobby-fields hidden">
@@ -76,29 +77,27 @@
           <button id="btnRoomSettings" class="icon-btn settings-trigger" title="系统设置" aria-label="系统设置"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.7 4.3 10.2 2h3.6l.5 2.3 1.7 1 2.2-.7 1.8 3.1-1.7 1.6v2l1.7 1.6-1.8 3.1-2.2-.7-1.7 1-.5 2.3h-3.6l-.5-2.3-1.7-1-2.2.7L4 13.9l1.7-1.6v-2L4 8.7l1.8-3.1 2.2.7z" transform="translate(0 1.5)"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
       </aside>
-      <div class="room-topbar">
-        <div class="room-info" style="display: flex; align-items: center; gap: 8px;">
-          <span id="currentChannelIcon" aria-hidden="true"></span><span id="channelNameDisplay"></span>
-        </div>
-        <div class="room-actions">
-          <button id="btnMemberNetwork" class="member-network-button" type="button" title="成员 IP 和网络延迟" aria-label="成员 IP 和网络延迟">?</button>
-          <button id="btnServerSettings" class="btn btn-outline btn-sm hidden">服务器设置</button>
-          <button id="btnRoomSettingsToolbar" class="btn btn-outline btn-sm">屏幕共享设置</button>
-          <button id="btnShare" class="btn btn-primary btn-sm">共享屏幕</button>
-          <button id="btnStopShare" class="btn btn-danger btn-sm hidden">停止共享</button>
-        </div>
-      </div>
-
       <div class="room-main">
         <div id="mainContent" class="main-content">
+          <div class="room-topbar">
+            <div class="room-info"><span id="currentChannelIcon" aria-hidden="true"></span><span id="channelNameDisplay"></span></div>
+            <div class="room-actions">
+              <button id="btnShare" class="btn btn-primary btn-sm">屏幕共享</button>
+              <button id="btnStopShare" class="btn btn-danger btn-sm hidden">停止共享</button>
+              <button id="btnRoomMore" type="button" class="icon-btn room-more-button" aria-label="更多" title="更多" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h7"/></svg></button>
+              <button id="btnToggleMembers" type="button" class="icon-btn room-more-button" aria-label="收起成员列表" title="收起成员列表" aria-controls="serverMembersSidebar" aria-expanded="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h14M3 16h14M10 10h7m-13-3 4 3-4 3"/></svg></button>
+            </div>
+            <div hidden><button id="btnMemberNetwork" type="button">成员网络</button><button id="btnServerSettings" class="hidden" type="button">服务器设置</button><button id="btnRoomSettingsToolbar" type="button">屏幕共享设置</button></div>
+          </div>
           <!-- 大厅卡片网格 -->
           <div id="userCardsView" class="cards-grid"></div>
 
           <!-- 沉浸式观看视图 -->
           <div id="activeVideoView" class="active-video-view hidden">
             <div class="video-header">
-              <button id="btnStopWatch" class="btn btn-outline btn-sm">← 返回</button>
-              <span id="viewerNames" class="viewer-names" aria-live="polite">观众（0）：暂无观众</span>
+              <button id="btnStopWatch" type="button" class="btn btn-outline btn-sm"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5-5 5 5 5M3 10h14" /></svg><span>返回</span></button>
+              <div class="watch-audience"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="7.5" cy="6.5" r="2.5"/><path d="M2.5 16v-1a5 5 0 0 1 10 0v1m1-12a2.5 2.5 0 0 1 0 5m1 3a4 4 0 0 1 3 4"/></svg><span id="viewerNames" class="viewer-names" aria-live="polite">观众（0）：暂无观众</span></div>
+              <button id="btnPip" type="button" class="btn btn-outline btn-sm watch-pip-button" title="画中画" aria-label="切换画中画"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="16" height="14" rx="2"/><rect x="9" y="9" width="7" height="5" rx="1"/></svg></button>
             </div>
             <div id="videoContainer" class="video-container"></div>
           </div>
@@ -116,7 +115,7 @@
         </div>
 
         <!-- Sidebar: users + screen sources -->
-        <div class="sidebar">
+        <div id="serverMembersSidebar" class="sidebar" aria-label="服务器成员和信息">
           <div class="side-panel">
             <div class="channel-heading"><h3>频道</h3></div>
           </div>
@@ -134,8 +133,8 @@
       </div>
     </div>
     <div id="memberNetworkDialog" class="modal hidden">
-      <div class="modal-content member-network-panel" role="dialog" aria-modal="true" aria-label="成员 IP 和网络延迟">
-        <div class="modal-header" style="justify-content:flex-end"><button id="btnCloseMemberNetwork" type="button" class="btn-close" aria-label="关闭">×</button></div>
+      <div class="modal-content member-network-panel" role="dialog" aria-modal="true" aria-labelledby="memberNetworkTitle">
+        <div class="modal-header"><h2 id="memberNetworkTitle">成员网络</h2><button id="btnCloseMemberNetwork" type="button" class="btn-close" aria-label="关闭">×</button></div>
         <table class="member-network-table"><thead><tr><th>成员</th><th>虚拟 IP</th><th>延迟</th><th>路由</th><th>协议</th></tr></thead><tbody id="memberNetworkRows"></tbody></table>
         <details id="voiceDiagnostics" class="voice-diagnostics"><summary>语音连接统计</summary><div class="voice-diagnostics-body"></div></details>
       </div>
@@ -146,11 +145,11 @@
         <div class="channel-dialog-body">
         <div class="form-group"><label for="channelNameInput">频道名称</label><input type="text" id="channelNameInput" placeholder="新频道名称" maxlength="30" required /></div>
         <div class="channel-create-options">
-          <div class="form-group channel-type-setting"><div><label for="channelTypeInput">临时频道</label><button type="button" class="help-tip" aria-label="临时频道说明" data-tooltip="临时频道在无人后5分钟自动删除。">?</button></div><input id="channelTypeInput" type="checkbox" role="switch" checked /></div>
+          <div class="form-group channel-type-setting"><div><label for="channelTypeInput">临时频道</label><button type="button" class="help-tip" aria-label="临时频道说明" data-tooltip="无人 5 分钟后自动删除。">?</button></div><input id="channelTypeInput" type="checkbox" role="switch" checked /></div>
           <div class="form-group"><label class="password-toggle" for="channelPasswordEnabled"><input id="channelPasswordEnabled" type="checkbox" role="switch" />启用频道密码</label></div>
           <div id="channelCreatePasswordFields" class="hidden"><div class="form-group"><label for="channelCreatePassword">密码</label><input id="channelCreatePassword" class="form-control" type="password" maxlength="128" autocomplete="new-password" /></div><div class="form-group"><label for="channelCreatePasswordConfirm">确认密码</label><input id="channelCreatePasswordConfirm" class="form-control" type="password" maxlength="128" autocomplete="new-password" /></div></div>
         </div>
-        <div class="channel-icon-setting"><span id="channelIconPreview" class="channel-icon-preview" aria-label="频道图标"></span><div><button id="btnChooseChannelIcon" type="button" class="btn btn-outline btn-sm">选择图标</button><button id="btnResetChannelIcon" type="button" class="btn btn-outline btn-sm">恢复默认</button><small>PNG/JPEG/WebP/GIF，最大2MB</small></div><input id="channelIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
+        <div class="channel-icon-setting"><span id="channelIconPreview" class="channel-icon-preview" aria-label="频道图标"></span><div><button id="btnChooseChannelIcon" type="button" class="btn btn-outline btn-sm">选择图标</button><button id="btnResetChannelIcon" type="button" class="btn btn-outline btn-sm">恢复默认</button><button type="button" class="help-tip" aria-label="频道图标说明" data-tooltip="支持 PNG / JPG / WebP / GIF，最大 2MB。">?</button></div><input id="channelIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         </div>
         <div class="dialog-actions"><button id="btnCreateChannel" class="btn btn-primary" type="submit">创建频道</button></div>
       </form>
@@ -158,9 +157,10 @@
     <div id="screenPicker" class="modal hidden">
       <div class="modal-content source-dialog" role="dialog" aria-modal="true" aria-labelledby="sourceDialogTitle">
         <div class="modal-header"><h2 id="sourceDialogTitle">屏幕共享</h2><button id="btnCancelPicker" class="btn-close" aria-label="关闭">×</button></div>
-        <div class="source-surface"><div class="source-tabs" role="tablist" aria-label="共享源类型"><button id="btnSourceWindows" type="button" role="tab" data-source-tab="window" aria-selected="true" aria-controls="screenList" class="source-tab active">程序</button><button id="btnSourceScreens" type="button" role="tab" data-source-tab="screen" aria-selected="false" aria-controls="screenList" class="source-tab">屏幕</button><button type="button" role="tab" data-source-tab="obs" aria-selected="false" aria-controls="externalObsPanel" class="source-tab">外部 OBS</button></div><div id="screenList" class="screen-list" role="tabpanel" aria-label="可共享的画面"></div>
+        <div class="source-surface"><div class="source-tabs" role="tablist" aria-label="共享源类型"><button id="btnSourceWindows" type="button" role="tab" data-source-tab="window" aria-selected="true" aria-controls="screenList" class="source-tab active">程序</button><button id="btnSourceScreens" type="button" role="tab" data-source-tab="screen" aria-selected="false" aria-controls="screenList" class="source-tab">屏幕</button><button type="button" role="tab" data-source-tab="obs" aria-selected="false" aria-controls="externalObsPanel" class="source-tab">外部 OBS</button><button type="button" role="tab" data-source-tab="settings" aria-selected="false" aria-controls="screenShareSettings" class="source-tab">屏幕共享设置</button></div><div id="screenList" class="screen-list" role="tabpanel" aria-label="可共享的画面"></div>
+          <section id="screenShareSettings" class="screen-share-settings hidden" role="tabpanel" aria-label="屏幕共享设置"></section>
           <section id="externalObsPanel" class="external-obs-panel hidden" role="tabpanel" aria-label="外部 OBS">
-            <p class="external-obs-help">先在 OBS 配置好场景和来源，并在「工具 → WebSocket 服务器设置」中启用服务器。<button type="button" class="help-tip" aria-label="外部 OBS 共享说明" data-tooltip="画面、声音和编码沿用 OBS 设置。开始共享时自动配置本地推流地址，结束后恢复原推流设置。">?</button></p>
+            <p class="external-obs-help">先在 OBS 配置好场景和来源，并在「工具 → WebSocket 服务器设置」中启用服务器。<button type="button" class="help-tip" aria-label="外部 OBS 共享说明" data-tooltip="沿用 OBS 的画面、声音和编码。共享时自动设置推流地址，结束后恢复。">?</button></p>
             <form class="external-obs-form">
               <label>本机端口<input class="form-control" name="obsPort" type="number" min="1024" max="65535" value="4455" required /></label>
               <label>WebSocket 密码<input class="form-control" name="obsPassword" type="password" maxlength="512" autocomplete="off" /></label>
@@ -195,32 +195,31 @@
           <div class="dialog-actions"><button id="btnSaveServerNetwork" type="submit" class="btn btn-primary btn-sm">保存组网配置</button></div>
         </form>
         <div class="server-owner-setting"><div class="server-setting-row"><span><label for="serverVideoRelayEnabled">支持外部视频转发</label> <button id="serverVideoRelayHelp" type="button" class="help-tip" aria-label="服务器转发说明" data-tooltip="已配置外部节点，连接时验证可达性。">?</button></span><input id="serverVideoRelayEnabled" type="checkbox" role="switch" checked /></div><p id="serverVideoRelayStatus" class="relay-server-status" role="status" aria-live="polite"></p></div>
-        <div class="server-setting-row server-owner-setting"><span>服务器图标 <small>PNG/JPEG/WebP/GIF，最大2MB</small></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
+        <div class="server-setting-row server-owner-setting"><span>服务器图标 <button type="button" class="help-tip" aria-label="服务器图标说明" data-tooltip="支持 PNG / JPG / WebP / GIF，最大 2MB。">?</button></span><div class="image-setting-actions"><button id="btnServerIcon" class="btn btn-outline btn-sm">选择图片</button><button id="btnResetServerIcon" class="btn btn-outline btn-sm" disabled>恢复默认</button></div><input id="serverIconInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden /></div>
         <div class="server-setting-row server-owner-setting"><span>连接密码</span><button id="btnServerPassword" class="btn btn-outline btn-sm">服务器密码</button></div>
-        <form id="serverChatSettingsForm" class="server-owner-setting chat-retention-form"><h3>服务器聊天记录 <button id="serverChatHelp" type="button" class="help-tip" aria-label="聊天保存说明" data-tooltip="0 表示不限制，超过任一上限时删除最早的记录及图片。">?</button></h3><div class="chat-retention-fields"><label>保存天数<input id="serverChatDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="serverChatMB" type="number" min="0" max="1048576" value="512" /></label></div><span id="serverChatUsage" class="hidden"></span><div class="dialog-actions"><button id="serverChatClear" type="button" class="btn btn-outline btn-sm">清除服务器记录</button><button type="submit" class="btn btn-primary btn-sm">保存</button></div></form>
+        <form id="serverChatSettingsForm" class="server-owner-setting chat-retention-form"><h3>服务器聊天记录 <button id="serverChatHelp" type="button" class="help-tip" aria-label="聊天保存说明" data-tooltip="0 为不限；超过上限自动删除最早的记录和附件。">?</button></h3><div class="chat-retention-fields"><label>保存天数<input id="serverChatDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="serverChatMB" type="number" min="0" max="1048576" value="512" /></label></div><span id="serverChatUsage" class="hidden"></span><div class="dialog-actions"><button id="serverChatClear" type="button" class="btn btn-outline btn-sm">清除服务器记录</button><button type="submit" class="btn btn-primary btn-sm">保存</button></div></form>
         </div>
       </div>
     </div>
     <div id="easyTierSettingsDialog" class="modal hidden">
       <form id="easyTierSettingsForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="easyTierSettingsTitle">
-        <div class="modal-header"><h2 id="easyTierSettingsTitle">EasyTier 高级设置</h2><button id="btnCloseEasyTierSettings" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <div class="easytier-settings-body"><p class="easytier-settings-note">仅保存在本机，下次连接服务器时生效。</p><div id="easyTierOptions" class="easytier-options"></div><p id="easyTierSettingsError" class="dialog-error" role="alert"></p></div>
+        <div class="modal-header"><h2 id="easyTierSettingsTitle">EasyTier 高级设置 <button type="button" class="help-tip" aria-label="EasyTier 设置保存说明" data-tooltip="仅保存在本机，保存后下次连接生效。">?</button></h2><button id="btnCloseEasyTierSettings" type="button" class="btn-close" aria-label="关闭">×</button></div>
+        <div class="easytier-settings-body"><div id="easyTierOptions" class="easytier-options"></div><p id="easyTierSettingsError" class="dialog-error" role="alert"></p></div>
         <div class="dialog-actions"><button id="easyTierOfficialDocs" type="button" class="btn btn-outline btn-sm">官方说明</button><button id="easyTierReset" type="button" class="btn btn-outline btn-sm">恢复默认</button><button id="easyTierSave" type="submit" class="btn btn-primary btn-sm">保存</button></div>
       </form>
     </div>
     <div id="lolPingDialog" class="modal hidden">
       <form id="lolPingForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="lolPingTitle">
-        <div class="modal-header"><h2 id="lolPingTitle">lolPing 配置</h2><button id="btnCloseLolPing" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <p class="lolping-note">按住触发键拖动鼠标，松开选择标记或表情。未加入频道时仅自己可见；进入频道后与已启用 lolPing 的成员共享。</p>
+        <div class="modal-header"><h2 id="lolPingTitle">lolPing 配置 <button type="button" class="help-tip" aria-label="lolPing 使用说明" data-tooltip="按住触发键拖动，松开选择标记或表情。频道内与已启用的成员共享，未加入频道时仅自己可见。自动保存，点击空白处关闭。">?</button></h2><button id="btnCloseLolPing" type="button" class="btn-close" aria-label="关闭">×</button></div>
         <div id="lolPingFields"></div>
         <p id="lolPingError" class="dialog-error" role="alert"></p>
-        <div class="dialog-actions"><button id="btnSaveLolPing" type="submit" class="btn btn-primary">保存</button></div>
+
       </form>
     </div>
     <div id="serverPeersDialog" class="modal hidden">
       <form id="serverPeersForm" class="modal-content" role="dialog" aria-modal="true" aria-labelledby="serverPeersTitle">
         <div class="modal-header"><h2 id="serverPeersTitle">服务器组网节点</h2><button id="btnCancelServerPeers" type="button" class="btn-close" aria-label="关闭">×</button></div>
-        <div class="form-group"><div class="server-peers-label"><label for="serverPeersInput">EasyTier 节点</label><button type="button" class="help-tip" aria-label="EasyTier 节点说明" data-tooltip="帮助成员建立虚拟局域网传输共享画面。每行一个，支持 TCP / UDP，未写协议时使用 TCP。保存到服务器，下次连接生效。">?</button></div>
+        <div class="form-group"><div class="server-peers-label"><label for="serverPeersInput">EasyTier 节点</label><button type="button" class="help-tip" aria-label="EasyTier 节点说明" data-tooltip="每行一个节点，支持 TCP / UDP，默认 TCP。保存到服务器，下次连接生效。">?</button></div>
           <textarea id="serverPeersInput" class="form-control" rows="5" spellcheck="false" placeholder="主机:端口"></textarea>
         </div>
         <p id="serverPeersError" class="dialog-error" role="alert"></p>
@@ -257,15 +256,29 @@
         </div>
         <nav class="settings-navigation" aria-label="设置分组"></nav>
         <div class="modal-body">
-          <p class="setting-room settings-notice">共享参数将在下次开始共享时生效。</p>
+          <div class="form-group setting-profile">
+            <div class="settings-profile-identity">
+              <button id="btnProfileAvatar" type="button" class="profile-avatar profile-avatar-button settings-profile-avatar" aria-label="更换头像" title="更换头像">👤</button>
+              <div class="settings-profile-actions"><span>头像 <button type="button" class="help-tip" aria-label="头像设置说明" data-tooltip="支持 PNG / JPG / WebP / GIF，最大 2MB。更换后自动保存并同步。">?</button></span><div><button id="btnProfileChooseAvatar" type="button" class="btn btn-outline btn-sm">更换头像</button><button id="btnProfileResetAvatar" type="button" class="btn btn-outline btn-sm">恢复默认</button></div></div>
+            </div>
+          </div>
+          <div class="form-group setting-profile">
+            <label for="profileName">名称 <button type="button" class="help-tip" aria-label="名称设置说明" data-tooltip="最多 20 字，自动保存。已连接时，下次连接生效。">?</button></label>
+            <input id="profileName" type="text" class="form-control" placeholder="设置名称" maxlength="20" autocomplete="off" />
+          </div>
           <div class="form-group setting-theme">
             <label for="themeSelect">主题外观
-              <span class="help-tip" data-tooltip="切换深色或浅色外观。">?</span>
+
             </label>
             <select id="themeSelect" class="form-control">
               <option value="dark">深色</option>
               <option value="light" selected>浅色</option>
             </select>
+            <div class="glass-transparency-control">
+              <div class="glass-transparency-heading"><div class="setting-label-with-help"><label for="glassTransparency">玻璃透明度</label><button type="button" class="help-tip" aria-label="玻璃透明度说明" data-tooltip="数值越大越透明，0% 为实底，自动保存。顶栏透出桌面需 Windows 11 22H2+ 和系统透明效果；减少透明度或高对比度时使用实底。">?</button></div><output id="glassTransparencyValue" for="glassTransparency">20%</output></div>
+              <input id="glassTransparency" class="sound-volume-slider" type="range" min="0" max="60" step="1" value="20" aria-describedby="glassTransparencyHint" />
+              <div class="glass-transparency-footer"><small id="glassTransparencyHint" role="status" hidden></small><button id="btnResetGlassTransparency" type="button" class="btn btn-outline btn-sm">恢复默认</button></div>
+            </div>
           </div>
           <div class="form-group setting-startup">
             <label><input id="autoConnectCheckbox" type="checkbox" role="switch" checked /> 启动后自动连接服务器</label>
@@ -273,17 +286,20 @@
           </div>
           <div class="form-group setting-update">
             <label>软件更新</label>
-            <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="开启后，每次启动先检查并下载安装更新，完成后进入软件。关闭后可手动更新；主界面运行期间不再后台下载。">?</span></label>
+            <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="启动时检查并安装更新，再进入软件。关闭后可手动更新；运行期间不下载。">?</span></label>
             <div id="updateAcceleration" class="update-acceleration">
               <div class="update-acceleration-heading">
                 <label class="auto-update-setting"><input id="updateAccelerationEnabled" type="checkbox" role="switch" checked disabled /> 下载加速</label>
                 <button id="btnTestUpdateAcceleration" type="button" class="btn btn-outline btn-sm" disabled>测试连通性</button>
               </div>
+              <details id="updateAccelerationDetails" class="update-acceleration-details">
+                <summary>加速源与高级选项</summary>
               <div id="updateAccelerationSources" class="update-acceleration-sources" role="radiogroup" aria-label="GitHub 备用加速源"></div>
               <div id="updateAccelerationCustom" class="update-acceleration-custom hidden">
                 <input id="updateAccelerationCustomUrl" class="form-control" type="url" placeholder="https://你的加速地址" aria-label="自定义 GitHub 加速地址" maxlength="2048" />
                 <button id="btnSaveUpdateAcceleration" class="btn btn-outline btn-sm" type="button">保存</button>
               </div>
+              </details>
               <small id="updateAccelerationStatus" class="update-acceleration-status" role="status" aria-live="polite"></small>
             </div>
             <div class="update-row">
@@ -298,16 +314,16 @@
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
               <input type="checkbox" role="switch" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
               <span>启用硬件加速</span>
-              <span class="help-tip" data-tooltip="使用显卡渲染软件界面。修改后需要重启客户端；关闭后使用软件渲染。">?</span>
+              <span class="help-tip" data-tooltip="使用显卡渲染界面，修改后需重启。">?</span>
             </label>
           </div>
           <div class="form-group setting-sounds">
             <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
             <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
-          <div class="form-group setting-lolping"><div class="server-setting-row"><div><label for="lolPingEnabled">lolPing</label><small id="lolPingStatus">本机可用，进入频道后与成员共享</small></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div></div>
-          <div class="form-group setting-easytier"><div class="server-setting-row"><div><label>EasyTier 组网</label><small>本机设置，下次连接服务器时生效</small></div><button id="btnEasyTierAdvanced" type="button" class="btn btn-outline btn-sm">高级设置</button></div><div class="server-setting-row ipv6-network-setting"><div><label>IPv6 网络 <button type="button" class="help-tip" data-tooltip="用于提高 P2P 连接成功率。尝试开启当前活动物理网卡的 IPv6 协议，并检测公网 IPv6 连通性。需要路由器和运营商支持，无法保证直连成功；启用网卡协议可能短暂重连网络。">?</button></label><small>尝试启用当前网络的 IPv6 并查看结果</small></div><button id="btnTryIpv6" type="button" class="btn btn-outline btn-sm">尝试启用 IPv6</button></div><div id="ipv6Result" class="ipv6-result hidden" role="status" aria-live="polite"></div></div>
-          <div class="form-group setting-chat"><label class="password-toggle"><input id="chatCacheEnabled" type="checkbox" role="switch" checked />保存本地聊天记录</label><div class="chat-retention-fields"><label>保存天数<input id="chatCacheDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="chatCacheMB" type="number" min="0" max="1048576" value="256" /></label></div><small>仅管理本机保存的记录，0 表示不限制；服务器清理不影响本地记录。</small><div class="dialog-actions"><button id="chatCacheClearAll" type="button" class="btn btn-outline btn-sm">清除全部本地记录</button><button id="chatCacheSave" type="button" class="btn btn-primary btn-sm">保存</button></div><div id="chatCacheServers" class="chat-cache-servers"></div></div>
+          <div class="form-group setting-lolping"><div class="server-setting-row"><div><label for="lolPingEnabled">lolPing <button type="button" class="help-tip" aria-label="lolPing 使用说明" data-tooltip="与频道内已启用 lolPing 的成员共享标记和表情，自动保存。">?</button></label><span id="lolPingStatus" role="status"></span></div><div class="lolping-actions"><button id="btnLolPingConfig" type="button" class="btn btn-outline btn-sm">配置</button><input id="lolPingEnabled" type="checkbox" role="switch" /></div></div></div>
+          <div class="form-group setting-easytier"><div class="server-setting-row"><div><label>EasyTier 组网</label></div><button id="btnEasyTierAdvanced" type="button" class="btn btn-outline btn-sm">高级设置</button></div><div class="server-setting-row ipv6-network-setting"><div><label>IPv6 网络 <button type="button" class="help-tip" aria-label="IPv6 网络说明" data-tooltip="尝试启用网卡 IPv6 并检测连通性，帮助 P2P 直连。需网络支持，可能短暂重连，不保证成功。">?</button></label></div><button id="btnTryIpv6" type="button" class="btn btn-outline btn-sm">尝试启用 IPv6</button></div><div id="ipv6Result" class="ipv6-result hidden" role="status" aria-live="polite"></div></div>
+          <div class="form-group setting-chat"><div class="setting-label-with-help"><label class="password-toggle"><input id="chatCacheEnabled" type="checkbox" role="switch" checked />保存本地聊天记录</label><button type="button" class="help-tip" aria-label="本地聊天记录说明" data-tooltip="仅影响本机记录，0 为不限。修改后点击保存，清除立即生效。">?</button></div><div class="chat-retention-fields"><label>保存天数<input id="chatCacheDays" type="number" min="0" max="36500" value="30" /></label><label>容量上限（MB）<input id="chatCacheMB" type="number" min="0" max="1048576" value="256" /></label></div><div class="dialog-actions"><button id="chatCacheClearAll" type="button" class="btn btn-outline btn-sm">清除全部本地记录</button><button id="chatCacheSave" type="button" class="btn btn-primary btn-sm">保存</button></div><div id="chatCacheServers" class="chat-cache-servers"></div></div>
           <div class="form-group setting-voice">
             <label for="voiceMicrophone">麦克风</label>
             <select id="voiceMicrophone" class="form-control"><option value="default">系统默认麦克风</option></select>
@@ -317,15 +333,15 @@
             <meter id="microphoneLevel" min="0" max="1" value="0" aria-label="麦克风电平"></meter>
             <small id="voiceTestStatus" class="hidden" role="status"></small>
             <div class="voice-processing" role="group" aria-label="麦克风音频处理">
+              <div class="setting-label-with-help"><span>麦克风音频处理</span><button type="button" class="help-tip" aria-label="麦克风音频处理说明" data-tooltip="外放时开回声消除，嘈杂时开降噪。默认关闭，修改立即生效。">?</button></div>
               <label><input type="checkbox" role="switch" data-voice-processing="echoCancellation" />回声消除</label>
               <label><input type="checkbox" role="switch" data-voice-processing="noiseSuppression" />降噪</label>
               <label><input type="checkbox" role="switch" data-voice-processing="autoGainControl" />自动增益</label>
-              <small>默认关闭，修改后立即生效。外放时建议开启回声消除；环境嘈杂时可开启降噪。</small>
             </div>
           </div>
           <div class="form-group setting-room">
             <label for="videoEncoderSelect">视频编码器
-              <span class="help-tip" data-tooltip="Intel 核显选 QSV，AMD 核显或独显选 AMF，NVIDIA 选 NVENC。需对应显卡及驱动支持；失败时可选软件编码。">?</span>
+              <span class="help-tip" data-tooltip="NVIDIA 选 NVENC，Intel 选 QSV，AMD 选 AMF；异常时改用软件编码。">?</span>
             </label>
             <select id="videoEncoderSelect" class="form-control">
               <option value="x264">软件编码 · H.264 (CPU / x264)</option>
@@ -334,20 +350,10 @@
               <option value="amf">硬件编码 · H.264 (AMD 核显 / 独显 AMF)</option>
             </select>
           </div>
-          <div class="form-group setting-room">
-            <label><input type="checkbox" role="switch" id="autoPreviewCheckbox" checked> 自动预览
-              <span class="help-tip" data-tooltip="共享后自动预览自己的画面。">?</span>
-            </label>
-          </div>
           <div class="form-group setting-room"><label><input id="useServerRelayCheckbox" type="checkbox" role="switch" /> 使用服务器转发 <button id="shareRelayHelp" type="button" class="help-tip" aria-label="使用服务器转发说明" data-tooltip="使用已配置节点的 MediaMTX，本机不启动 MediaMTX。">?</button></label><small id="shareRelayStatus" role="status"></small></div>
           <div class="form-group setting-room">
-            <label><input type="checkbox" role="switch" id="adaptiveResolutionCheckbox"> 自动调整分辨率
-              <span class="help-tip" data-tooltip="根据观众网络自动降低或恢复分辨率，但会影响所有观众。下次开始共享生效。">?</span>
-            </label>
-          </div>
-          <div class="form-group setting-room">
             <label for="resolutionSelect">共享分辨率
-              <span class="help-tip" data-tooltip="越高越清晰，占用也越高。">?</span>
+
             </label>
             <select id="resolutionSelect" class="form-control">
               <option value="auto">原始分辨率（自动）</option>
@@ -358,7 +364,7 @@
           </div>
           <div class="form-group setting-room">
             <label for="captureMethodSelect">整屏采集方式
-              <span class="help-tip" data-tooltip="仅用于显示器共享。黑屏可尝试 WGC">?</span>
+              <span class="help-tip" data-tooltip="仅影响整屏共享，黑屏时可尝试 WGC。">?</span>
             </label>
             <select id="captureMethodSelect" class="form-control">
               <option value="auto">自动</option>
@@ -368,7 +374,7 @@
           </div>
           <div class="form-group setting-room">
             <label for="frameRateSelect">帧率 (FPS)
-              <span class="help-tip" data-tooltip="目标每秒帧数。">?</span>
+
             </label>
             <select id="frameRateSelect" class="form-control">
               <option value="30">30 FPS</option>
@@ -380,13 +386,13 @@
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0;">
               <input type="checkbox" role="switch" id="shareAudioCheckbox" style="width: 16px; height: 16px; cursor: pointer;" />
               <span>同时共享音频</span>
-              <span class="help-tip" data-tooltip="窗口共享程序声音，全屏共享系统声音。">?</span>
+              <span class="help-tip" data-tooltip="窗口共享程序声音，整屏共享系统声音。">?</span>
             </label>
           </div>
           <div class="form-group setting-room">
             <label for="bitrateInput" style="display: flex; justify-content: space-between; align-items: center;">
               <span>视频码率 (kbps)
-                <span class="help-tip" data-tooltip="目标视频码率。推荐值在共享开始时按分辨率和帧率计算">?</span>
+                <span class="help-tip" data-tooltip="推荐值按分辨率和帧率自动计算；关闭推荐可手动填写。">?</span>
               </span>
               <label style="font-size: 12px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
                 <input type="checkbox" role="switch" id="autoBitrateCheckbox"> 推荐
@@ -395,8 +401,18 @@
             <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100" value="1000">
           </div>
           <div class="form-group setting-room">
+            <label><input type="checkbox" role="switch" id="autoPreviewCheckbox" checked> 自动预览
+
+            </label>
+          </div>
+          <div class="form-group setting-room">
+            <label><input type="checkbox" role="switch" id="adaptiveResolutionCheckbox"> 自动调整分辨率
+              <span class="help-tip" data-tooltip="按观众网络调整分辨率，影响所有观众。下次共享生效。">?</span>
+            </label>
+          </div>
+          <div class="form-group setting-room">
             <label for="audioBitrateSelect">音频码率
-              <span class="help-tip" data-tooltip="越高音质越好">?</span>
+
             </label>
             <select id="audioBitrateSelect" class="form-control">
               <option value="32">32 kbps</option>

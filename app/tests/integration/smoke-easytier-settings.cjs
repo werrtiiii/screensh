@@ -2,7 +2,7 @@ const {app,BrowserWindow,ipcMain}=require('electron');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict'),{pathToFileURL}=require('node:url');
 const root=path.resolve(__dirname,'../..'),profile=path.join(root,'.runtime-probe','easytier-settings-'+process.pid);
 app.disableHardwareAcceleration();app.setPath('userData',profile);app.on('window-all-closed',()=>{});
-for(const [event,value] of [['get-hardware-acceleration',false],['get-login-startup',false],['lolping-get',{config:{enabled:false}}],['lolping-sync',null]])ipcMain.handle(event,()=>value);
+for(const [event,value] of [['get-hardware-acceleration',false],['get-login-startup',false],['lolping-get',{config:{enabled:false}}],['lolping-sync',null],['get-update-settings',{enabled:true,status:'current',currentVersion:'1.5.7'}],['get-update-acceleration',{enabled:true,source:'https://gh-proxy.com',customUrl:'',sources:['https://gh-proxy.com']}],['confirm-startup',null]])ipcMain.handle(event,()=>value);
 let store,failWrite=false;
 const ready=import(pathToFileURL(path.join(root,'renderer/easytier-options.mjs')).href).then(({normalizeEasyTierSettings})=>{store=require('../../main/easytier-settings.cjs').createEasyTierSettings({file:path.join(profile,'easytier-settings.json'),normalize:normalizeEasyTierSettings});});
 ipcMain.handle('get-easytier-settings',async()=>{await ready;return store.get();});
@@ -14,7 +14,8 @@ app.whenReady().then(async()=>{let win;
   try{
     win=new BrowserWindow({show:false,frame:false,width:960,height:640,webPreferences:{preload:path.join(root,'preload.js'),backgroundThrottling:false}});
     const run=async code=>{try{return await win.webContents.executeJavaScript(code,true);}catch(error){throw Error(code.slice(0,180)+'\n'+error.message);}},wait=async code=>{for(let i=0;i<120;i++){if(await run(code))return;await new Promise(resolve=>setTimeout(resolve,25));}throw Error('Timeout: '+code);};
-    await win.loadFile(path.join(root,'renderer/index.html'));await run(`(async()=>{await import('./renderer.js');document.querySelector('#btnSettings').click();document.querySelector('#btnEasyTierAdvanced').click();})()`);
+    await win.loadFile(path.join(root,'renderer/index.html'));await run(`(async()=>{await import('./renderer.js');document.querySelector('#btnSettings').click();document.querySelector('[data-category=network]').click();})()`);
+    await run(`document.querySelector('#btnEasyTierAdvanced').click()`);
     await wait(`!document.querySelector('#easyTierSave').disabled`);win.show();win.focus();await new Promise(resolve=>setTimeout(resolve,260));
     assert.equal(await run(`document.querySelectorAll('[data-easytier-option]').length`),19);
     assert.equal(await run(`document.querySelector('#easyTier-multiThread').checked&&!document.querySelector('#easyTier-latencyFirst').checked&&!document.querySelector('#easyTier-noTun').disabled&&!document.querySelector('#easyTier-noTun').checked`),true);
@@ -42,7 +43,7 @@ app.whenReady().then(async()=>{let win;
     win.setSize(960,640);await run(`document.querySelector('.ipv6-network-setting').scrollIntoView({block:'center'})`);await new Promise(resolve=>setTimeout(resolve,200));
     fs.writeFileSync(path.join(root,'.runtime-probe','ipv6-network-settings.png'),(await win.webContents.capturePage()).toPNG());
     await run(`document.querySelector('#btnCloseSettings').click();document.querySelector('#btnRoomSettingsToolbar').click()`);
-    assert.equal(await run(`getComputedStyle(document.querySelector('.setting-easytier')).display`),'none','advanced networking is only in system settings');
+    assert.equal(await run(`document.querySelector('.setting-easytier').getBoundingClientRect().height`),0,'advanced networking is only in system settings');
     console.log('EASYTIER_SETTINGS_UI_OK',JSON.stringify({options:19,localPersistence:true,failedSave:true,restoreDefaults:true,helpBounds:true,smallWindow:true,sharedSettingsHidden:true}));
   }catch(error){console.error(error.stack);process.exitCode=1;}finally{win?.destroy();app.exit(process.exitCode||0);}
 });

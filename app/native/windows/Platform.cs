@@ -14,6 +14,32 @@ namespace ScreenSh.Windows
 {
     static class Platform
     {
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct FrameMargins { public int Left, Right, Top, Bottom; }
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        static extern int DwmExtendFrameIntoClientArea(IntPtr window, ref FrameMargins margins);
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+        internal static object WindowFrame(string handle, int owner, bool rounded)
+        {
+            var window = new IntPtr(Int64.Parse(handle));
+            uint actualOwner;
+            if (GetWindowThreadProcessId(window, out actualOwner) == 0 || actualOwner != owner)
+                throw new ArgumentException("Invalid window owner");
+            // Electron 29 loses these DWM attributes across native maximize/restore.
+            var margins = new FrameMargins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(DwmExtendFrameIntoClientArea(window, ref margins));
+            int corner = rounded ? 2 : 1, backdrop = 3;
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(window, 33, ref corner, sizeof(int)));
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(window, 38, ref backdrop, sizeof(int)));
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(DwmGetWindowAttribute(window, 33, out corner, sizeof(int)));
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(DwmGetWindowAttribute(window, 38, out backdrop, sizeof(int)));
+            return new { corner = corner, backdrop = backdrop };
+        }
         static object Get(ManagementObject row, string name)
         {
             return row.Properties[name] == null ? null : row[name];

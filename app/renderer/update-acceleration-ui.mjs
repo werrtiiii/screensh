@@ -30,9 +30,10 @@ export async function initUpdateAcceleration({root=document,api=window.electronA
     paint(saved);
   }catch(error){status.textContent=error.message||'无法读取下载加速设置';notify(status.textContent,'error');return;}
   enabled.addEventListener('change',persist);save.addEventListener('click',persist);
-  input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void persist();}});
+  input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.defaultPrevented&&!event.isComposing&&event.keyCode!==229){event.preventDefault();void persist();}});
   input.addEventListener('input',()=>{rows.get('custom').result.textContent='';status.textContent='修改地址后点击保存';});
   test.addEventListener('click',async()=>{
+    const details=find('updateAccelerationDetails');if(details)details.open=true;
     if(testing)return;testing=true;refresh();test.textContent='测试中…';status.textContent='正在测试安装包下载连通性…';
     for(const row of rows.values()){row.result.textContent='';delete row.result.dataset.available;}
     const testedCustom=input.value.trim();

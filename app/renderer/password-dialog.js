@@ -28,14 +28,6 @@ export function requestPassword({ settings = false, enabled = true, connection, 
     }
     modal.querySelector('.btn-close').onclick = cancel;
     modal.querySelector('.password-cancel').onclick = cancel;
-    modal.addEventListener('keydown', event => {
-      event.stopPropagation();
-      if (event.key === 'Tab') {
-        const nodes = [...modal.querySelectorAll('button,input')].filter(n => !n.disabled);
-        if (event.shiftKey && document.activeElement === nodes[0]) { event.preventDefault(); nodes.at(-1).focus(); }
-        else if (!event.shiftKey && document.activeElement === nodes.at(-1)) { event.preventDefault(); nodes[0].focus(); }
-      }
-    });
     modal.querySelector('form').onsubmit = event => {
       event.preventDefault();
       const active = toggle ? toggle.checked : true;

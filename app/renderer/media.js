@@ -3,6 +3,7 @@ import { toast } from './toast.js';
 import { socket, roomUsers,requestServer } from './signaling.js';
 import { WhepSession } from './whep.mjs';
 import { attachVideoStats } from './video-stats.mjs';
+import { attachLivePlayback } from './live-playback.mjs';
 import { createShareAdaptation, watchNetwork } from './share-adaptation.mjs';
 import { createMediaTunnel } from './media-tunnel.mjs';
 import { createExternalObsPanel } from './external-obs-ui.mjs';
@@ -11,10 +12,11 @@ let session = null, sharingGeneration = 0;
 let stoppingPromise = null;
 let shareAdaptation = null;
 let disposeStats = null, watchContext = null, retainWatchTimer = null;
-let sourceInventory = [], sourceTab = 'window', sourceRequest = 0;
+let disposeLivePlayback = null;
+let sourceInventory = [], sourceTab = 'window', lastSourceTab = 'window', sourceRequest = 0;
 let sourcesLoaded=false,sourcesLoading=false;
 let externalObsPanel,externalObsSessionId=null;
-function obsPanel(){return externalObsPanel||=createExternalObsPanel({onReady:()=>{if(sourceTab!=='obs'||$('#screenPicker').classList.contains('hidden'))return;state.selectedSourceId='external-obs';state.selectedSourceType='obs';$('#btnConfirmShare').classList.remove('hidden');},onInvalid:()=>{if(sourceTab==='obs'){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}}});}
+function obsPanel(){return externalObsPanel||=createExternalObsPanel({onReady:()=>{if(lastSourceTab!=='obs'||$('#screenPicker').classList.contains('hidden'))return;state.selectedSourceId='external-obs';state.selectedSourceType='obs';$('#btnConfirmShare').classList.remove('hidden');},onInvalid:()=>{if(lastSourceTab==='obs'){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}}});}
 export function escapeHtml(str) {
   const div = document.createElement('div'); div.textContent = str; return div.innerHTML;
 }
@@ -27,23 +29,27 @@ export async function loadScreenSources() {
   $('#btnConfirmShare').classList.add('hidden');
   list.textContent = '获取显示器和窗口中...';
   sourcesLoading=false;
-  if(sourceTab==='obs'){selectScreenSourceTab('obs');return;}
+  if(sourceTab==='obs'||sourceTab==='settings'){selectScreenSourceTab(sourceTab);return;}
   sourcesLoading=true;
   try {
     const screens = await window.electronAPI.getScreens();
     if(request!==sourceRequest||$('#screenPicker').classList.contains('hidden'))return;
     sourceInventory=screens;
     sourcesLoaded=true;
-    if(sourceTab!=='obs'){if(!screens.some(s=>s.type===sourceTab)&&screens.length)sourceTab=screens[0].type||'screen';selectScreenSourceTab(sourceTab);}
+    if(sourceTab!=='obs'&&sourceTab!=='settings'){if(!screens.some(s=>s.type===sourceTab)&&screens.length)sourceTab=screens[0].type||'screen';selectScreenSourceTab(sourceTab);}
   } catch (error) { if(request===sourceRequest)list.textContent = `读取共享源失败：${error.message}`; }
   finally{if(request===sourceRequest)sourcesLoading=false;}
 }
 export function selectScreenSourceTab(type) {
     sourceTab=type;
-    if(state.selectedSourceType!==type){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}
-    for(const button of document.querySelectorAll('[data-source-tab]')) {const active=button.dataset.sourceTab===type;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));}
-    $('#screenList').classList.toggle('hidden',type==='obs');$('#externalObsPanel').classList.toggle('hidden',type!=='obs');
-    $('#btnConfirmShare').textContent=type==='obs'?'开始 OBS 共享':'确认共享';
+    if(type!=='settings')lastSourceTab=type;
+    if(type!=='settings'&&state.selectedSourceType!==type){state.selectedSourceId=null;$('#btnConfirmShare').classList.add('hidden');}
+    for(const button of document.querySelectorAll('[data-source-tab]')) {const active=button.dataset.sourceTab===type;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;}
+    $('#screenList').classList.toggle('hidden',type==='obs'||type==='settings');$('#externalObsPanel').classList.toggle('hidden',type!=='obs');
+    $('#screenShareSettings').classList.toggle('hidden',type!=='settings');
+    document.dispatchEvent(new CustomEvent('share-settings-visibility',{detail:{visible:type==='settings'}}));
+    $('#btnConfirmShare').textContent='确认共享';
+    if(type==='settings')return;
     if(type==='obs'){void obsPanel().open();return;}externalObsPanel?.hide();
     if(!sourcesLoaded&&!sourcesLoading){void loadScreenSources();return;}
     const list=$('#screenList');list.replaceChildren();list.scrollTop=0;
@@ -86,6 +92,7 @@ export async function startScreenCapture() {
   if (!socket?.connected || !state.roomId) return toast('请先连接服务器', 'error');
   if (!state.channelId) return toast('请先加入频道', 'error');
   if (state.selectedSourceId == null) return toast('请选择显示器或窗口', 'error');
+  $('#bitrateInput').dispatchEvent(new Event('change',{bubbles:true}));
   const current = ++sharingGeneration;externalObsSessionId=null;
   state.startingShare = true;state.pendingShareRelay=state.useServerRelay;updateSharingUI(false);
   try {
@@ -203,9 +210,11 @@ export async function displayRemoteVideo(targetSocketId) {
   renderViewerNames();
   $('#userCardsView').classList.add('hidden'); $('#activeVideoView').classList.remove('hidden');
   const container = $('#videoContainer');
-  container.innerHTML = '<video autoplay playsinline controls></video><div id="watchConnectionStatus" class="watch-connection-status hidden" role="status"></div><div class="pip-bar"><button id="btnPip">画中画</button></div>';
+  container.innerHTML = '<video autoplay playsinline controls></video><div id="watchConnectionStatus" class="watch-connection-status hidden" role="status"></div>';
   const video = container.querySelector('video');
   video.muted = isSelf; video.defaultMuted = isSelf;
+  disposeLivePlayback?.();
+  disposeLivePlayback = attachLivePlayback(video, { onPlaybackBlocked: () => toast('点击画面开始观看') });
   $('#btnPip').onclick = async () => {
     try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); }
     catch (error) { toast(`画中画开启失败：${error.message}`, 'error'); }
@@ -213,7 +222,7 @@ export async function displayRemoteVideo(targetSocketId) {
   if (reusable) {
     watchContext.video = video; video.srcObject = watchContext.stream;
     disposeStats = attachVideoStats(container, session.pc);
-    if (watchContext.stream.getTracks().length) video.play().catch(() => { if (watchContext?.video === video) toast('请点击视频播放按钮'); });
+    if (watchContext.stream.getTracks().length) video.play().catch(() => { if (watchContext?.video === video) toast('点击画面开始观看'); });
     reportViewing(watchContext); watchContext.startFeedback?.(); return;
   }
   const context = { target: targetSocketId, isSelf, room: state.roomId, channel: state.channelId,
@@ -254,7 +263,7 @@ export async function displayRemoteVideo(targetSocketId) {
       context.stream.addTrack(event.track);
       const activeVideo = context.video; if (!activeVideo) return;
       activeVideo.srcObject = context.stream;
-      activeVideo.play().catch(() => { if (context.video === activeVideo) toast('请点击视频播放按钮'); });
+      activeVideo.play().catch(() => { if (context.video === activeVideo) toast('点击画面开始观看'); });
     }, fail,{directRelay:relay?.transport==='direct',...(state.noTun&&relay?.transport!=='direct'?{tunnel:createMediaTunnel(context.isSelf&&!relay?state.virtualIp:context.host,true),virtualIp:state.virtualIp}:{}),...(relay?{getToken:async()=>{const result=await requestServer('get-relay-view',{target:context.target});if(watchContext!==context||result.path!==relay.path||result.host!==relay.host||result.port!==relay.port||result.transport!==relay.transport||result.url!==relay.url)throw Error('转发会话已变化，请重新观看');return result.token;}}:{})});
     session = current;
     context.startFeedback = () => {
@@ -290,6 +299,7 @@ export function renderViewerNames() {
   $('#viewerNames').textContent = viewers.length ? `观众（${viewers.length}）：${viewers.map(u => u.name).join('、')}` : '观众（0）：暂无观众';
 }
 export function stopWatch({ retain = false } = {}) {
+  disposeLivePlayback?.(); disposeLivePlayback = null;
   disposeStats?.(); disposeStats = null;
   const context = watchContext;
   if (context) { context.feedbackStop?.(); context.feedbackStop = null; }
@@ -310,4 +320,5 @@ export function stopWatch({ retain = false } = {}) {
   if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
   $('#activeVideoView').classList.add('hidden'); $('#userCardsView').classList.remove('hidden');
   $('#videoContainer').innerHTML = '';
+  $('#btnPip').onclick = null;
 }

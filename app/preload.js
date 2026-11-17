@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
+  nativeTitlebarGlass: process.argv.includes('--screensh-native-glass'),
+  onWindowState: callback => { const handler = (_event, state) => callback(state); ipcRenderer.on('window-state', handler); return () => ipcRenderer.removeListener('window-state', handler); },
   confirmStartup:()=>ipcRenderer.invoke('confirm-startup'),
   openWebLink: url => ipcRenderer.invoke('open-web-link',url),
   downloadChatFile: url => ipcRenderer.invoke('download-chat-file',url),

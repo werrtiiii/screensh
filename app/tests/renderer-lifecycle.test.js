@@ -24,7 +24,7 @@ function renderer(ipc = {},request=async()=>({})) {
         contains: name => classes.has(name),
         toggle: (name, value) => value ? classes.add(name) : classes.delete(name),
       },
-      querySelector: () => null, addEventListener() {},
+      querySelector: () => null, addEventListener() {}, dispatchEvent() {},
     };
   }
   const $ = name => { if (!nodes.has(name)) nodes.set(name, element()); return nodes.get(name); };
@@ -34,7 +34,7 @@ function renderer(ipc = {},request=async()=>({})) {
   const api = { startSharing: async () => ({}), stopSharing: async () => {}, leaveRuntime: async () => {}, ...ipc };
   const context = vm.createContext({
     initServerPeerTests:()=>({reset(){}}),initRelaySettings(){},requestServer:request,
-    Event, console, setTimeout, clearTimeout, closeContextMenu() {}, syncLolPing() {},
+    Event, console, setTimeout, clearTimeout, closeContextMenu() {}, syncLolPing() {}, closeLolPingConfig:async()=>{},
     document: { dispatchEvent(){},querySelector: $, querySelectorAll: () => [], pictureInPictureElement: null },
     window: { electronAPI: api },
     socket: { connected: true, id: 'self', emit(...args) {emitted.push(args);} }, roomUsers: new Map(), disconnectSignaling() {},

@@ -8,6 +8,7 @@ import {chatImageType} from './chat-image-type.mjs';
 import {createChatVideos} from './chat-video.mjs';
 
 const sizeLabel=bytes=>bytes>=1048576?(bytes/1048576).toFixed(1)+' MB':Math.ceil(bytes/1024)+' KB';
+const localDay=date=>date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
 function confirmClear(text) {
   return new Promise(resolve=>{
     const modal=document.createElement('div');modal.className='modal chat-confirm-dialog';
@@ -20,7 +21,7 @@ function confirmClear(text) {
 export function initChat({state,getSocket,requestServer}) {
   const $=selector=>document.querySelector(selector),panel=$('#serverChat'),list=$('#chatMessages'),input=$('#chatInput'),root=$('#mainContent');
   const topbar=$('#room .room-topbar');
-  new ResizeObserver(()=>root.parentElement.style.setProperty('--chat-topbar-height',topbar.getBoundingClientRect().height+'px')).observe(topbar);
+  new ResizeObserver(()=>{if(context)layout();}).observe(topbar);
   let context=null,connection=null,generation=0,historyRevision=0,epoch=null,loading=false,hasMore=false,localHasMore=false,draft=[],pendingSend=null,cacheFailed=false,settingsDirty=false;
   let selectionQueue=Promise.resolve();
   const messages=new Map(),nodes=new Map(),urls=new Map(),recalled=new Set(),avatars=new Map();
@@ -31,7 +32,7 @@ export function initChat({state,getSocket,requestServer}) {
     const inChannel=!!context?.channelId;handle.classList.toggle('hidden',!inChannel);
     if(inChannel){
       const card=$('#userCardsView .user-card'),row=card?.getBoundingClientRect().height||parseFloat(getComputedStyle($('#userCardsView')).getPropertyValue('--card-cover-height'))+80||240;
-      const max=Math.max(80,root.clientHeight-row-32),min=Math.min(150,max),height=Math.min(max,Math.max(min,chatHeight||root.clientHeight*.34));
+      const max=Math.max(80,root.clientHeight-topbar.offsetHeight-row-32),min=Math.min(150,max),height=Math.min(max,Math.max(min,chatHeight||root.clientHeight*.34));
       panel.style.height=height+'px';
     }else{panel.style.height='';}
   }
@@ -81,7 +82,20 @@ export function initChat({state,getSocket,requestServer}) {
     modal.innerHTML='<div class="modal-content"><div class="modal-header"><h2>图片</h2><button type="button" class="btn-close" aria-label="关闭">×</button></div><img alt="聊天图片" /><div class="dialog-actions"><a class="btn btn-outline btn-sm" download>保存图片</a></div></div>';
     modal.querySelector('img').src=image.src;const link=modal.querySelector('a');link.href=image.src;link.download=image.alt||'图片';modal.querySelector('button').onclick=()=>modal.remove();modal.onclick=event=>{if(event.target===modal)modal.remove();};document.body.append(modal);
   }
-  function groupMessages(){let previous=null;for(const node of list.querySelectorAll('.chat-message')){const message=messages.get(node.dataset.messageId);node.classList.toggle('chat-message-grouped',!!message?.authorId&&message.authorId===previous?.authorId);previous=message;}}
+  function groupMessages(){
+    let previous=null,previousDay=null;
+    for(const node of list.querySelectorAll('.chat-message')){
+      const message=messages.get(node.dataset.messageId),date=new Date(message.time),day=localDay(date);
+      const clock=date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
+      const grouped=!!message.authorId&&message.authorId===previous?.authorId&&day===previousDay;
+      const compact=grouped,hoverTime=node.querySelector('.chat-message-hover-time');
+      node.querySelector('.chat-message-heading time').textContent=day+' '+clock;
+      hoverTime.textContent=compact?clock:day+'\n'+clock;
+      hoverTime.classList.toggle('has-date',!compact);
+      node.classList.toggle('chat-message-grouped',grouped);
+      previous=message;previousDay=day;
+    }
+  }
   function render(newMessages) {
     const bottom=list.scrollHeight-list.scrollTop-list.clientHeight<50,oldHeight=list.scrollHeight,oldFirst=messages.size?Math.min(...[...messages.values()].map(message=>message.sequence)):Infinity;
     for(const message of newMessages)if(!recalled.has(message.id)&&!messages.has(message.id)) {
@@ -89,8 +103,8 @@ export function initChat({state,getSocket,requestServer}) {
       const node=document.createElement('article');node.className='chat-message';node.dataset.messageId=message.id;
       const avatar=document.createElement('span');avatar.className='chat-message-avatar default-avatar';avatar.textContent='👤';
       const main=document.createElement('div');main.className='chat-message-main';const heading=document.createElement('div');heading.className='chat-message-heading';
-      const name=document.createElement('strong');name.textContent=message.name;const date=new Date(message.time),time=document.createElement('time');const day=date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0'),clock=date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});time.textContent=day+' '+clock;time.dateTime=date.toISOString();time.title=time.textContent;heading.append(name,time);
-      const hoverTime=time.cloneNode(true);hoverTime.textContent=day+'\n'+clock;hoverTime.className='chat-message-hover-time';node.append(hoverTime);
+      const name=document.createElement('strong');name.textContent=message.name;const date=new Date(message.time),time=document.createElement('time');time.dateTime=date.toISOString();time.title=localDay(date)+' '+date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});heading.append(name,time);
+      const hoverTime=time.cloneNode(true);hoverTime.className='chat-message-hover-time';node.append(hoverTime);
       const content=document.createElement('div');content.className='chat-message-content';content.append(renderChatMarkup(message.text));main.append(heading,content);
       for(const image of content.querySelectorAll('.chat-linked-image'))image.onclick=()=>imageDialog(image);
       const attachments=message.attachments||[...(message.image?[{...message.image,kind:'image'}]:[]),...(message.file?[{...message.file,kind:'file'}]:[])];
@@ -173,7 +187,7 @@ export function initChat({state,getSocket,requestServer}) {
   for(const button of panel.querySelectorAll('[data-before]'))button.onclick=()=>insert(button.dataset.before,button.dataset.after||'');
   $('#chatInsertLink').onclick=()=>{$('#chatLinkFields').classList.toggle('hidden');if(!$('#chatLinkFields').classList.contains('hidden'))$('#chatLinkInput').focus();};
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#chatLinkFields,#chatInsertLink'))$('#chatLinkFields').classList.add('hidden');});
-  $('#chatLinkInput').onkeydown=event=>{if(event.key==='Escape'||['Backspace','Delete'].includes(event.key)&&!event.target.value){event.preventDefault();$('#chatLinkFields').classList.add('hidden');input.focus();}};
+  $('#chatLinkInput').onkeydown=event=>{if(event.defaultPrevented||event.isComposing||event.keyCode===229)return;if(event.key==='Enter'){event.preventDefault();$('#chatConfirmLink').click();}else if(event.key==='Escape'||['Backspace','Delete'].includes(event.key)&&!event.target.value){event.preventDefault();$('#chatLinkFields').classList.add('hidden');input.focus();}};
   $('#chatConfirmLink').onclick=()=>{const href=safeChatLink($('#chatLinkInput').value.trim());if(!href)return toast('请输入 HTTP 或 HTTPS 网页地址','error');if(input.selectionStart===input.selectionEnd)input.setRangeText('链接',input.selectionStart,input.selectionEnd,'select');insert('[',']('+href+')');$('#chatLinkFields').classList.add('hidden');};
   for(const emoji of ['😀','😂','🥰','😎','🤔','😭','👍','👎','❤️','🔥','🎉','👀','✅','❌','🙏','💪','🤝','🎮','💯','✨','😅','😴','🤯','👋']){const button=document.createElement('button');button.type='button';button.textContent=emoji;button.onclick=()=>{insert(emoji);$('#chatEmoji').open=false;};$('.chat-emoji-panel').append(button);}
   $('#chatEmoji').ontoggle=()=>{if(!$('#chatEmoji').open)return;const rect=$('#chatEmoji').getBoundingClientRect(),picker=$('.chat-emoji-panel');picker.style.position='fixed';picker.style.left=Math.max(8,rect.right-220)+'px';picker.style.top=Math.max(48,rect.top-180)+'px';picker.style.bottom='auto';picker.style.right='auto';};

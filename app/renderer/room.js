@@ -13,7 +13,7 @@ import { decorateInteractionCard } from './interactions.js';
 import { MAX_IMAGE_BYTES, isImageData } from './image-data.mjs';
 import { readChannelPreferences, saveChannelPreference } from './server-channel-preferences.mjs';
 import { applyAvatarThumbnails } from './avatar-thumbnail.mjs';
-import { syncLolPing, stopLolPing } from './lolping.js';
+import { syncLolPing, stopLolPing, closeLolPingConfig } from './lolping.js';
 import { voiceIcon } from './voice-icons.mjs';
 import {
   escapeHtml,
@@ -395,7 +395,7 @@ export async function leaveRoom() {
   state.leaving = true;
   closeContextMenu(); resetChannelPasswordFields(); $('#channelDialog').classList.add('hidden'); $('#channelBitrateDialog').classList.add('hidden');
   $('#serverSettingsDialog').classList.add('hidden');
-  $('#lolPingDialog')?.classList.add('hidden');
+  void closeLolPingConfig();
   $('#serverPeersDialog').classList.add('hidden');
   $('#btnLeave').disabled = true;
   $('#btnLeave').title = '正在清理…';
@@ -415,7 +415,6 @@ export async function leaveRoom() {
   state.activeSharerId = null;
   state.selectedSourceId = null;
   $('#screenPicker').classList.add('hidden');
-  $('#serverStatus').className = 'status-dot disconnected';
   try {
     // Start network cleanup even if a previous media stop fails or is pending.
     const results = await Promise.allSettled([

@@ -59,10 +59,13 @@ ipcMain.handle('start-easytier', event => '127.0.0.' + (windows.findIndex(w=>w.w
       assert.equal(await execute(win,`document.querySelector('[name="wheel0"]').value`),'bait');
       await execute(win,`document.querySelector('details[data-setting="wheel"] .lolping-wheel-layout button').click();[...document.querySelectorAll('details[data-setting="wheel"] button')].find(b=>b.textContent==='恢复默认布局').click()`);
       assert.equal(await execute(win,`document.querySelector('[name="wheel0"]').value`),'danger');
-      await execute(win,`(()=>{const s=document.querySelector('[name="trigger"]');s.value='custom';s.dispatchEvent(new Event('change'));s.parentElement.querySelector('button').click();})()`);
-      await wait(()=>execute(win,`document.querySelector('[name="trigger"]').parentElement.querySelector('button').textContent.includes('按下按键')`));
+      await execute(win,`(()=>{const s=document.querySelector('[name="trigger"]');s.value='custom';s.dispatchEvent(new Event('change'));s.closest('.lolping-field').querySelector(':scope > button').click();})()`);
+      await wait(()=>execute(win,`document.querySelector('[name="trigger"]').closest('.lolping-field').querySelector(':scope > button').textContent.includes('按下按键')`));
       await execute(win,`document.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyG',key:'g',bubbles:true}));document.querySelector('[name="trigger"]').value='alt';document.querySelector('[name="trigger"]').dispatchEvent(new Event('change'))`);
-      await execute(win,`document.querySelector('#lolPingForm [name="volume"]').value=31;document.querySelector('#lolPingForm').requestSubmit()`);
+      await execute(win,`(()=>{const input=document.querySelector('#lolPingForm [name="volume"]');input.value=31;input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+      await wait(()=>runtimes.get(win.webContents.id).get().config.volume===31);
+      assert.equal(await execute(win,`document.querySelector('#lolPingDialog').classList.contains('hidden')`),false,'autosave leaves configuration open');
+      await execute(win,`document.querySelector('#lolPingDialog').click()`);
       await wait(()=>execute(win,`document.querySelector('#lolPingDialog').classList.contains('hidden')`));
       await execute(win,`document.querySelector('#lolPingEnabled').click()`);
       await wait(()=>runtimes.get(win.webContents.id).bridge?.status==='running');
@@ -162,7 +165,7 @@ ipcMain.handle('start-easytier', event => '127.0.0.' + (windows.findIndex(w=>w.w
     fs.writeFileSync(path.join(root,'.runtime-probe/lolping-settings.png'),(await guest.webContents.capturePage()).toPNG());
     await execute(guest,`(()=>{const d=document.querySelector('details[data-setting="wheel"]');d.open=true;d.scrollIntoView({block:'start'});})()`);await new Promise(r=>setTimeout(r,100));
     fs.writeFileSync(path.join(root,'.runtime-probe/lolping-wheel.png'),(await guest.webContents.capturePage()).toPNG());
-    assert.ok(await execute(guest,`(()=>{const el=document.querySelector('#lolPingDialog .modal-content');el.scrollTop=el.scrollHeight;const r=document.querySelector('#btnSaveLolPing').getBoundingClientRect(),c=el.getBoundingClientRect();return r.bottom<=c.bottom+2&&r.top>=c.top;})()`),'save action remains reachable at minimum window size');
+    assert.equal(await execute(guest,`document.querySelector('#btnSaveLolPing')`),null,'configuration no longer requires a save action');
     await execute(guest,`document.querySelector('#btnCloseLolPing').click();document.querySelector('#btnCloseServerSettings').click();document.querySelector('#btnLeaveChannel').click()`);
     await wait(()=>b.context?.channelId===null&&b.bridge?.status==='running'&&b.transport===null);
     assert.equal(b.room,null);
@@ -197,6 +200,6 @@ ipcMain.handle('start-easytier', event => '127.0.0.' + (windows.findIndex(w=>w.w
     assert.equal(ipcMain.listenerCount('lolping-room-action'),0,'room action handlers removed');
     assert.deepEqual(errors,[]);
     console.log('LOLPING_UI_OK',JSON.stringify({nativeHelperProtocol:true,realOverlay:true,sameChannelPing:true,encryptedDirectUDP:true,roomText:true,originalPanelAndText:true,originalVoteArtwork:true,readyCountdownAndAcceptedIdle:true,readyDecline:true,voteResultRetained:true,individualBlock:true,customKey:true,featureKeyRelease:true,reconnectRestoresSession:true,localConfig:true,outsideChannelLocalOnly:true,disableCleanup:true,smallWindow:geometry,rendererErrors:errors}));
-  } catch(error) { console.error(error.stack);for(const r of runtimes.values())console.error('ROOM_DEBUG',r.status,r.settings?.().features,[...(r.windows?.windows||[])].map(([mode,w])=>({mode,visible:w.isVisible(),url:w.webContents.getURL()})));process.exitCode=1; }
+  } catch(error) { process.exitCode=1; console.error(error.stack);for(const r of runtimes.values())console.error('ROOM_DEBUG',r.status,r.get().config.features,[...(r.windows?.windows||[])].map(([mode,w])=>({mode,visible:w.isVisible(),url:w.webContents.getURL()})));process.exitCode=1; }
   finally { for(const r of runtimes.values())await r.stop().catch(()=>{}); windows.forEach(w=>w.destroy()); await new Promise(resolve=>io.close(resolve)); app.exit(process.exitCode||0); }
 });

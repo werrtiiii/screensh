@@ -23,7 +23,7 @@ namespace ScreenSh.Windows
 #if !UPDATER
                 if (installerReport != null)
                 {
-                    if (!Path.IsPathRooted(installerReport) || args.Length == 0 || (args[0] != "stop-installed" && args[0] != "prepare-upgrade"))
+                    if (!Path.IsPathRooted(installerReport) || args.Length == 0 || (args[0] != "stop-installed" && args[0] != "prepare-upgrade" && args[0] != "prepare-setup" && args[0] != "complete-setup"))
                         throw new ArgumentException("Invalid installer report arguments");
                     File.WriteAllText(installerReport, "OK", new System.Text.UnicodeEncoding(false, false));
                 }
@@ -41,12 +41,18 @@ namespace ScreenSh.Windows
                     return Updater.Window(job, directory);
                 }
                 if (args.Length == 2 && args[0] == "--update") return Updater.Window(args[1], null);
+                if (args.Length == 2 && args[0] == "--watch-setup") { SetupUpdate.Watch(args[1]); return 0; }
                 if (args.Length == 2 && args[0] == "--worker") { new FileUpdate(new UpdateJob(args[1])).Apply(); return 0; }
                 if (args.Length == 3 && args[0] == "--recover") { new FileUpdate(new UpdateJob(args[1])).Recover(args[2]); return 0; }
                 if (args.Length == 3 && args[0] == "--recover-ui") return Updater.Window(args[1], args[2]);
                 if (args.Length == 7 && args[0] == "--bootstrap") return Updater.Bootstrap(args[1], args[2], Int32.Parse(args[3]), args[4] == "true", args[5] == "true", args[6] == "true");
 #else
                 Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+                if (args.Length == 4 && args[0] == "window-frame")
+                {
+                    Console.WriteLine(Common.Json.Serialize(Platform.WindowFrame(args[1], Int32.Parse(args[2]), Boolean.Parse(args[3]))));
+                    return 0;
+                }
             if (args.Length == 2 && args[0] == "verify-signature") { Console.WriteLine(Common.Json.Serialize(Signature.Verify(args[1]))); return 0; }
                 if (args.Length == 1 && args[0] == "self-test")
                 {
@@ -78,6 +84,14 @@ namespace ScreenSh.Windows
                     Common.PrepareUpgrade(args[1], args[2]);
                     return 0;
                 }
+                if (args.Length == 8 && args[0] == "prepare-setup")
+                {
+                    string tx = SetupUpdate.Prepare(args[1], args[2], Int32.Parse(args[3]), args[4], args[5], args[6], args[7]);
+                    if (installerReport == null) Console.WriteLine(tx);
+                    else File.WriteAllText(installerReport, tx, new System.Text.UnicodeEncoding(false, false));
+                    return 0;
+                }
+                if (args.Length == 2 && args[0] == "complete-setup") { SetupUpdate.Complete(args[1]); return 0; }
                 if (args.Length == 4 && args[0] == "firewall")
                 {
                     Console.WriteLine(Common.Json.Serialize(Platform.Firewall(args[1], args[2], args[3] == "apply")));

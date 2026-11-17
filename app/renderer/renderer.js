@@ -10,7 +10,7 @@ import { openScreenPicker, selectScreenSourceTab, startScreenCapture, stopSharin
 import { leaveRoom, enterRoom } from './room.js';
 import { normalizePeers } from './easytier-peers.mjs';
 import { requestPassword } from './password-dialog.js';
-import { showContextMenu } from './context-menu.js';
+import { showContextMenu, closeContextMenu } from './context-menu.js';
 import { initVoice } from './voice.js';
 import { initAccompaniment } from './accompaniment.js';
 import { bindRenderingSettings } from './rendering-settings.mjs';
@@ -19,7 +19,10 @@ import { initSoundVolume } from './sound-volume.mjs';
 import { initStartupSettings, lastConnectedServer } from './startup-settings.mjs';
 import { joinPreferredChannel } from './server-channel-preferences.mjs';
 import { avatarThumbnail } from './avatar-thumbnail.mjs';
-import { initSettingsNavigation } from './ui.js';
+import { initGlassTransparency, initSettingsNavigation, initMemberSidebar } from './ui.js';
+import { initHelpTips } from './help-tips.js';
+import { initStyledSelects } from './styled-select.js';
+import { initDialogKeyboard } from './dialog-keyboard.js';
 import { AppPresence } from './app-presence.mjs';
 import { normalizeServerAddress, connectServerAddress } from './server-address.mjs';
 import { serverIdentity } from './server-identity.mjs';
@@ -29,6 +32,7 @@ import { initEasyTierSettings } from './easytier-settings.mjs';
 import { initUpdateAcceleration } from './update-acceleration-ui.mjs';
 
 const initialAvatar = state.userAvatar;
+initDialogKeyboard();
 initMemberNetwork();
 initServerInfo();
 initChat({state,getSocket:()=>socket,requestServer});
@@ -38,7 +42,7 @@ initEasyTierSettings(window.electronAPI);
 const appPresence = new AppPresence({ storage: localStorage, connect: (url, options) => io(url, options) });
 appPresence.sync();
 const avatarReady = readCachedImage('avatar').then(avatar => {
-  if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); }
+  if (avatar !== undefined && state.userAvatar === initialAvatar) { state.userAvatar = avatar; applyAvatarImage(avatar); updateProfileAvatarControls(); }
 }).catch(error => console.error('Avatar cache:', error));
 
 document.addEventListener('dragstart', event => {
@@ -64,7 +68,18 @@ $('#themeSelect').addEventListener('change', (e) => {
 
 // 执行初始化
 initTheme();
-initSettingsNavigation();
+initGlassTransparency();
+const settingsNavigation = initSettingsNavigation();
+initMemberSidebar();
+$('#btnRoomMore').addEventListener('click', event => {
+  const anchor = event.currentTarget;
+  if (anchor.getAttribute('aria-expanded') === 'true') { closeContextMenu({ restoreFocus: true }); return; }
+  showContextMenu(event, [
+    { label: '成员网络', icon: 'members', run: () => $('#btnMemberNetwork').click() },
+    { label: '服务器设置', icon: 'server', run: () => $('#btnServerSettings').click(), disabled: !state.roomId },
+    { label: '软件设置', icon: 'settings', run: () => showSettings() },
+  ], { anchor });
+});
 
 // A server has one permanent room; its stable ID also names the EasyTier network.
 async function joinServer() {
@@ -127,7 +142,7 @@ async function joinServer() {
   } catch (error) { toast(error.message, 'error'); await leaveRoom(); }
   finally { state.joining = false; $('#btnConnect').disabled = state.leaving || state.runtimeCleanupFailed; $('#btnConnect').textContent = '连接服务器'; }
 }
-$('#btnConnect').addEventListener('click', joinServer);
+$('#serverConnectForm').addEventListener('submit', event => { event.preventDefault(); void joinServer(); });
 
 function readImage(file) {
   return new Promise((resolve, reject) => {
@@ -147,29 +162,39 @@ function applyAvatarImage(data) {
   if (data) avatarThumbnail(data).then(thumbnail => { if (revision === profileAvatarRevision) paint(thumbnail); }).catch(() => {});
 }
 let avatarBusy = false, serverIconBusy = false;
+function updateProfileAvatarControls() {
+  $('#btnProfileAvatar').disabled = $('#btnProfileChooseAvatar').disabled = avatarBusy;
+  $('#btnProfileResetAvatar').disabled = avatarBusy || !state.userAvatar;
+}
 async function saveAvatar(avatar) {
   if (state.roomId) await requestServer('set-avatar', { avatar });
   state.userAvatar = avatar;
   await saveCachedImage('avatar', avatar); localStorage.removeItem('userAvatar');
   applyAvatarImage(avatar);
+  updateProfileAvatarControls();
 }
 async function chooseAvatar(file) {
   if (avatarBusy || !file) return;
   avatarBusy = true;
+  updateProfileAvatarControls();
   try {
     const avatar = await readImage(file);
     await saveAvatar(avatar);
   } catch (error) { toast(error.message, 'error'); }
-  finally { avatarBusy = false; }
+  finally { avatarBusy = false; updateProfileAvatarControls(); }
 }
 async function resetAvatar() {
   if (avatarBusy) return;
   avatarBusy = true;
+  updateProfileAvatarControls();
   try { await saveAvatar(null); }
   catch (error) { toast(error.message, 'error'); }
-  finally { avatarBusy = false; }
+  finally { avatarBusy = false; updateProfileAvatarControls(); }
 }
-document.addEventListener('user-avatar-updated', event => applyAvatarImage(event.detail));
+document.addEventListener('user-avatar-updated', event => { applyAvatarImage(event.detail); updateProfileAvatarControls(); });
+for (const id of ['btnProfileAvatar', 'btnProfileChooseAvatar']) $('#' + id).addEventListener('click', () => $('#avatarInput').click());
+$('#btnProfileResetAvatar').addEventListener('click', resetAvatar);
+updateProfileAvatarControls();
 for (const id of ['btnAvatar', 'btnRoomAvatar']) $('#' + id).addEventListener('contextmenu', event => showContextMenu(event, [
   { label: '更换头像', run: () => $('#avatarInput').click() },
   { label: '恢复默认头像', disabled: !state.userAvatar || avatarBusy, run: resetAvatar },
@@ -198,7 +223,14 @@ $('#btnRetryCleanup').addEventListener('click', leaveRoom);
 
 // --- 共享屏幕：展开屏幕源选择面板 ---
 $('#btnShare').addEventListener('click', openScreenPicker);
-document.querySelectorAll('[data-source-tab]').forEach(button=>button.addEventListener('click',()=>selectScreenSourceTab(button.dataset.sourceTab)));
+document.querySelectorAll('[data-source-tab]').forEach(button=>{
+  button.addEventListener('click',()=>selectScreenSourceTab(button.dataset.sourceTab));
+  button.addEventListener('keydown',event=>{
+    const tabs=[...document.querySelectorAll('[data-source-tab]')],index=tabs.indexOf(button);
+    const next={ArrowRight:(index+1)%tabs.length,ArrowLeft:(index-1+tabs.length)%tabs.length,Home:0,End:tabs.length-1}[event.key];
+    if(next===undefined)return;event.preventDefault();tabs[next].click();tabs[next].focus();
+  });
+});
 
 // --- 收起屏幕源选择面板 ---
 $('#btnCancelPicker').addEventListener('click', () => {
@@ -211,24 +243,6 @@ $('#btnCancelPicker').addEventListener('click', () => {
 for (const [id, close] of [['screenPicker', 'btnCancelPicker'], ['channelDialog', 'btnCancelChannel'], ['serverPeersDialog', 'btnCancelServerPeers'], ['serverSettingsDialog', 'btnCloseServerSettings']]) {
   const modal = $('#' + id);
   modal.addEventListener('click', event => { if (event.target === modal) $('#' + close).click(); });
-  modal.addEventListener('keydown', event => {
-    event.stopPropagation();
-    if (event.key === 'Tab') {
-      const nodes = [...modal.querySelectorAll('button,input')].filter(n => !n.disabled && !n.classList.contains('hidden'));
-      if (event.shiftKey && document.activeElement === nodes[0]) { event.preventDefault(); nodes.at(-1)?.focus(); }
-      else if (!event.shiftKey && document.activeElement === nodes.at(-1)) { event.preventDefault(); nodes[0]?.focus(); }
-    }
-  });
-}
-
-// Reopening a settings/dialog page always starts at its first field.
-for (const modal of document.querySelectorAll('.modal')) {
-  let wasOpen = !modal.classList.contains('hidden');
-  new MutationObserver(() => {
-    const open = !modal.classList.contains('hidden');
-    if (open && !wasOpen) { for (const panel of modal.querySelectorAll('.modal-content, .modal-body')) panel.scrollTop = 0; }
-    wasOpen = open;
-  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
 }
 
 // --- 确认开始共享 ---
@@ -240,45 +254,11 @@ $('#btnStopShare').addEventListener('click', stopSharing);
 // --- 返回大厅 / 取消观看 ---
 $('#btnStopWatch').addEventListener('click', () => stopWatch({ retain: true }));
 
-// --- 信令服务器连通性检测 ---
-async function testServerConnection() {
-  if ($('#btnTestServer').disabled) return;
-  const url = $('#serverUrl').value.trim();
-  if (!url) { $('#serverUrl').focus(); return toast('请先填写服务器地址', 'error'); }
-  try {
-    normalizeServerAddress(url);
-  } catch { return toast('请输入有效的服务器域名或 IP，可附加端口，不要附加路径', 'error'); }
-  $('#btnTestServer').textContent = '检测中...';
-  $('#btnTestServer').disabled = true;
-
-  try {
-    const { connection } = await connectServerAddress(url, address => io(address, { transports: ['polling', 'websocket'], tryAllTransports: true, timeout: 5000, reconnection: false }));
-    $('#serverStatus').className = 'status-dot connected';
-    connection.disconnect();
-  } catch {
-    $('#serverStatus').className = 'status-dot disconnected';
-    toast('无法连接到服务器', 'error');
-  } finally {
-    $('#btnTestServer').textContent = '检测';
-    $('#btnTestServer').disabled = false;
-  }
-}
-
-$('#btnTestServer').addEventListener('click', testServerConnection);
-
 $('#serverUrl').value = localStorage.getItem('serverUrl') || '';
 $('#serverUrl').addEventListener('input', () => localStorage.setItem('serverUrl', $('#serverUrl').value.trim()));
 $('#userName').value = localStorage.getItem('userName') || '';
-$('#userName').addEventListener('input', () => localStorage.setItem('userName', $('#userName').value.trim()));
 window.electronAPI.onRuntimeError(async message => { toast(message, 'error'); await leaveRoom(); });
 window.electronAPI.onShareEnded?.(externalObsEnded);
-// Only test a server address previously saved by the user.
-if ($('#serverUrl').value) testServerConnection();
-
-// Forms are submitted explicitly with their buttons, never by an input's Enter key.
-document.addEventListener('keydown', event => {
-  if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault();
-}, true);
 
 // --- 窗口关闭前清理 ---
 window.addEventListener('beforeunload', () => {
@@ -362,16 +342,19 @@ function initSettings() {
     }
   });
 
-  $('#bitrateInput').addEventListener('change', (e) => {
+  const saveVideoBitrate = e => {
     if (autoBitrateCheckbox.checked) return;
     let val = parseInt(e.target.value);
+    if(e.type==='input'&&(!Number.isFinite(val)||val<100||val>10000))return;
     if (!Number.isFinite(val)) val = 1500;
     if (val > 10000) val = 10000;
     if (val < 100) val = 100;
-    e.target.value = val;
+    if(e.type==='change')e.target.value = val;
     state.maxBitrate = val;
     localStorage.setItem('maxBitrate', state.maxBitrate);
-  });
+  };
+  $('#bitrateInput').addEventListener('input', saveVideoBitrate);
+  $('#bitrateInput').addEventListener('change', saveVideoBitrate);
 
   $('#resolutionSelect').addEventListener('change', (e) => {
     state.resolution = e.target.value;
@@ -402,6 +385,7 @@ initSettings();
 void initUpdateAcceleration({notify:toast});
 initAccompaniment();
 initVoice();
+initStyledSelects();
 
 // Manual updates use the same dedicated window as the startup update gate.
 const updateStatus = $('#updateStatus');
@@ -496,45 +480,30 @@ const btnRoomSettings = $('#btnRoomSettingsToolbar');  // 房间内共享设置�
 const btnRoomSystemSettings = $('#btnRoomSettings');
 const settingsModal = $('#settingsModal');      // 弹窗本体
 const btnCloseSettings = $('#btnCloseSettings');// 关闭按钮
-function showSettings() {
+function showSettings(mode = 'system') {
+  $('#profileName').value = $('#userName').value;
+  updateProfileAvatarControls();
+  settingsNavigation.restoreSharing();
+  $('#settingsHeading').textContent = mode === 'sharing' ? '屏幕共享设置' : '系统设置';
+  settingsNavigation.open(mode);
   settingsModal.classList.remove('hidden');
   settingsModal.querySelector('.modal-body').scrollTo({ top: 0, behavior: 'instant' });
 }
 
-// Help remains accessible by mouse, click, or keyboard without toggling a setting.
-$$('.help-tip').forEach(tip => {
-  if(tip.closest('#easyTierSettingsDialog'))return;
-  tip.tabIndex = 0;
-  tip.setAttribute('role', 'note');
-  tip.setAttribute('aria-label', tip.dataset.tooltip);
-  tip.addEventListener('click', event => { event.preventDefault(); tip.focus(); });
-  tip.addEventListener('keydown', event => {
-    if (event.key === 'Enter' || event.key === ' ') event.preventDefault();
-  });
-});
+initHelpTips();
 
 if (settingsModal && btnCloseSettings) {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => {
-      $('#settingsModal h2').textContent = '系统设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-easytier, .setting-chat').forEach(el => el.style.display = '');
-      $$('.setting-theme').forEach(el => el.style.display = '');
-      $$('.setting-update').forEach(el => el.style.display = '');
-      $$('.setting-room').forEach(el => el.style.display = 'none');
       showSettings();
     });
   }
   if (btnRoomSettings) {
     btnRoomSettings.addEventListener('click', () => {
-      $('#settingsModal h2').textContent = '共享设置';
-      $$('.setting-hardware, .setting-voice, .setting-sounds, .setting-startup, .setting-lolping, .setting-easytier, .setting-chat').forEach(el => el.style.display = 'none');
-      $$('.setting-theme').forEach(el => el.style.display = 'none');
-      $$('.setting-update').forEach(el => el.style.display = 'none');
-      $$('.setting-room').forEach(el => el.style.display = '');
-      showSettings();
+      showSettings('sharing');
     });
   }
-  if (btnRoomSystemSettings) btnRoomSystemSettings.addEventListener('click', () => btnSettings?.click());
+  if (btnRoomSystemSettings) btnRoomSystemSettings.addEventListener('click', () => showSettings());
   btnCloseSettings.addEventListener('click', () => {
     settingsModal.classList.add('hidden');
   });
@@ -595,6 +564,8 @@ function renderBookmarks() {
     }));
   };
   render('#bookmarkList'); render('#roomBookmarkList', true);
+  filterBookmarks();
+  setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') === 'true');
 }
 function addBookmark(url, name = '') {
   url = url.trim();
@@ -649,21 +620,41 @@ $('#bookmarkAddForm')?.addEventListener('submit', event => { event.preventDefaul
 $('#roomBookmarkAddForm')?.addEventListener('submit', event => { event.preventDefault(); addBookmark($('#roomBookmarkUrlInput').value); $('#roomBookmarkUrlInput').value = ''; $('#roomBookmarkAddForm').classList.add('hidden'); });
 function setBookmarkCollapsed(collapsed) {
   localStorage.setItem('bookmarksCollapsed', collapsed);
-  document.querySelectorAll('.bookmark-list, .bookmark-empty').forEach(node => node.classList.toggle('collapsed', collapsed));
+  document.querySelectorAll('.bookmark-list, .bookmark-empty').forEach(node => node.classList.toggle('collapsed', collapsed && !(node.id === 'bookmarkList' && $('#serverSearch').value.trim())));
   document.querySelectorAll('#btnCollapseBookmarks, #btnCollapseRoomBookmarks').forEach(button => { button.classList.toggle('is-collapsed', collapsed); button.title = collapsed ? '展开书签' : '收起书签'; button.setAttribute('aria-label', button.title); button.setAttribute('aria-expanded', String(!collapsed)); });
 }
 function toggleBookmarkLists() { setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') !== 'true'); }
 $('#btnCollapseBookmarks')?.addEventListener('click', toggleBookmarkLists);
 $('#btnCollapseRoomBookmarks')?.addEventListener('click', toggleBookmarkLists);
-$('#serverSearch')?.addEventListener('input', event => {
-  const query = event.target.value.trim().toLowerCase();
-  $$('#bookmarkList .bookmark-item').forEach(item => { item.hidden = query && !item.textContent.toLowerCase().includes(query); });
+function filterBookmarks() {
+  const query = $('#serverSearch').value.trim().toLowerCase();
+  const items = [...$$('#bookmarkList .bookmark-item')];
+  for (const item of items) item.hidden = !!query && ![...item.querySelectorAll('b,small')].some(node => node.textContent.toLowerCase().includes(query));
+  const matches = items.filter(item => !item.hidden).length;
+  $('#bookmarkSearchCount').textContent = query ? `找到 ${matches} / ${items.length} 个服务器` : `共 ${items.length} 个服务器`;
+  $('#bookmarkSearchEmpty').hidden = matches > 0;
+  $('#bookmarkSearchEmpty').textContent = query ? '没有匹配的服务器' : '暂无服务器，点击 + 添加';
+  $('#btnClearServerSearch').hidden = !$('#serverSearch').value;
+}
+$('#serverSearch')?.addEventListener('input', () => {
+  filterBookmarks();
+  setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') === 'true');
+});
+$('#btnClearServerSearch').addEventListener('click', () => {
+  $('#serverSearch').value = '';
+  $('#serverSearch').dispatchEvent(new Event('input'));
+  $('#serverSearch').focus();
 });
 const savedName = localStorage.getItem('userName') || '';
-$('#userName').value = savedName;
-$('#roomUserName').value = savedName;
-$('#userName').addEventListener('input', event => { localStorage.setItem('userName', event.target.value.trim()); $('#roomUserName').value = event.target.value; });
-$('#roomUserName')?.addEventListener('input', event => { localStorage.setItem('userName', event.target.value.trim()); $('#userName').value = event.target.value; });
+for (const input of [$('#userName'), $('#roomUserName'), $('#profileName')]) {
+  input.value = savedName;
+  input.addEventListener('input', event => {
+    localStorage.setItem('userName', event.target.value.trim());
+    for (const other of [$('#userName'), $('#roomUserName'), $('#profileName')]) {
+      if (other !== input) other.value = event.target.value;
+    }
+  });
+}
 renderBookmarks();
 setBookmarkCollapsed(localStorage.getItem('bookmarksCollapsed') === 'true');
 function focusNameEditor() {

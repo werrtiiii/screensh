@@ -4,7 +4,11 @@ const { spawnSync } = require('node:child_process');
 const {keepLocaleFile}=require('./package-locales.cjs');
 
 const version = require('../package.json').version;
+require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{stdio:'inherit',windowsHide:true});
 const updateManifest=require('js-yaml').load(fs.readFileSync(path.resolve(__dirname,'../dist/latest.yml'),'utf8'));
+const legacyReleaseCheck=spawnSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{encoding:'utf8',windowsHide:true,timeout:60000});
+if(legacyReleaseCheck.error||legacyReleaseCheck.status!==0)throw legacyReleaseCheck.error||Error('Legacy update metadata check failed: '+legacyReleaseCheck.stderr+legacyReleaseCheck.stdout);
+console.log(legacyReleaseCheck.stdout.trim());
 if(updateManifest.portable){
   const {portableArtifact}=require('../main/portable-updater.cjs'),file=portableArtifact(updateManifest);
   const archive=path.resolve(__dirname,'../dist',file.url);
@@ -144,3 +148,6 @@ console.log(processCheck.stdout.trim());
 const pathCheck=spawnSync(process.execPath,[path.resolve(__dirname,'../tests/integration/check-installer-path.cjs')],{env:process.env,windowsHide:true,encoding:'utf8',timeout:30000});
 if(pathCheck.error||pathCheck.status!==0)throw pathCheck.error||new Error('Installer interactive path check failed: '+pathCheck.stderr+pathCheck.stdout);
 console.log(pathCheck.stdout.trim());
+const rollbackCheck=spawnSync(process.execPath,[path.resolve(__dirname,'../tests/integration/check-setup-rollback.cjs')],{env:process.env,windowsHide:true,encoding:'utf8',timeout:120000});
+if(rollbackCheck.error||rollbackCheck.status!==0)throw rollbackCheck.error||new Error('Full setup rollback check failed: '+rollbackCheck.stderr+rollbackCheck.stdout);
+console.log(rollbackCheck.stdout.trim());

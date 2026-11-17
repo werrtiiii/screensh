@@ -53,7 +53,7 @@ app.whenReady().then(async()=>{
     assert.equal(local.records.messages.length,3);assert.ok(local.usage[0].bytes>0);
     const reader=new BrowserWindow({show:false,webPreferences:{preload:path.join(root,'preload.js')}});windows.push(reader);await reader.loadFile(path.join(root,'renderer/index.html'));
     assert.equal(await reader.webContents.executeJavaScript(`(async()=>{const cache=await import('./chat-cache.mjs');return (await cache.readChatCache('${local.server}')).messages.length})()`),3,'a new window restores persisted local messages');reader.destroy();windows.splice(windows.indexOf(reader),1);
-    await host.run(`document.querySelector('#btnSettings').click()`);await host.wait(`document.querySelectorAll('.settings-navigation button').length===6`);
+    await host.run(`document.querySelector('#btnSettings').click()`);await host.wait(`document.querySelectorAll('.settings-navigation button').length===7`);
     await host.wait(`document.querySelector('#chatCacheServers').textContent.includes('0091 Server')`);
     await host.run(`document.querySelector('#chatCacheServers button').click()`);await host.wait(`!!document.querySelector('.chat-confirm-dialog')`);await host.run(`document.querySelector('.chat-confirm-dialog [data-confirm]').click()`);
     await host.wait(`document.querySelector('#chatCacheServers').children.length===0`);
@@ -193,7 +193,7 @@ app.whenReady().then(async()=>{
     assert.deepEqual(batch.attachments.map(item=>item.name),['select-a.png','select-b.gif','drop-a.webp','drop-b.gif','paste-a.gif','paste-b.png']);
     assert.equal(batch.text,'Batch caption','caption and every image belong to one message');
     assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).count})()`),batchBefore+1);
-    await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-media-multiple')?.children.length===6`);
+    await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-media-multiple')?.children.length===7`);
     await peer.run(`document.querySelector('.chat-message[data-message-id="${batch.id}"]').scrollIntoView({block:'start'})`);peer.window.show();peer.window.focus();await new Promise(resolve=>setTimeout(resolve,250));
     fs.writeFileSync(path.join(root,'.runtime-probe','chat-combined-message.png'),(await peer.window.webContents.capturePage()).toPNG());
     for(let index=0;index<batch.attachments.length;index++)if(batch.attachments[index].name.endsWith('.gif'))assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-image',{id:'${batch.id}',index:${index}})).data})()`),gif,'batch GIF retains original bytes');
