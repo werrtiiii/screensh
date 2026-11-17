@@ -296,7 +296,7 @@ function initSettings() {
   state.maxBitrate = localStorage.getItem('maxBitrate') !== null
                      ? parseInt(localStorage.getItem('maxBitrate'))
                      : state.maxBitrate;
-  state.shareAudio = localStorage.getItem('shareAudio') === 'true';
+  state.shareAudio = localStorage.getItem('shareAudio') !== 'false';
   localStorage.removeItem('lowBandwidth');
   state.adaptiveResolution = localStorage.getItem('adaptiveResolution') === 'true';
   $('#adaptiveResolutionCheckbox').checked = state.adaptiveResolution;

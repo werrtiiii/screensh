@@ -40,7 +40,7 @@ export const state = {
   frameRate: 60,
   maxBitrate: 0,
   audioBitrate: 128,
-  shareAudio: false,
+  shareAudio: true,
   adjustingShare: false,
   adaptiveResolution: false,
   // EasyTier or the explicitly selected LAN address supplies the reachable route.

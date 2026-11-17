@@ -32,16 +32,14 @@ let easytierSettings;
 async function getEasyTierSettings(){const {normalizeEasyTierSettings}=await import('./renderer/easytier-options.mjs');return easytierSettings ||= require('./main/easytier-settings.cjs').createEasyTierSettings({file:path.join(app.getPath('userData'),'easytier-settings.json'),normalize:normalizeEasyTierSettings});}
 const { ScreenObsRuntime:ObsEngine } = require('./main/screen-obs-runtime.cjs');
 const renderingConfigPath = path.join(app.getPath('userData'), 'rendering.json');
-let hardwareAccelerationEnabled = false;
+let hardwareAccelerationEnabled = true;
 try {
   const config = JSON.parse(fs.readFileSync(renderingConfigPath, 'utf8'));
-  hardwareAccelerationEnabled = config.hardwareAcceleration === true;
+  hardwareAccelerationEnabled = config.hardwareAcceleration !== false;
 } catch {}
 
-// Some Windows installations fail to load Electron's GPU runtime DLLs. In
-// that case Chromium reports the renderer page as ERR_FAILED before the UI
-// can start. The app's capture pipeline does not depend on Electron UI GPU
-// compositing, so keep the window renderer on the software path.
+// Hardware acceleration is enabled by default; an explicit opt-out uses
+// software rendering on Windows installations with GPU runtime issues.
 if (!hardwareAccelerationEnabled && typeof app.disableHardwareAcceleration === 'function') app.disableHardwareAcceleration();
 if (!hardwareAccelerationEnabled && app.commandLine?.appendSwitch) {
   app.commandLine.appendSwitch('disable-gpu');
