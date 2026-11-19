@@ -71,6 +71,12 @@ Desktop.ini
 desktop.ini
 $RECYCLE.BIN/
 
-# Keep package-lock.json, source/configuration files and documentation tracked.
+# Local design notes, implementation plans and assistant resources
+/.agents/
+/AGENTS.md
+/DESIGN.md
+/UX-CONTRACT.md
+/docs/
+/release-notes/
 
 *.dev*

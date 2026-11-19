@@ -75,7 +75,7 @@
       "update-config.json",
       "lolping/*.cjs",
       "lolping/dist/**/*",
-      "lolping/NOTICE.md",
+      "lolping/NOTICE",
       "lolping/vendor/LICENSE"
     ],
     "extraResources": [

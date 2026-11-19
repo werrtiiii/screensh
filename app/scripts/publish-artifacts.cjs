@@ -12,5 +12,5 @@ for(const file of files)if(!fs.statSync(file).isFile())throw Error('Missing rele
 execFileSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{stdio:'inherit',windowsHide:true});
 // --verify-tag prevents this helper from publishing uncommitted source states.
 try{execFileSync('gh',['release','view',tag,'--repo',repository],{stdio:'pipe'});}
-catch{execFileSync('gh',['release','create',tag,'--verify-tag','--repo',repository,'--title',`ScreenSh ${version}`,'--notes-file',path.join(root,'release-notes',version+'.md')],{stdio:'inherit'});}
+catch{execFileSync('gh',['release','create',tag,'--verify-tag','--repo',repository,'--title',`ScreenSh ${version}`,'--generate-notes'],{stdio:'inherit'});}
 execFileSync('gh',['release','upload',tag,'--repo',repository,'--clobber',...files],{stdio:'inherit'});

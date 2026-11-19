@@ -107,4 +107,4 @@ jobs:
             app/dist/ScreenSh-*-Blocks.bin
             app/dist/ScreenSh-*-server.zip
           fail_on_unmatched_files: true
-          body_path: ${{ format('release-notes/{0}.md', env.RELEASE_TAG) }}
+          generate_release_notes: true

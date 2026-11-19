@@ -97,7 +97,7 @@ const probe = `
     'lolping/dist/renderer/text/index.html','lolping/dist/renderer/text/main.js','lolping/dist/renderer/text/text.css',
     'lolping/dist/renderer/ui/ready-countdown.webm','lolping/dist/renderer/ui/ready-accepted-intro.webm','lolping/dist/renderer/ui/ready-accepted-idle.webm','lolping/dist/renderer/ui/ready-declined.webm',
     'lolping/dist/renderer/ui/ready-intro.ogg','lolping/dist/renderer/ui/ready-countdown.ogg','lolping/dist/renderer/ui/ready-accepted-loop.ogg',
-    'lolping/dist/renderer/ui/surrender-frame.png','lolping/NOTICE.md','lolping/vendor/LICENSE']) {
+    'lolping/dist/renderer/ui/surrender-frame.png','lolping/NOTICE','lolping/vendor/LICENSE']) {
     if (!fs.existsSync(path.join(root,file))) throw new Error('Packaged app is missing '+file);
   }
   for (const file of ['main/auto-update.cjs','main/update-acceleration.cjs','renderer/update-acceleration-ui.mjs','main/pending-update.cjs','main/external-obs.cjs','main/external-obs-settings.cjs','main/obs-websocket.cjs','renderer/external-obs-ui.mjs']) {
