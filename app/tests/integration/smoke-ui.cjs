@@ -271,7 +271,7 @@ app.whenReady().then(async () => {
     assert.equal(captureConfig.captureMethod, 'wgc');
     assert.equal(captureConfig.videoEncoder, 'amf');
     assert.equal(captureConfig.sourceId, 'window-test');
-    assert.equal(captureConfig.resolution,'1280x720');assert.equal(captureConfig.frameRate,30);assert.equal(captureConfig.maxBitrate,1500);
+    assert.equal(captureConfig.resolution,'1280x720');assert.equal(captureConfig.frameRate,30);assert.equal(captureConfig.maxBitrate,2200);
     await window.webContents.executeJavaScript(`document.querySelectorAll('.toast').forEach(n => n.remove())`);
     window.setSize(1000, 640);
     window.showInactive();

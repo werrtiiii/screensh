@@ -272,7 +272,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     soundMembers: [...members.values(), ...[...disconnectedMembers.values()].map(record => record.user)].map(u => ({ memberId: u.memberId, channelId: u.channelId })),
     memberHistory: historicalMembers(),
     users: [...members].map(([socketId, u]) => ({ socketId, memberId: u.memberId, profileId: saved.memberHistory[u.key]?.id, name: u.name, virtualIp: u.virtualIp, videoRelay:u.isSharing&&u.relaySession?{...relayEndpoint(relay.status()),path:u.relaySession.path}:null,
-      channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, lolpingEndpoint: u.lolpingEndpoint || null, isSharing: u.isSharing, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
+      channelId: u.channelId, channelJoinedOrder: u.channelJoinedOrder, lolpingEndpoint: u.lolpingEndpoint || null, isSharing: u.isSharing, shareAudio: u.isSharing ? u.shareAudio ?? null : null, voiceEnabled: !!u.voiceEnabled, voiceDeafened: !!u.voiceDeafened, voiceMuted: !!u.voiceMuted, microphoneMuted: !u.voiceEnabled || !!u.microphoneMuted, accompanimentActive: !!u.voiceEnabled && !!u.accompanimentActive, voiceSpeaking: !!u.voiceEnabled && !u.voiceMuted && (!u.microphoneMuted || !!u.accompanimentActive) && !!u.voiceSpeaking, watchingId: u.watchingId || null, role: role(u.key), avatar: imageRef(saved.userProfiles[u.key]?.avatar) })) });
   const publish = () => {
     for(const user of members.values())if(user.relaySession?.channelId!==user.channelId)delete user.relaySession;
     void relay.revalidate();
@@ -363,7 +363,11 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
     handle('chat-recall',payload=>{
       const actor=requireMember(),actorId=saved.memberHistory[actor.key].id,message=chat.find(payload?.id),rank={host:2,admin:1,member:0};
       const targetKey=message&&Object.keys(saved.memberHistory).find(key=>saved.memberHistory[key].id===message.authorId);
-      const result=chat.recall(payload?.id,actorId,rank[role(actor.key)]>rank[targetKey?role(targetKey):'member']);
+      const actorRole=role(actor.key);
+      const result=chat.recall(payload?.id,actorId,{
+        isHost:actorRole==='host',
+        moderate:rank[actorRole]>rank[targetKey?role(targetKey):'member']
+      });
       io.to('members').emit('chat-recalled',result);io.to('members').emit('chat-trim',chat.info());return result;
     });
     handle('chat-send',payload=>{
@@ -666,6 +670,7 @@ function createSignalingServer({ stateFile = null, initialPeers = process.env.SC
       const u = requireMember(); if (sharing && !u.channelId) throw new Error('请先加入频道');
       if(sharing&&payload?.relayPath){if(!saved.videoRelayEnabled||!relay.status().ready||u.relaySession?.path!==payload.relayPath)throw Error('服务器转发会话已失效');}
       else delete u.relaySession;
+      u.shareAudio = sharing && typeof payload?.shareAudio === 'boolean' ? payload.shareAudio : null;
       u.isSharing = sharing; publish(); return {};
     });
     function leave(unexpected = false) {

@@ -69,3 +69,22 @@ test('metadata cancellation reaches the direct provider executor and stops proxy
   f.provider.executor.request=async(_options,cancellation)=>{assert.equal(cancellation,token);return 'direct';};
   assert.equal(await f.provider.httpRequest(new URL('https://github.com/werrtiiii/screensh/releases.atom')),'direct');
 });
+
+test('hotfix metadata is read directly and can only advance the current formal version',async t=>{
+  let stable=info;
+  const {GitHubProvider}=require('electron-updater/out/providers/GitHubProvider');
+  t.mock.method(GitHubProvider.prototype,'getLatestVersion',async()=>stable);
+  const urls=[];
+  let index={schemaVersion:1,version:'1.5.4',build:2,
+    portable:{...info.files[0],url:'ScreenSh-1.5.4-b2-Update.zip'},
+    incremental:{...info.files[0],url:'ScreenSh-1.5.4-b2-Update.json'}};
+  const f=fixture({enabled:false},async url=>{urls.push(String(url));return new Response(JSON.stringify(index));});
+  f.client.currentVersion={version:'1.5.4'};f.client.currentBuild=1;
+  const found=await f.provider.getLatestVersion();
+  assert.equal(found.version,'1.5.4');assert.equal(found.build,2);
+  assert.deepEqual(urls,['https://github.com/werrtiiii/screensh/releases/download/hotfix-index/ScreenSh-1.5.4-hotfix.json']);
+  assert.equal(f.provider.resolveFiles(found)[0].url.href,'https://github.com/werrtiiii/screensh/releases/download/hotfix-1.5.4-b2/ScreenSh-1.5.4-b2-Update.zip');
+  f.client.currentBuild=2;assert.deepEqual(await f.provider.getLatestVersion(),info);
+  index={...index,build:3};assert.deepEqual(await f.provider.getLatestVersion(),info,'reject mismatching asset names');
+  stable={...info,version:'1.5.5'};urls.length=0;assert.deepEqual(await f.provider.getLatestVersion(),stable);assert.equal(urls.length,0);
+});

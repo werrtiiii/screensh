@@ -3,7 +3,7 @@ const {packageBlocks}=require('../scripts/package-blocks.cjs');
 const {digest,prepareIncremental,prepareInWorker,parseManifest,verifyPrepared,stageDirectory}=require('../main/update-blocks.cjs');
 const {fetchUpdateRange,incrementalArtifact,PortableUpdater}=require('../main/portable-updater.cjs');
 const {CancellationToken,CancellationError}=require('builder-util-runtime');
-async function fixture(t,change){
+async function fixture(t,change,version='9.0.0'){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'screensh-blocks-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const root=path.join(dir,'install'),source=path.join(dir,'source'),dist=path.join(dir,'dist'),pending=path.join(root,'data/updates/pending');
   const original=crypto.randomBytes(8*1024*1024),files=[];
@@ -13,9 +13,9 @@ async function fixture(t,change){
     for(const [base,bytes] of [[root,old],[source,next]]){const target=path.join(base,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,bytes);}
     files.push({path:name,size:next.length,sha256:digest(next)});
   }
-  const artifact=await packageBlocks({source,dist,version:'9.0.0',files}),raw=fs.readFileSync(path.join(dist,artifact.url)),manifest=parseManifest(raw,'9.0.0'),pack=fs.readFileSync(path.join(dist,manifest.pack.url));
+  const artifact=await packageBlocks({source,dist,version,files}),raw=fs.readFileSync(path.join(dist,artifact.url)),manifest=parseManifest(raw,version),pack=fs.readFileSync(path.join(dist,manifest.pack.url));
   const requests=[];
-  return {root,pending,raw,version:'9.0.0',manifest,artifact,pack,requests,fetchRange:async(_pack,start,length)=>{requests.push({start,length});return pack.subarray(start,start+length);}};
+  return {root,pending,raw,version,manifest,artifact,pack,requests,fetchRange:async(_pack,start,length)=>{requests.push({start,length});return pack.subarray(start,start+length);}};
 }
 test('identical installation requires zero payload bytes, without an old archive',async t=>{
   const f=await fixture(t),result=await prepareIncremental(f);assert.equal(result.transferred,0);assert.equal(f.requests.length,0);assert.ok(await verifyPrepared(f));
@@ -72,12 +72,15 @@ test('range requests require 206 with the exact byte interval, reject truncation
   const token=new CancellationToken();token.cancel();await assert.rejects(fetchUpdateRange(url,3,4,12,token,()=>assert.fail('cancelled request')),CancellationError);
 });
 test('incremental failure falls back to the full ZIP, but cancellation does not',async t=>{
-  const f=await fixture(t),zip={url:'ScreenSh-9.0.0-Update.zip',size:12,sha512:'A'.repeat(86)+'=='},types=[];
-  const options={updateInfoAndProvider:{info:{version:'9.0.0',portable:zip,incremental:f.artifact},provider:{resolveFiles:info=>info.files.map(info=>({info,url:new URL('https://github.com/o/r/releases/download/9.0.0/'+info.url)}))}},cancellationToken:new CancellationToken()};
-  const fake={getOrCreateDownloadHelper:async()=>({cacheDirForPendingUpdate:f.pending}),_logger:{warn(){}},executeDownload:async task=>{types.push(task.fileExtension);if(task.fileExtension==='json')throw Error('source has no ranges');return 'full ZIP';}};
-  assert.equal(await PortableUpdater.prototype.doDownloadUpdate.call(fake,options),'full ZIP');assert.deepEqual(types,['json','zip']);
-  types.length=0;fake.executeDownload=async task=>{types.push(task.fileExtension);throw new CancellationError();};
-  await assert.rejects(PortableUpdater.prototype.doDownloadUpdate.call(fake,options),CancellationError);assert.deepEqual(types,['json']);
+  for (const build of [1,2]) {
+    const key=build===1?'9.0.0':'9.0.0-b2',f=await fixture(t,null,key);
+    const zip={url:`ScreenSh-${key}-Update.zip`,size:12,sha512:'A'.repeat(86)+'=='},files=[];
+    const options={updateInfoAndProvider:{info:{version:'9.0.0',build,portable:zip,incremental:f.artifact},provider:{resolveFiles:info=>info.files.map(info=>({info,url:new URL('https://github.com/o/r/releases/download/'+key+'/'+info.url)}))}},cancellationToken:new CancellationToken()};
+    const fake={getOrCreateDownloadHelper:async()=>({cacheDirForPendingUpdate:f.pending}),_logger:{warn(){}},executeDownload:async task=>{files.push(task.fileInfo.info.url);if(task.fileExtension==='json')throw Error('source has no ranges');return 'full ZIP';}};
+    assert.equal(await PortableUpdater.prototype.doDownloadUpdate.call(fake,options),'full ZIP');assert.deepEqual(files,[f.artifact.url,zip.url]);
+    files.length=0;fake.executeDownload=async task=>{files.push(task.fileInfo.info.url);throw new CancellationError();};
+    await assert.rejects(PortableUpdater.prototype.doDownloadUpdate.call(fake,options),CancellationError);assert.deepEqual(files,[f.artifact.url]);
+  }
 });
 test('successful startup deletes incremental staging and previous ZIP/setup bases, failed attempts retain them',async t=>{
   const f=await fixture(t,(name,old)=>name.endsWith('.asar')?Buffer.concat([old,Buffer.from('new')]):old),prepared=await prepareIncremental(f);

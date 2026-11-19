@@ -1,4 +1,5 @@
 import { state } from './shared.js';
+import { animatePopupExit, cancelPopupExit } from './popup-exit.mjs';
 import { toast } from './toast.js';
 import { WhepSession } from './whep.mjs';
 import { createPCMSource } from './pcm-audio.mjs';
@@ -10,7 +11,7 @@ const providers = [
   { name: '汽水音乐', mark: '♪', color: '#20252a', pattern: /汽水|soda music/i },
 ];
 let selected = null, busy = false, generation = 0, cleanup, bridge, sink, mix, menu, sources = [];
-let menuTrigger;
+let menuTrigger, moreList;
 let pcmSource, pcmSession;
 let volume = Math.max(0, Math.min(1, Number(localStorage.getItem('accompanimentVolume') ?? '0.7')));
 if (!Number.isFinite(volume)) volume = 0.7;
@@ -22,21 +23,32 @@ function paint() {
     button.setAttribute('aria-expanded', String(!!menu));
   }
 }
-function closeMenu() { menu?.remove(); menu = null; menuTrigger = null; paint(); }
+function closeMenu() {
+  const trigger = menuTrigger;
+  if (menu?.contains(document.activeElement) || moreList?.contains(document.activeElement)) trigger?.focus({ preventScroll: true });
+  const more = menu?.querySelector('.accompaniment-more');
+  moreList?.removeAttribute('id');
+  animatePopupExit(moreList, more);
+  animatePopupExit(menu, trigger);
+  menu = moreList = menuTrigger = null;
+  paint();
+}
 function positionMenu() {
   if (!menu || !menuTrigger) return;
   const anchor = menuTrigger.getBoundingClientRect();
   menu.style.maxHeight = `${Math.max(80, innerHeight - 16)}px`;
-  menu.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - menu.offsetWidth - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(anchor.bottom + 8, innerHeight - menu.offsetHeight - 8))}px`;
-  const list = menu.querySelector('.accompaniment-more-list');
-  if (!list || list.classList.contains('hidden')) return;
-  list.style.width = `${Math.min(280, innerWidth - 16)}px`;
-  list.style.maxHeight = `${Math.max(80, innerHeight - 16)}px`;
-  const bounds = menu.getBoundingClientRect();
-  const x = bounds.right + list.offsetWidth + 6 <= innerWidth - 8 ? bounds.right + 6 : bounds.left - list.offsetWidth - 6;
-  list.style.left = `${Math.max(8, Math.min(x, innerWidth - list.offsetWidth - 8))}px`;
-  list.style.top = `${Math.max(8, Math.min(bounds.top, innerHeight - list.offsetHeight - 8))}px`;
+  const left = Math.max(8, Math.min(anchor.left, innerWidth - menu.offsetWidth - 8));
+  const top = Math.max(8, Math.min(anchor.bottom + 8, innerHeight - menu.offsetHeight - 8));
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+  if (!moreList || moreList.classList.contains('hidden')) return;
+  moreList.style.width = Math.min(280, innerWidth - 16) + "px";
+  moreList.style.maxHeight = Math.max(80, innerHeight - 16) + "px";
+  const right = left + menu.offsetWidth;
+  const listWidth = moreList.offsetWidth;
+  const x = right + listWidth + 6 <= innerWidth - 8 ? right + 6 : left - listWidth - 6;
+  moreList.style.left = Math.max(8, Math.min(x, innerWidth - listWidth - 8)) + "px";
+  moreList.style.top = Math.max(8, Math.min(top, innerHeight - moreList.offsetHeight - 8)) + "px";
 }
 async function stop() {
   if (cleanup) return cleanup;
@@ -92,6 +104,12 @@ async function showMenu(trigger) {
   menu = document.createElement('div'); const current = menu; menuTrigger = trigger;
   sources = [];
   menu.className = 'accompaniment-menu'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', '播放伴奏');
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) {
+      event.preventDefault();
+      closeMenu();
+    }
+  });
   const heading = document.createElement('div'); heading.className = 'accompaniment-heading'; heading.textContent = '伴奏来源';
   menu.append(heading);
   for (const provider of providers) {
@@ -103,8 +121,31 @@ async function showMenu(trigger) {
     }; menu.append(button);
   }
   const more = document.createElement('button'); more.type = 'button'; more.disabled = true; more.className = 'accompaniment-source accompaniment-more'; more.textContent = '更多音源'; more.setAttribute('aria-expanded', 'false'); menu.append(more);
-  const list = document.createElement('div'); list.className = 'accompaniment-more-list hidden'; menu.append(list);
-  more.onclick = () => { list.classList.toggle('hidden'); positionMenu(); more.setAttribute('aria-expanded', String(!list.classList.contains('hidden'))); };
+  const list = moreList = document.createElement('div');
+  list.id = 'accompanimentMoreSources';
+  list.className = 'accompaniment-more-list hidden';
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-label', more.textContent);
+  more.setAttribute('aria-controls', list.id);
+  more.onclick = () => {
+    const expanded = more.getAttribute('aria-expanded') !== 'true';
+    more.setAttribute('aria-expanded', String(expanded));
+    if (expanded) {
+      cancelPopupExit(list);
+      list.classList.remove('hidden');
+      positionMenu();
+      list.querySelector('button')?.focus({ preventScroll: true });
+    } else {
+      if (list.contains(document.activeElement)) more.focus({ preventScroll: true });
+      animatePopupExit(list, more, () => list.classList.add('hidden'));
+    }
+  };
+  list.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+    event.preventDefault();
+    more.click();
+    more.focus();
+  });
   const divider = document.createElement('div'); divider.className = 'accompaniment-divider'; menu.append(divider);
   const label = document.createElement('label'); label.className = 'accompaniment-volume'; label.textContent = '伴奏音量';
   const slider = document.createElement('input'); slider.type = 'range'; slider.min = 0; slider.max = 100; slider.value = String(volume * 100); slider.setAttribute('aria-label', '伴奏音量');
@@ -112,7 +153,8 @@ async function showMenu(trigger) {
   if (selected) {
     const end = document.createElement('button'); end.type = 'button'; end.className = 'accompaniment-source accompaniment-stop'; end.textContent = '停止伴奏'; end.onclick = () => { closeMenu(); void stop(); }; menu.append(end);
   }
-  document.body.append(menu);
+  // Keep the submenu outside the glass panel so backdrop-filter does not rebase its fixed position.
+  document.body.append(menu, list);
   positionMenu(); paint();
   try {
     sources = await window.electronAPI.accompanimentSources();
@@ -130,7 +172,7 @@ function decorate(card) {
 }
 export function initAccompaniment() {
   window.channelAccompaniment = { decorate, stop, active: () => !!selected || busy };
-  document.addEventListener('pointerdown', event => { if (menu && !menu.contains(event.target) && !event.target.closest('.accompaniment-trigger')) closeMenu(); });
+  document.addEventListener('pointerdown', event => { if (menu && !menu.contains(event.target) && !moreList?.contains(event.target) && !event.target.closest('.accompaniment-trigger')) closeMenu(); });
   window.addEventListener('resize', positionMenu);
   window.electronAPI.onAccompanimentPCM(message => { if (pcmSource && message.session === pcmSession) pcmSource.feed(message.data); });
   window.electronAPI.onAccompanimentError(message => { toast(message, 'error'); void stop(); });

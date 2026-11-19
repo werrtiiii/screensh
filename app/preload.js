@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAccompanimentPCM: callback => { const handler = (_event, data) => callback(data); ipcRenderer.on('accompaniment-pcm', handler); return () => ipcRenderer.removeListener('accompaniment-pcm', handler); },
   onAccompanimentError: callback => { const handler = (_event, message) => callback(message); ipcRenderer.on('accompaniment-error', handler); return () => ipcRenderer.removeListener('accompaniment-error', handler); },
   onVoiceError: callback => { const fn = (_event, message) => callback(message); ipcRenderer.on('voice-error', fn); return () => ipcRenderer.removeListener('voice-error', fn); },
+  setMemberSidebarCollapsed: collapsed => ipcRenderer.send('window-members-sidebar', collapsed),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),

@@ -28,11 +28,22 @@
     <div id="lobby" class="screen active workspace-screen">
       <aside class="workspace-sidebar lobby-sidebar">
         <div class="sidebar-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="serverSearch" type="text" placeholder="搜索服务器" aria-label="搜索服务器" /><button id="btnClearServerSearch" type="button" class="icon-btn" aria-label="清空搜索" hidden>×</button></div>
-        <p id="bookmarkSearchCount" class="bookmark-search-status" role="status" aria-live="polite"></p>
-        <div class="nav-section-title"><span>服务器</span><div class="section-actions"><button id="btnAddBookmark" class="icon-btn" title="添加服务器">＋</button><button id="btnCollapseBookmarks" class="icon-btn" title="收起书签">⌃</button></div></div>
+        <p id="bookmarkSearchCount" class="bookmark-search-status" role="status" aria-live="polite" hidden></p>
+        <div class="nav-section-title">
+          <span>服务器</span>
+          <div id="bookmarkListActions" class="bookmark-header-actions hidden">
+            <button id="btnAddBookmark" type="button" class="icon-btn sidebar-add-action" aria-label="添加服务器" title="添加服务器" aria-controls="bookmarkAddForm" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button id="btnCollapseBookmarks" type="button" class="icon-btn bookmark-header-collapse" aria-label="收起书签" title="收起书签" aria-controls="bookmarkList" aria-expanded="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 14.5 5.5-5.5 5.5 5.5"/></svg>
+            </button>
+          </div>
+        </div>
+        <button id="btnAddFirstBookmark" class="btn bookmark-empty-action" type="button" aria-controls="bookmarkAddForm" aria-expanded="false" hidden><span aria-hidden="true">＋</span> 添加服务器</button>
         <form id="bookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="bookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
         <div id="bookmarkList" class="bookmark-list"></div>
-        <p id="bookmarkSearchEmpty" class="bookmark-search-status" hidden></p>
+        <p id="bookmarkSearchEmpty" class="bookmark-search-status" hidden>没有匹配的服务器</p>
         <div class="sidebar-spacer"></div>
         <div class="profile-bar">
           <label class="profile-avatar profile-avatar-button" id="btnAvatar" for="avatarInput" title="设置头像" aria-label="设置头像" role="button" tabindex="0">👤</label><input id="avatarInput" class="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
@@ -68,7 +79,7 @@
           <form id="roomBookmarkAddForm" class="bookmark-add-form hidden"><span>＋</span><input id="roomBookmarkUrlInput" type="text" placeholder="书签地址" autocomplete="off" /><button type="submit" class="icon-btn" title="保存">↵</button></form>
           <div id="roomBookmarkList" class="bookmark-list compact"></div>
         </div>
-        <div class="nav-section-title channel-nav-title"><span>频道</span><button id="btnAddChannel" class="icon-btn hidden" title="创建频道">＋</button></div>
+        <div class="nav-section-title channel-nav-title"><span>频道</span><button id="btnAddChannel" type="button" class="icon-btn sidebar-add-action hidden" aria-label="创建频道" title="创建频道"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
         <div id="channelList" class="channel-list"></div>
         <div class="sidebar-spacer"></div>
         <div class="profile-bar">
@@ -101,15 +112,42 @@
             </div>
             <div id="videoContainer" class="video-container"></div>
           </div>
-          <div id="chatResizeHandle" class="chat-resize-handle hidden" role="separator" aria-label="调整聊天区域高度" aria-orientation="horizontal" tabindex="0"></div>
+          <div id="chatResizeHandle" class="chat-resize-handle hidden" role="separator" aria-label="调整卡片和聊天布局" aria-controls="serverChat userCardsView activeVideoView" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="34" aria-keyshortcuts="Home End Enter" tabindex="0"><span class="chat-snap-hint" aria-hidden="true" hidden></span></div>
           <section id="serverChat" class="server-chat hidden" aria-label="服务器文字聊天">
             <div class="chat-header"><span id="chatStatus" role="status"></span><button id="chatCancelUpload" type="button" class="btn btn-outline btn-sm hidden">取消上传</button><button id="chatLoadOlder" type="button" class="btn btn-outline btn-sm hidden">更早的消息</button></div>
-            <div id="chatMessages" class="chat-messages" role="log" aria-label="聊天记录"><p class="chat-empty">发送第一条消息，开始聊天</p></div>
+            <div class="chat-message-area">
+              <div id="chatMessages" class="chat-messages" role="log" aria-label="聊天记录" tabindex="0"><p class="chat-empty">发送第一条消息，开始聊天</p></div>
+              <button id="chatJumpLatest" type="button" class="chat-jump-latest" hidden><span aria-hidden="true">↓</span><span>回到最新消息</span></button>
+            </div>
             <form id="chatComposer" class="chat-composer">
-              <div class="chat-toolbar" role="toolbar" aria-label="文字格式"><button type="button" data-before="**" data-after="**" aria-label="加粗"><b>B</b></button><button type="button" data-before="*" data-after="*" aria-label="斜体"><i>I</i></button><button type="button" data-before="~~" data-after="~~" aria-label="删除线"><s>S</s></button><button type="button" data-before="__" data-after="__" aria-label="下划线"><u>U</u></button><button id="chatInsertLink" type="button" aria-label="插入网页链接">↗</button><button type="button" data-before="`" data-after="`" aria-label="代码">&lt;/&gt;</button><button type="button" data-before="- " aria-label="列表">☷</button><button type="button" data-before="> " aria-label="引用">❞</button><button type="button" data-before="## " aria-label="标题">H</button></div>
               <div id="chatLinkFields" class="chat-link-fields hidden"><input id="chatLinkInput" type="text" placeholder="https://example.com" aria-label="网页地址" /><button id="chatConfirmLink" type="button" class="btn btn-outline btn-sm">插入</button></div>
               <div id="chatAttachment" class="chat-attachment hidden" aria-label="待发送附件"></div>
-              <div class="chat-input-row"><textarea id="chatInput" rows="1" maxlength="8000" placeholder="发送消息" aria-label="消息内容"></textarea><div class="chat-send-tools"><details id="chatEmoji" class="chat-emoji"><summary aria-label="表情">☺</summary><div class="chat-emoji-panel"></div></details><button id="chatChooseImage" type="button" aria-label="发送文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9M7 14l8-8"/></svg></button><input id="chatImageInput" type="file" multiple hidden /><button id="chatSend" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9-4-9ZM7 12h15"/></svg></button></div></div>
+              <div class="chat-input-row">
+                <textarea id="chatInput" rows="1" maxlength="8000" placeholder="发送消息" aria-label="消息内容"></textarea>
+                <div class="chat-send-tools">
+                  <details id="chatFormat" class="chat-format">
+                    <summary aria-label="文字格式" title="文字格式">Aa</summary>
+                    <div class="chat-toolbar" role="group" aria-label="文字格式">
+                      <button type="button" data-before="**" data-after="**" aria-label="加粗"><b>B</b></button>
+                      <button type="button" data-before="*" data-after="*" aria-label="斜体"><i>I</i></button>
+                      <button type="button" data-before="~~" data-after="~~" aria-label="删除线"><s>S</s></button>
+                      <button type="button" data-before="__" data-after="__" aria-label="下划线"><u>U</u></button>
+                      <button id="chatInsertLink" type="button" aria-label="插入网页链接">↗</button>
+                      <button type="button" data-before="`" data-after="`" aria-label="代码">&lt;/&gt;</button>
+                      <button type="button" data-before="- " aria-label="列表">☷</button>
+                      <button type="button" data-before="> " aria-label="引用">❞</button>
+                      <button type="button" data-before="## " aria-label="标题">H</button>
+                    </div>
+                  </details>
+                  <div id="chatEmoji" class="chat-emoji">
+                    <button class="chat-emoji-trigger" type="button" aria-label="表情" aria-expanded="false" aria-controls="chatEmojiPanel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M8.3 14a4 4 0 0 0 7.4 0"/><circle cx="8.6" cy="9.2" r=".9" fill="currentColor" stroke="none"/><circle cx="15.4" cy="9.2" r=".9" fill="currentColor" stroke="none"/></svg></button>
+                    <div id="chatEmojiPanel" class="chat-emoji-panel" role="group" aria-label="表情库" hidden></div>
+                  </div>
+                  <button id="chatChooseImage" type="button" aria-label="发送文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9M7 14l8-8"/></svg></button>
+                  <input id="chatImageInput" type="file" multiple hidden />
+                  <button id="chatSend" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 19 9-19 9 4-9-4-9ZM7 12h15"/></svg></button>
+                </div>
+              </div>
             </form>
           </section>
         </div>
@@ -170,7 +208,19 @@
             <div class="external-obs-preview">OBS</div><div class="external-obs-scene">当前场景</div>
           </section>
         </div>
-        <button id="btnConfirmShare" class="btn btn-primary btn-full hidden">确认共享</button>
+        <div class="share-picker-footer">
+          <div class="share-source-summary">
+            <div class="share-source-preview" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="11" rx="2"/><path d="M9 20h6m-3-4v4"/></svg>
+              <img id="shareSourceImage" alt="" hidden />
+            </div>
+            <div class="share-source-caption" role="status">
+              <span id="shareSourceKind" hidden></span>
+              <strong id="shareSourceName">请选择共享来源</strong>
+            </div>
+          </div>
+          <button id="btnConfirmShare" type="button" class="btn btn-primary hidden">确认共享</button>
+        </div>
       </div>
     </div>
     <div id="serverSettingsDialog" class="modal hidden">
@@ -267,25 +317,32 @@
             <input id="profileName" type="text" class="form-control" placeholder="设置名称" maxlength="20" autocomplete="off" />
           </div>
           <div class="form-group setting-theme">
-            <label for="themeSelect">主题外观
-
-            </label>
+            <h4 class="settings-group-title">外观</h4>
+            <label for="themeSelect">主题</label>
             <select id="themeSelect" class="form-control">
               <option value="dark">深色</option>
               <option value="light" selected>浅色</option>
             </select>
             <div class="glass-transparency-control">
-              <div class="glass-transparency-heading"><div class="setting-label-with-help"><label for="glassTransparency">玻璃透明度</label><button type="button" class="help-tip" aria-label="玻璃透明度说明" data-tooltip="数值越大越透明，0% 为实底，自动保存。顶栏透出桌面需 Windows 11 22H2+ 和系统透明效果；减少透明度或高对比度时使用实底。">?</button></div><output id="glassTransparencyValue" for="glassTransparency">20%</output></div>
+              <div class="glass-transparency-heading"><div class="setting-label-with-help"><label for="glassTransparency">玻璃透明度</label><button type="button" class="help-tip" aria-label="玻璃透明度说明" data-tooltip="数值越大越透明，0% 为实底，自动保存。顶栏透出桌面需 Windows 11 22H2+ 和系统透明效果；减少透明度或高对比度时使用实底。">?</button></div><div class="glass-transparency-actions"><output id="glassTransparencyValue" for="glassTransparency">20%</output><button id="btnResetGlassTransparency" type="button" class="btn btn-outline btn-sm">恢复默认</button></div></div>
               <input id="glassTransparency" class="sound-volume-slider" type="range" min="0" max="60" step="1" value="20" aria-describedby="glassTransparencyHint" />
-              <div class="glass-transparency-footer"><small id="glassTransparencyHint" role="status" hidden></small><button id="btnResetGlassTransparency" type="button" class="btn btn-outline btn-sm">恢复默认</button></div>
+              <small id="glassTransparencyHint" role="status" hidden></small>
+            </div>
+            <div class="setting-hardware">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" role="switch" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
+                <span>启用硬件加速</span>
+                <span class="help-tip" data-tooltip="使用显卡渲染界面，修改后需重启。">?</span>
+              </label>
             </div>
           </div>
           <div class="form-group setting-startup">
+            <h4 class="settings-group-title">启动</h4>
             <label><input id="autoConnectCheckbox" type="checkbox" role="switch" checked /> 启动后自动连接服务器</label>
             <label><input id="loginStartupCheckbox" type="checkbox" role="switch" /> 开机自启</label>
           </div>
           <div class="form-group setting-update">
-            <label>软件更新</label>
+            <h4 class="settings-group-title">更新</h4>
             <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="启动时检查并安装更新，再进入软件。关闭后可手动更新；运行期间不下载。">?</span></label>
             <div id="updateAcceleration" class="update-acceleration">
               <div class="update-acceleration-heading">
@@ -310,14 +367,8 @@
               <button id="btnDownloadUpdate" type="button" class="btn btn-primary btn-sm">下载更新</button>
             </div>
           </div>
-          <div class="form-group setting-hardware">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
-              <input type="checkbox" role="switch" id="hardwareAccelerationCheckbox" style="width:16px;height:16px;cursor:pointer;" />
-              <span>启用硬件加速</span>
-              <span class="help-tip" data-tooltip="使用显卡渲染界面，修改后需重启。">?</span>
-            </label>
-          </div>
           <div class="form-group setting-sounds">
+            <h4 class="settings-group-title">音效</h4>
             <label for="softwareSoundVolume" class="sound-volume-label">软件音效音量<output id="softwareSoundVolumeValue" for="softwareSoundVolume">60%</output></label>
             <input id="softwareSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="60" />
           </div>
@@ -341,13 +392,16 @@
           </div>
           <div class="form-group setting-room">
             <label for="videoEncoderSelect">视频编码器
-              <span class="help-tip" data-tooltip="NVIDIA 选 NVENC，Intel 选 QSV，AMD 选 AMF；异常时改用软件编码。">?</span>
+              <span class="help-tip" data-tooltip="AV1 需要显卡支持硬件编码、观看端支持解码。兼容性优先选 H.264。">?</span>
             </label>
             <select id="videoEncoderSelect" class="form-control">
               <option value="x264">软件编码 · H.264 (CPU / x264)</option>
               <option value="nvenc">硬件编码 · H.264 (NVIDIA NVENC)</option>
               <option value="qsv">硬件编码 · H.264 (Intel 核显 / QSV)</option>
               <option value="amf">硬件编码 · H.264 (AMD 核显 / 独显 AMF)</option>
+              <option value="nvenc-av1">硬件编码 · AV1 (NVIDIA NVENC)</option>
+              <option value="qsv-av1">硬件编码 · AV1 (Intel QSV)</option>
+              <option value="amf-av1">硬件编码 · AV1 (AMD AMF)</option>
             </select>
           </div>
           <div class="form-group setting-room"><label><input id="useServerRelayCheckbox" type="checkbox" role="switch" /> 使用服务器转发 <button id="shareRelayHelp" type="button" class="help-tip" aria-label="使用服务器转发说明" data-tooltip="使用已配置节点的 MediaMTX，本机不启动 MediaMTX。">?</button></label><small id="shareRelayStatus" role="status"></small></div>
@@ -398,7 +452,7 @@
                 <input type="checkbox" role="switch" id="autoBitrateCheckbox"> 推荐
               </label>
             </label>
-            <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100" value="1000">
+            <input type="number" id="bitrateInput" class="form-control" min="100" max="10000" step="100">
           </div>
           <div class="form-group setting-room">
             <label><input type="checkbox" role="switch" id="autoPreviewCheckbox" checked> 自动预览

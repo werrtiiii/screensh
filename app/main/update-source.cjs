@@ -1,6 +1,7 @@
 const {normalizeRepository}=require('./updater');
 const {CancellationError}=require('builder-util-runtime');
 const {proxyFor,accelerateUrl,accelerateMetadataUrl,fetchMetadataText}=require('./update-acceleration.cjs');
+const {updateKey,parseUpdateKey,compareUpdateKeys}=require('./update-identity.cjs');
 
 // Version metadata and all payloads originate in the configured GitHub repository.
 function createUpdateSource({repository}={},fetchFile=globalThis.fetch,{getAcceleration=()=>null}={}) {
@@ -27,7 +28,7 @@ function createUpdateSource({repository}={},fetchFile=globalThis.fetch,{getAccel
             const {parseUpdateInfo}=require('electron-updater/out/providers/Provider');
             info=parseUpdateInfo(raw,'latest.yml',manifestUrl);
             const expected=`ScreenSh-${String(tag).replace(/^v/,'')}-Setup.exe`;
-            if(info.version!==String(tag).replace(/^v/,'')||info.packages||!Array.isArray(info.files)||!info.files.length||info.files.some(file=>file.url!==expected||!Number.isSafeInteger(file.size)||file.size<=0||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512||'')))throw Error('加速源更新清单与正式版本不匹配');
+            if(info.version!==String(tag).replace(/^v/,'')||info.build!==undefined||info.packages||!Array.isArray(info.files)||!info.files.length||info.files.some(file=>file.url!==expected||!Number.isSafeInteger(file.size)||file.size<=0||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512||'')))throw Error('加速源更新清单与正式版本不匹配');
             if(info.portable)require('./portable-updater.cjs').portableArtifact(info);
             if(info.incremental)require('./portable-updater.cjs').incrementalArtifact(info);
             info={...info,tag,releaseName:release.name||tag,releaseNotes:release.body||''};
@@ -35,9 +36,35 @@ function createUpdateSource({repository}={},fetchFile=globalThis.fetch,{getAccel
             if(error instanceof CancellationError||error?.name==='CancellationError'||error?.code==='ERR_UPDATER_DOWNLOAD_CANCELLED')throw error;
             info=null;
           }
-          if(!info)info=await super.getLatestVersion();
-          if(info.portable)require('./portable-updater.cjs').portableArtifact(info);
-          if(info.incremental)require('./portable-updater.cjs').incrementalArtifact(info);
+          let stableError;
+          try {
+            if(!info)info=await super.getLatestVersion();
+            // Only the direct hotfix index may advertise a same-version build.
+            if(info.build!==undefined||parseUpdateKey(info.version)?.build!==1)throw Error('正式版更新身份无效');
+            if(info.portable)require('./portable-updater.cjs').portableArtifact(info);
+            if(info.incremental)require('./portable-updater.cjs').incrementalArtifact(info);
+          } catch(error) {
+            if(this.updater.updateCancellationToken?.cancelled || error instanceof CancellationError)throw error;
+            stableError=error;info=null;
+          }
+          const currentVersion=this.updater.currentVersion.version;
+          const currentBuild=this.updater.currentBuild;
+          if(currentBuild!==undefined && parseUpdateKey(currentVersion) && (!info || compareUpdateKeys(info.version,currentVersion)<=0)) {
+            const token=this.updater.updateCancellationToken;
+            try {
+              const url=new URL(`https://github.com/${repo}/releases/download/hotfix-index/ScreenSh-${currentVersion}-hotfix.json`);
+              const hotfix=JSON.parse(await fetchMetadataText(url,fetchFile,{Accept:'application/json','Cache-Control':'no-cache'},token));
+              const target=updateKey(hotfix);
+              if(hotfix.schemaVersion!==1||hotfix.version!==currentVersion||hotfix.build<=1||compareUpdateKeys(target,updateKey({version:currentVersion,build:currentBuild}))<=0)throw Error('热修索引与当前版本不匹配');
+              const {portableArtifact,incrementalArtifact}=require('./portable-updater.cjs');
+              const portable=portableArtifact(hotfix),incremental=incrementalArtifact(hotfix);
+              if(!portable||!incremental)throw Error('热修索引缺少更新包');
+              info={version:currentVersion,build:hotfix.build,tag:`hotfix-${target}`,portable,incremental,files:[portable],releaseNotes:typeof hotfix.releaseNotes==='string'?hotfix.releaseNotes:undefined};
+            }catch(error){
+              if(token?.cancelled||error instanceof CancellationError)throw error;
+            }
+          }
+          if(!info)throw stableError;
           this.releaseInfo=info;return info;
         }
         resolveFiles(info) {

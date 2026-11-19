@@ -9,8 +9,8 @@ ipcMain.handle('open-web-link',(_event,url)=>url);
 let downloadedUrl;ipcMain.handle('download-chat-file',(_event,url)=>{downloadedUrl=url;});
 app.whenReady().then(async()=>{
   const {server,io}=createSignalingServer({stateFile:path.join(profile,'server-state.json'),initialPeers:'test.example:11010'}),windows=[];
-  let delayedChatEvent=null,delayedChatName=null,releaseChatEvent=null;
-  io.on('connection',socket=>socket.use((packet,next)=>{if(packet[0]===delayedChatEvent&&(!delayedChatName||packet[1]?.name===delayedChatName)){delayedChatEvent=null;delayedChatName=null;releaseChatEvent=next;}else next();}));
+  let delayedChatEvent=null,delayedChatName=null,releaseChatEvent=null,failChatUpload=null;
+  io.on('connection',socket=>socket.use((packet,next)=>{if(packet[0]==='chat-upload-start'&&failChatUpload&&packet[1]?.name===failChatUpload){failChatUpload=null;packet.at(-1)({ok:false,message:'测试上传失败'});return;}if(packet[0]===delayedChatEvent&&(!delayedChatName||packet[1]?.name===delayedChatName)){delayedChatEvent=null;delayedChatName=null;releaseChatEvent=next;}else next();}));
   try{
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     async function client(name,index){
@@ -24,7 +24,7 @@ app.whenReady().then(async()=>{
     }
     const host=await client('Host',1),peer=await client('Peer',2);host.window.show();peer.window.show();
     assert.equal(await host.run(`getComputedStyle(document.querySelector('#userCardsView')).display`),'none');
-    assert.equal(await host.run(`(()=>{const main=document.querySelector('#mainContent').getBoundingClientRect(),chat=document.querySelector('#serverChat').getBoundingClientRect();return ['left','right','top','bottom'].every(edge=>Math.abs(main[edge]-chat[edge])<=1)&&getComputedStyle(document.querySelector('#serverChat')).borderRadius==='0px'})()`),true,'outside chat fills the main area without outer gaps');
+    assert.equal(await host.run(`(()=>{const main=document.querySelector('#mainContent').getBoundingClientRect(),chat=document.querySelector('#serverChat').getBoundingClientRect();const toolbar=document.querySelector('.room-topbar').getBoundingClientRect();return ['left','right','bottom'].every(edge=>Math.abs(main[edge]-chat[edge])<=1)&&Math.abs(Math.max(main.top,toolbar.bottom)-chat.top)<=1})()`),true,'outside chat fills the main area below the room toolbar');
     const text='**加粗** __下划线__ ~~删除~~ *斜体* `code`\n[网页](https://example.com)\n<img src=x onerror="window.chatInjected=true">';
     await host.run(`document.querySelector('#chatInput').value=${JSON.stringify(text)};document.querySelector('#chatComposer').requestSubmit()`);
     await peer.wait(`document.querySelectorAll('.chat-message').length===1`);
@@ -45,7 +45,7 @@ app.whenReady().then(async()=>{
     assert.equal(await peer.run(`(()=>{const node=document.querySelectorAll('.chat-message')[2];return node.classList.contains('chat-message-grouped')&&getComputedStyle(node.querySelector('.chat-message-avatar')).visibility==='hidden'&&getComputedStyle(node.querySelector('.chat-message-heading')).display==='none'})()`),true,'consecutive messages by one author share an avatar and heading');
     await new Promise(resolve=>setTimeout(resolve,150));fs.writeFileSync(path.join(root,'.runtime-probe','chat-preview-outside.png'),(await host.window.webContents.capturePage()).toPNG());
     await host.run(`(async()=>{await(await import('./room.js')).switchChannel('main')})()`);
-    assert.equal(await host.run(`(()=>{const chat=document.querySelector('#serverChat').getBoundingClientRect(),cards=document.querySelector('#userCardsView').getBoundingClientRect(),input=document.querySelector('#chatInput').getBoundingClientRect();return !document.querySelector('#mainContent').classList.contains('chat-outside')&&chat.top>=cards.bottom&&input.bottom<=innerHeight&&chat.bottom<=innerHeight})()`),true,'chat and composer sit below voice cards at minimum window size');
+    await host.wait(`(()=>{const chat=document.querySelector('#serverChat').getBoundingClientRect(),cards=document.querySelector('#userCardsView').getBoundingClientRect(),input=document.querySelector('#chatInput').getBoundingClientRect();return !document.querySelector('#mainContent').classList.contains('chat-outside')&&chat.top>=cards.bottom-1&&input.bottom<=innerHeight+1&&chat.bottom<=innerHeight+1})()`);
     await new Promise(resolve=>setTimeout(resolve,150));fs.writeFileSync(path.join(root,'.runtime-probe','chat-preview-channel.png'),(await host.window.webContents.capturePage()).toPNG());
     await host.run(`(async()=>{await(await import('./room.js')).switchChannel(null)})()`);
     assert.equal(await host.run(`document.querySelector('#mainContent').classList.contains('chat-outside')`),true);
@@ -108,9 +108,50 @@ app.whenReady().then(async()=>{
     await host.run(`document.querySelector('#chatInput').value='Avatar check';document.querySelector('#chatComposer').requestSubmit()`);
     await peer.wait(`!!document.querySelector('.chat-message-avatar img')`);
     assert.equal(await peer.run(`document.querySelector('.chat-message-avatar img').src.startsWith('data:image/webp;')`),true,'chat uses avatar thumbnails');
-    await host.run(`document.querySelector('#chatInsertLink').click();document.querySelector('#chatInput').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+    assert.equal(await host.run(`(()=>{
+      const tools=[...document.querySelectorAll('.chat-send-tools summary,.chat-send-tools > button,.chat-emoji-trigger')].map(node=>node.getBoundingClientRect());
+      return tools.length===4&&tools.every(rect=>rect.top===tools[0].top&&rect.height===tools[0].height);
+    })()`),true,'chat actions have the same height and vertical alignment');
+    assert.equal(await host.run(`(()=>{
+      const input=document.querySelector('#chatInput'),picker=document.querySelector('#chatEmoji'),trigger=picker.querySelector('button');
+      input.value='AB';input.setSelectionRange(1,1);trigger.focus();trigger.click();
+      const choices=[...picker.querySelectorAll('.chat-emoji-panel button')];
+      const emoji=choices.find(choice=>choice.textContent==='🦊');
+      const isOpen=()=>trigger.getAttribute('aria-expanded')==='true';
+      if(!isOpen()||choices.length<90||!emoji)return false;
+      emoji.focus();emoji.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      const panel=picker.querySelector('.chat-emoji-panel');
+      if(isOpen()||document.activeElement!==trigger||!panel.inert||panel.hidden)return false;
+      trigger.click();emoji.click();
+      const inserted=!isOpen()&&input.value==='A🦊B'&&document.activeElement===input;
+      input.value='';return inserted;
+    })()`),true,'emoji library inserts at the caret and supports Escape');
+    await host.run(`document.querySelector('#chatEmoji > button').click()`);
+    await host.wait(`(() => {
+      const panel=document.querySelector('.chat-emoji-panel'),anchor=document.querySelector('#chatEmoji > button').getBoundingClientRect(),rect=panel.getBoundingClientRect();
+      return rect.left>=8&&rect.right<=innerWidth-8&&rect.top>=35&&rect.bottom<=anchor.top&&panel.scrollHeight>panel.clientHeight;
+    })()`);
+    await host.wait(`(() => {
+      const panel=document.querySelector('.chat-emoji-panel'),rect=panel.getBoundingClientRect();
+      const hit=document.elementFromPoint(rect.left+16,rect.top+16);
+      return panel.contains(hit)&&getComputedStyle(panel).opacity==='1';
+    })()`);
+    fs.writeFileSync(path.join(root,'.runtime-probe','chat-emoji-picker.png'),(await host.window.webContents.capturePage()).toPNG());
+    await host.run(`document.querySelector('#chatEmoji > button').click()`);
+    assert.equal(await host.run(`getComputedStyle(document.querySelector('.chat-toolbar')).display`), 'none', 'format commands are collapsed by default');
+    assert.equal(await host.run(`(()=>{
+      const input=document.querySelector('#chatInput'), format=document.querySelector('#chatFormat'), trigger=format.querySelector('summary'), bold=format.querySelector('button');
+      input.value='draft';input.focus();input.setSelectionRange(0,5);
+      trigger.focus();trigger.click();bold.focus();
+      bold.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      if(format.open||document.activeElement!==trigger)return false;
+      trigger.click();bold.focus();bold.click();
+      const ok=!format.open&&input.value==='**draft**'&&document.activeElement===input;
+      input.value='';return ok;
+    })()`), true, 'format popup restores focus on Escape and formats the selected draft');
+    await host.run(`document.querySelector('#chatFormat summary').click();document.querySelector('#chatInsertLink').click();document.querySelector('#chatInput').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
     assert.equal(await host.run(`document.querySelector('#chatLinkFields').classList.contains('hidden')`),true,'clicking elsewhere closes the link editor');
-    await host.run(`document.querySelector('#chatInsertLink').click();document.querySelector('#chatLinkInput').value='';document.querySelector('#chatLinkInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true}))`);
+    await host.run(`document.querySelector('#chatFormat summary').click();document.querySelector('#chatInsertLink').click();document.querySelector('#chatLinkInput').value='';document.querySelector('#chatLinkInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true}))`);
     assert.equal(await host.run(`document.querySelector('#chatLinkFields').classList.contains('hidden')`),true,'deleting an empty link editor dismisses it');
     await host.run(`(()=>{const files=new DataTransfer();files.items.add(new File([new Uint8Array(2097153).fill(7)],'anything.zip',{type:'application/zip'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));})()`);
     await host.wait(`!document.querySelector('#chatAttachment').classList.contains('hidden')`);await host.run(`document.querySelector('#chatComposer').requestSubmit()`);
@@ -126,17 +167,64 @@ app.whenReady().then(async()=>{
     await host.wait(`!document.querySelector('#chatResizeHandle').classList.contains('hidden')`);
     await host.run(`for(let i=0;i<40;i++)document.querySelector('#chatResizeHandle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}));`);
     assert.equal(await host.run(`(()=>{const card=document.querySelector('.user-card').getBoundingClientRect(),handle=document.querySelector('#chatResizeHandle').getBoundingClientRect(),network=document.querySelector('#btnMemberNetwork').getBoundingClientRect(),root=document.querySelector('#mainContent').getBoundingClientRect();return card.top>=root.top&&card.bottom<=handle.top&&document.querySelector('#btnMemberNetwork').nextElementSibling.id==='btnServerSettings'})()`),true,'resizing preserves a full card row and keeps the network button beside server settings');
+    await host.run(`Promise.allSettled(document.querySelector('#serverChat').getAnimations().map(motion=>motion.finished))`);
     const drag=await host.run(`(()=>{const rect=document.querySelector('#chatResizeHandle').getBoundingClientRect();return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2),height:document.querySelector('#serverChat').getBoundingClientRect().height}})()`);
     host.window.show();host.window.focus();await new Promise(resolve=>setTimeout(resolve,100));
     host.window.webContents.sendInputEvent({type:'mouseMove',x:drag.x,y:drag.y});host.window.webContents.sendInputEvent({type:'mouseDown',x:drag.x,y:drag.y,button:'left',clickCount:1});
     await new Promise(resolve=>setTimeout(resolve,30));host.window.webContents.sendInputEvent({type:'mouseMove',x:drag.x,y:drag.y+65,modifiers:['leftButtonDown']});host.window.webContents.sendInputEvent({type:'mouseUp',x:drag.x,y:drag.y+65,button:'left',clickCount:1});
     await host.wait(`document.querySelector('#serverChat').getBoundingClientRect().height<${drag.height}-20`);
+    await host.run(`document.querySelector('#chatInput').value='Split layout draft'`);
+    const dragToEdge = async (edge) => {
+      const point=await host.run(`(() => {
+        const bar=document.querySelector('#chatResizeHandle').getBoundingClientRect(), top=document.querySelector('.room-topbar').getBoundingClientRect().bottom, bottom=document.querySelector('#mainContent').getBoundingClientRect().bottom;
+        return {x:Math.round(bar.left+bar.width/2),y:Math.round(bar.top+bar.height/2),target:Math.round(${JSON.stringify(edge)}==='top'?top+4:bottom-4)};
+      })()`);
+      host.window.webContents.sendInputEvent({type:'mouseMove',x:point.x,y:point.y});
+      host.window.webContents.sendInputEvent({type:'mouseDown',x:point.x,y:point.y,button:'left',clickCount:1});
+      await new Promise(resolve=>setTimeout(resolve,30));
+      host.window.webContents.sendInputEvent({type:'mouseMove',x:point.x,y:point.target,modifiers:['leftButtonDown']});
+      const hint=edge==='top'?'松手收起卡片':'松手收起聊天';
+      await host.wait(`!document.querySelector('.chat-snap-hint').hidden&&document.querySelector('.chat-snap-hint').textContent===${JSON.stringify(hint)}`);
+      host.window.webContents.sendInputEvent({type:'mouseUp',x:point.x,y:point.target,button:'left',clickCount:1});
+      await host.wait(`document.querySelector('.chat-snap-hint').hidden`);
+    };
+    await dragToEdge('bottom');
+    await host.wait(`document.querySelector('#mainContent').dataset.channelLayout==='cards'&&document.querySelector('#serverChat').offsetHeight===0`);
+    await dragToEdge('top');
+    await host.wait(`document.querySelector('#mainContent').dataset.channelLayout==='chat'&&document.querySelector('#userCardsView').offsetHeight===0&&document.querySelector('#serverChat').offsetHeight>300`);
+    await host.run(`Promise.allSettled(document.querySelector('#serverChat').getAnimations().map(motion=>motion.finished))`);
+    await host.run(`document.querySelector('#chatResizeHandle').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
+    assert.equal(await host.run(`(() => {
+      const chat=document.querySelector('#serverChat');
+      const animation=chat.getAnimations().find(motion=>motion.transitionProperty==='height');
+      return animation?.effect.getTiming().duration;
+    })()`),300,'restoring split animates the divider over 300ms');
+    await host.wait(`document.querySelector('#userCardsView').offsetHeight>24&&getComputedStyle(document.querySelector('#userCardsView')).visibility==='visible'`);
+    assert.equal(await host.run(`document.querySelector('#mainContent').dataset.channelLayout==='split'&&document.querySelector('#chatInput').value==='Split layout draft'&&document.querySelector('#userCardsView').offsetHeight>0`),true,'restoring the split keeps the chat draft and restores cards');
+    assert.equal(await host.run(`(() => {
+      const bar=document.querySelector('#chatResizeHandle'), root=document.querySelector('#mainContent');
+      const press=key=>bar.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true}));
+      press('Home');const cardsOnly=root.dataset.channelLayout==='cards';
+      press('End');const chatOnly=root.dataset.channelLayout==='chat';
+      bar.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+      return cardsOnly&&chatOnly&&root.dataset.channelLayout==='split';
+    })()`),true,'the separator supports keyboard endpoints and double-click reset');
+    await host.run(`document.querySelector('#chatInput').value=''`);
     assert.equal(await host.run(`(()=>{const channel=document.querySelector('.channel-name'),name=document.querySelector('#userList .member-name');channel.textContent='很长的频道名称'.repeat(12);name.textContent='Very long member name'.repeat(10);return [channel,name].every(node=>getComputedStyle(node).whiteSpace==='nowrap'&&node.scrollWidth>node.clientWidth)&&document.querySelector('#userList .member-role').getBoundingClientRect().height<document.querySelector('#userList li').getBoundingClientRect().height})()`),true,'long names truncate without pushing role badges onto a second line');
     await host.run(`document.querySelector('#btnServerSettings').click()`);
     assert.equal(await host.run(`document.querySelector('#serverChatHelp').dataset.tooltip.includes('条消息')&&getComputedStyle(document.querySelector('#serverChatUsage')).display==='none'`),true,'retention help and usage live inside the question tooltip');
     await host.run(`document.querySelector('#btnCloseServerSettings').click()`);
     fs.writeFileSync(path.join(root,'.runtime-probe','chat-updated.png'),(await host.window.webContents.capturePage()).toPNG());
     fs.writeFileSync(path.join(profile,'chat-outside.png'),(await host.window.webContents.capturePage()).toPNG());
+    await host.run(`document.querySelector('#chatMessages').scrollTop=0`);
+    await host.wait(`!document.querySelector('#chatJumpLatest').hidden&&document.querySelector('#chatJumpLatest').textContent.includes('回到最新消息')`);
+    for(const count of [1,2]) {
+      await peer.run(`document.querySelector('#chatInput').value='Unread test ${count}';document.querySelector('#chatComposer').requestSubmit()`);
+      await host.wait(`document.querySelector('#chatJumpLatest').textContent.includes('${count} 条新消息')`);
+    }
+    assert.equal(await host.run(`document.querySelector('#chatMessages').scrollTop`),0,'incoming messages preserve the reading position');
+    await host.run(`document.querySelector('#chatJumpLatest').click()`);
+    await host.wait(`document.querySelector('#chatJumpLatest').hidden&&(()=>{const list=document.querySelector('#chatMessages');return list.scrollHeight-list.scrollTop-list.clientHeight<2})()`);
     const mislabeled=process.env.CHAT_TEST_IMAGE?fs.readFileSync(process.env.CHAT_TEST_IMAGE).toString('base64'):gif.split(',')[1];
     await peer.run(`(()=>{const files=new DataTransfer();files.items.add(new File([Uint8Array.from(atob(${JSON.stringify(mislabeled)}),c=>c.charCodeAt(0))],'sticker.jpg',{type:'image/jpeg'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));})()`);
     await peer.wait(`document.querySelector('#chatAttachment img')?.src.startsWith('blob:')`);
@@ -193,17 +281,23 @@ app.whenReady().then(async()=>{
     assert.deepEqual(batch.attachments.map(item=>item.name),['select-a.png','select-b.gif','drop-a.webp','drop-b.gif','paste-a.gif','paste-b.png']);
     assert.equal(batch.text,'Batch caption','caption and every image belong to one message');
     assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).count})()`),batchBefore+1);
-    await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-media-multiple')?.children.length===7`);
+    await host.wait(`document.querySelector('.chat-message[data-message-id="${batch.id}"] .chat-message-media-multiple')?.children.length===${batch.attachments.length}`);
     await peer.run(`document.querySelector('.chat-message[data-message-id="${batch.id}"]').scrollIntoView({block:'start'})`);peer.window.show();peer.window.focus();await new Promise(resolve=>setTimeout(resolve,250));
     fs.writeFileSync(path.join(root,'.runtime-probe','chat-combined-message.png'),(await peer.window.webContents.capturePage()).toPNG());
     for(let index=0;index<batch.attachments.length;index++)if(batch.attachments[index].name.endsWith('.gif'))assert.equal(await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-image',{id:'${batch.id}',index:${index}})).data})()`),gif,'batch GIF retains original bytes');
     delayedChatEvent='chat-upload-start';delayedChatName='retry-b.gif';releaseChatEvent=null;
     await peer.run(`(()=>{const input=document.querySelector('#chatImageInput');input.files=batchFiles(['retry-a.gif','retry-b.gif','retry-c.gif']).files;input.dispatchEvent(new Event('change'));document.querySelector('#chatComposer').requestSubmit()})()`);
     for(let i=0;i<150&&!releaseChatEvent;i++)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(releaseChatEvent,'batch reaches second attachment');
+    assert.deepEqual(await peer.run(`[...document.querySelectorAll('.chat-attachment-item progress:not([hidden])')].map(progress=>progress.value)`),[100,0,0],'upload rows report progress separately');
     await peer.run(`document.querySelector('#chatCancelUpload').click()`);await peer.wait(`!document.querySelector('#chatSend').disabled`);
     assert.deepEqual(await peer.run(`[...document.querySelectorAll('.chat-attachment-item span')].map(node=>node.textContent)`),['retry-a.gif','retry-b.gif','retry-c.gif'],'cancel retains the entire unpublished message');
     releaseChatEvent();releaseChatEvent=null;await new Promise(resolve=>setTimeout(resolve,100));
-    await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);await peer.wait(`document.querySelector('#chatAttachment').classList.contains('hidden')&&!document.querySelector('#chatSend').disabled`);
+    failChatUpload='retry-b.gif';
+    await peer.run(`document.querySelector('#chatComposer').requestSubmit()`);
+    await peer.wait(`!!document.querySelector('.chat-attachment-retry:not([hidden])')`);
+    assert.match(await peer.run(`document.querySelector('.chat-attachment-retry:not([hidden])').getAttribute('aria-label')`),/retry-b\.gif/,'retry appears beside the failed file');
+    await peer.run(`document.querySelector('.chat-attachment-retry:not([hidden])').click()`);
+    await peer.wait(`document.querySelector('#chatAttachment').classList.contains('hidden')&&!document.querySelector('#chatSend').disabled`);
     const retried=await host.run(`(async()=>{return(await(await import('./signaling.js')).requestServer('chat-history')).messages.filter(message=>message.attachments?.some(item=>item.name.startsWith('retry-'))).map(message=>message.attachments.map(item=>item.name))})()`);
     assert.deepEqual(retried,[['retry-a.gif','retry-b.gif','retry-c.gif']],'retry publishes exactly one message with all attachments');
     await peer.run(`(()=>{const files=batchFiles(['mixed.gif']);files.items.add(new File(['mixed file contents'],'mixed.txt',{type:'text/plain'}));files.items.add(new File([Uint8Array.from(atob('${videoBytes.toString('base64')}'),c=>c.charCodeAt(0))],'mixed.mp4',{type:'video/mp4'}));const input=document.querySelector('#chatImageInput');input.files=files.files;input.dispatchEvent(new Event('change'));document.querySelector('#chatComposer').requestSubmit()})()`);

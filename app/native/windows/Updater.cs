@@ -29,7 +29,11 @@ namespace ScreenSh.Windows
             Version = Common.S(Data, "version");
             Installer = Common.S(Data, "installer");
             Checksum = Common.S(Data, "sha512");
-            if (Root == Path.GetPathRoot(Root).TrimEnd('\\') || !Common.CI.Equals(Exe, Path.Combine(Root, "ScreenSh.exe")) || !Regex.IsMatch(Version, @"^\d+\.\d+\.\d+$"))
+            var identity = Regex.Match(Version, @"^\d+\.\d+\.\d+(?:-b([1-9]\d{0,4}))?\z");
+            bool hotfix = identity.Groups[1].Success;
+            if (Root == Path.GetPathRoot(Root).TrimEnd('\\') || !Common.CI.Equals(Exe, Path.Combine(Root, "ScreenSh.exe")) || !identity.Success ||
+                (hotfix && (Int32.Parse(identity.Groups[1].Value) < 2 || Int32.Parse(identity.Groups[1].Value) > 65535 ||
+                    (!Installer.EndsWith(".zip", StringComparison.Ordinal) && !Installer.EndsWith(".json", StringComparison.Ordinal)))))
                 throw new IOException("Invalid update job");
             Common.NoLinks(Root);
         }

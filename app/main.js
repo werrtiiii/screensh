@@ -17,6 +17,7 @@ const fs = require('fs');
 const { isIPv4 } = require('net');
 const { randomInt, randomUUID } = require('crypto');
 const { ManagedProcess } = require('./main/managed-process');
+const {createWindowState,setMemberSidebarCollapsed,MIN_WINDOW_WIDTH,COMPACT_WINDOW_WIDTH,MIN_WINDOW_HEIGHT}=require('./main/window-state.cjs');
 let localStoragePaths;
 function reportStartupError(error){
   const message=error?.message||String(error);let log='';
@@ -152,7 +153,7 @@ ipcMain.handle('set-update-acceleration',(event,value)=>{requireMainWindow(event
 ipcMain.handle('test-update-acceleration',(event,customUrl)=>{requireMainWindow(event);return updateAcceleration.test(customUrl);});
 let updateWindow;
 const updates = require('./main/auto-update.cjs').createAutoUpdate({
-  file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', getUpdater,
+  file:path.join(app.getPath('userData'),'auto-update.json'), packaged:app.isPackaged, currentVersion:app.getVersion?.() || '', currentBuild:require('./package.json').screenshBuild, getUpdater,
   downloadSource:require('./main/update-source.cjs').createUpdateSource(require('./update-config.json'),(url,options)=>require('electron').net.fetch(String(url),options),{getAcceleration:()=>updateAcceleration.get()}),
   send:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('update-state',state);updateWindow?.send(state);},
 });
@@ -209,9 +210,10 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   obs = new ObsEngine(path.join(app.getPath('userData'), 'obs'), failure, 'http://127.0.0.1:8889/live/whip', true);
   const nativeGlass = process.platform === 'win32' && Number(os.release().split('.')[2]) >= 22621;
-  const windowState=require('./main/window-state.cjs').createWindowState({file:path.join(app.getPath('userData'),'window-state.json'),screen});
+  const windowState=createWindowState({file:path.join(app.getPath('userData'),'window-state.json'),screen});
   const savedWindow=windowState.read();
-  mainWindow = new BrowserWindow({ ...savedWindow.bounds, minWidth: 960, minHeight: 640, frame: false,
+  const minWidth = savedWindow.bounds.width < MIN_WINDOW_WIDTH ? COMPACT_WINDOW_WIDTH : MIN_WINDOW_WIDTH;
+  mainWindow = new BrowserWindow({ ...savedWindow.bounds, minWidth, minHeight: MIN_WINDOW_HEIGHT, frame: false,
     backgroundColor: nativeGlass ? '#00000000' : '#f6f7f9',
     ...(nativeGlass ? { backgroundMaterial: 'acrylic' } : {}),
     icon: path.join(__dirname, 'assets/branding/icon.png'),
@@ -265,11 +267,15 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
   const exe = resource(advancedConfig.noTun?'easytier-core-no-tun.exe':'easytier-core.exe');
   if (!fs.existsSync(exe)) throw new Error('缺少当前模式所需的 EasyTier 核心，请重新安装客户端');
   if (!advancedConfig.noTun&&!fs.existsSync(resource('wintun.dll'))) throw new Error('缺少 Wintun：请把匹配 Windows x64 的 wintun.dll 放到 app/res 目录');
-  let readyPoll;
   try {
     easytierRpc={portal:await allocateRpcPortal(),instance:'screensh-'+randomUUID(),noTun:advancedConfig.noTun,virtualIp:ip};
-    let rpcReady=false,checking=false;
-    if(advancedConfig.noTun||useDhcp){const context=easytierRpc,probeRoutes=createMemberRoutes({exe:resource('easytier-cli.exe'),getContext:()=>easytierRpc===context?context:null});readyPoll=setInterval(async()=>{if(checking)return;checking=true;try{const result=await probeRoutes.read(),local=result.rows.find(row=>row.route==='本机'&&require('./main/virtual-address.cjs').isPrivateVirtualIp(row.ip));if(useDhcp&&local&&easytierRpc===context){ip=local.ip;context.virtualIp=ip;}rpcReady=result.available&&!!local&&local.ip===ip;}finally{checking=false;}},200);}
+    const context = easytierRpc;
+    const needsRoutes = advancedConfig.noTun || useDhcp;
+    const probeRoutes = needsRoutes && createMemberRoutes({
+      exe: resource('easytier-cli.exe'), getContext: () => easytierRpc === context ? context : null,
+      // The first RPC replies can be empty while the local address is being assigned.
+      cacheMs: 0,
+    });
     // Addresses span 10.144.0.0/16. Without a prefix EasyTier defaults to /24,
     // sending other members' virtual IPs through the physical default gateway.
     await easytier.start(exe, [...(useDhcp?['--dhcp']:['-i',`${ip}/16`]), '--network-name', networkConfig.name,
@@ -278,7 +284,18 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
     ...(!advancedConfig.noTun ? ['--dev-name', easytierFirewall.interfaceName] : []),
     ...EASYTIER_CONNECTION_ARGS,...advancedArgs, '-p', ...peers], {
     cwd: path.dirname(exe),
-    probe: () => advancedConfig.noTun?rpcReady:Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && (useDhcp||i.cidr === `${ip}/16`)),
+    probeInterval: needsRoutes ? 200 : 100,
+    probe: async () => {
+      if (probeRoutes) {
+        const { rows } = await probeRoutes.read();
+        if (easytierRpc !== context || !easytier.child || easytier.child.killed || easytier.child.exitCode !== null) return false;
+        const local = rows.find(row => row.route === '本机' && require('./main/virtual-address.cjs').isPrivateVirtualIp(row.ip));
+        if (!local) return false;
+        if (useDhcp) context.virtualIp = ip = local.ip;
+        if (advancedConfig.noTun) return local.ip === ip;
+      }
+      return Object.values(os.networkInterfaces()).flat().some(i => i?.address === ip && (useDhcp || i.cidr === `${ip}/16`));
+    },
     sensitiveValues:[networkConfig.secret],
     timeout: 20000,
   });
@@ -291,7 +308,6 @@ ipcMain.handle('start-easytier', async (_event, roomId, configuredPeers, network
     }
     throw error;
   }
-  finally{clearInterval(readyPoll);}
   virtualIp=ip;
   await memberProbe.start().catch(error=>console.warn('[Member probe]',error.message));
   return ip;
@@ -309,7 +325,7 @@ function validateConfig(config) {
     || !['screen', 'window', 'obs'].includes(config.sourceType || 'screen')
     || (config.sourceType === 'window' && typeof config.sourceId !== 'string')
     || !['auto', 'wgc', 'dxgi'].includes(config.captureMethod ?? 'auto')
-    || !['x264', 'nvenc', 'amf', 'qsv'].includes(config.videoEncoder ?? 'x264')
+    || !require('./main/video-encoder').isVideoEncoder(config.videoEncoder ?? 'x264')
     || !['auto', '1920x1080', '1280x720', '854x480'].includes(config.resolution)
     || ![15, 30, 60].includes(config.frameRate)
     || !Number.isInteger(config.maxBitrate) || (config.maxBitrate !== 0 && (config.maxBitrate < 100 || config.maxBitrate > 10000))
@@ -412,6 +428,11 @@ function leaveRuntime() {
 }
 ipcMain.handle('leave-runtime', leaveRuntime);
 
+ipcMain.on('window-members-sidebar', (event, collapsed) => {
+  if (event.sender === mainWindow?.webContents && typeof collapsed === 'boolean') {
+    setMemberSidebarCollapsed(mainWindow, screen, collapsed);
+  }
+});
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
 ipcMain.on('window-close', () => mainWindow?.close());

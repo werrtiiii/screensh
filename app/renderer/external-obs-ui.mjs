@@ -15,7 +15,7 @@ export function createExternalObsPanel({onReady,onInvalid,api=window.electronAPI
       scene.textContent=result.scene;preview.replaceChildren();
       if(result.thumbnail){const image=document.createElement('img');image.src=result.thumbnail;image.alt='OBS 当前输出预览';preview.append(image);}else preview.textContent='OBS';
       if(result.streaming){status.textContent='OBS 已在推流，请先在 OBS 中停止现有推流';return;}
-      status.textContent=`已连接 OBS ${result.version||''} · ${result.scene}`;onReady();
+      status.textContent=`已连接 OBS ${result.version||''} · ${result.scene}`;onReady(result);
     }catch(error){if(token===revision)status.textContent=error.message;}
     finally{if(token===revision)submit.disabled=false;}
   }

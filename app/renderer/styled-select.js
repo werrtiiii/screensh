@@ -1,4 +1,6 @@
 // Preserve native values/change handlers; own the visible picker consistently.
+import { animatePopupExit } from './popup-exit.mjs';
+
 export function initStyledSelects() {
   const controls = new Map();
   let opened = null, sequence = 0, search = '', searchedAt = 0;
@@ -13,7 +15,12 @@ export function initStyledSelects() {
     if (!opened) return;
     opened.button.setAttribute('aria-expanded', 'false');
     opened.button.removeAttribute('aria-activedescendant');
-    opened.popup.remove(); opened = null; search = '';
+    const { popup, button } = opened;
+    button.removeAttribute('aria-controls');
+    popup.removeAttribute('id');
+    for (const option of popup.children) option.removeAttribute('id');
+    opened = null; search = '';
+    animatePopupExit(popup, button);
   }
   function highlight(index) {
     if (!opened || index < 0 || unavailable(opened.select.options[index])) return;

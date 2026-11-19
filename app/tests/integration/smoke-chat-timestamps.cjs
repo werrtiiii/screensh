@@ -20,6 +20,20 @@ app.whenReady().then(async()=>{
   assert.equal(await run(`return !document.querySelector('#btnTestServer')&&!document.querySelector('#serverStatus')`),true);
   await run(`window.channelVoice={sync(){},stop:async()=>{},decorate(){}};document.querySelector('#userName').value='时间测试';document.querySelector('#btnConnect').click()`);
   await wait(`document.querySelector('#room').classList.contains('active')&&document.querySelector('#chatStatus').textContent===''`);
+  const sent=await run(`const {requestServer}=await import('./signaling.js');return requestServer('chat-send',{clientId:crypto.randomUUID(),text:'服主撤回测试'});`);
+  const ownMessage=`document.querySelector('[data-message-id="${sent.message.id}"]')`;
+  await wait(`!!${ownMessage}`);
+  assert.equal(await run(`
+   const now=Date.now;
+   try {
+    Date.now=()=>now()+180000;
+    ${ownMessage}.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:400,clientY:250}));
+    return document.querySelector('.context-menu button')?.textContent;
+   } finally { Date.now=now; }
+  `),'撤回消息','the host can recall a fresh message when the client clock is ahead of the server');
+  await run(`document.querySelector('.context-menu button').click()`);
+  await wait(`!${ownMessage}`);
+  assert.equal(await run(`const {requestServer}=await import('./signaling.js');return (await requestServer('chat-history')).recalled.includes('${sent.message.id}');`),true,'the server recorded the recall');
   await run(`
    const {socket,requestServer}=await import('./signaling.js');const info=await requestServer('chat-history',{});
    window.deliverMessage=message=>socket.listeners('chat-message').forEach(fn=>fn({epoch:info.epoch,message}));

@@ -4,7 +4,7 @@ const {createSignalingServer}=require('../../../server/server');
 const root=path.resolve(__dirname,'../..'),profile=path.join(root,'.runtime-probe','share-settings-'+process.pid),starts=[];
 app.disableHardwareAcceleration();app.setPath('userData',profile);app.on('window-all-closed',()=>{});
 for(const [name,value]of Object.entries({'get-hardware-acceleration':false,'get-login-startup':false,'get-tunnel-mode':'tun','start-easytier':'10.144.1.1','leave-runtime':null,'stop-sharing':null,'lolping-get':{config:{enabled:false}},'lolping-sync':null,'confirm-startup':null,'set-voice-timing':null,'get-update-settings':{enabled:false,status:'current'},'get-update-acceleration':{enabled:false,source:'https://gh-proxy.com',customUrl:'',sources:['https://gh-proxy.com']},'get-external-obs-settings':{port:4455,hasPassword:false},'inspect-external-obs':{version:'30',scene:'OBS测试',streaming:false}}))ipcMain.handle(name,()=>value);
-ipcMain.handle('get-screens',()=>[{id:7,type:'window',name:'测试程序'},{id:0,type:'screen',name:'测试屏幕'}]);
+ipcMain.handle('get-screens',async()=>{await new Promise(resolve=>setTimeout(resolve,180));return [{id:7,type:'window',name:'测试程序',thumbnail:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'},{id:0,type:'screen',name:'测试屏幕'}];});
 ipcMain.handle('save-server-password',()=>null);
 ipcMain.handle('start-sharing',(_event,config)=>{starts.push(config);return {};});
 app.whenReady().then(async()=>{
@@ -50,11 +50,28 @@ app.whenReady().then(async()=>{
   assert.equal(await run(`return document.querySelector('#btnShare').textContent`),'屏幕共享');
   await run(`document.querySelectorAll('.toast-close').forEach(button=>button.click())`);
   await new Promise(resolve=>setTimeout(resolve,200));
+  await wait(`parseFloat(getComputedStyle(document.querySelector('#serverMembersSidebar')).marginInlineEnd)===0`);
   await run(`const list=document.querySelector('#userList');for(let i=0;i<40;i++){const item=document.createElement('li');item.dataset.scrollFixture='true';item.textContent='测试成员 '+(i+1);list.append(item)}list.scrollTop=160;window.memberScrollTop=list.scrollTop;window.memberMainWidth=document.querySelector('#mainContent').getBoundingClientRect().width;document.querySelector('#btnToggleMembers').focus();document.querySelector('#btnToggleMembers').click()`);
+  assert.equal(await run(`
+    const sidebar=document.querySelector('#serverMembersSidebar');
+    return sidebar.hidden&&sidebar.inert&&sidebar.offsetWidth>0&&sidebar.getAnimations().some(motion=>motion.transitionProperty.startsWith('margin')&&motion.effect.getTiming().duration===300);
+  `),true,'closing starts sliding and immediately disables interaction');
+  await wait(`document.querySelector('#serverMembersSidebar').offsetWidth===0`);
   assert.equal(await run(`const button=document.querySelector('#btnToggleMembers');return document.querySelector('#serverMembersSidebar').getBoundingClientRect().width===0&&document.querySelector('#mainContent').getBoundingClientRect().width>window.memberMainWidth+230&&button.getAttribute('aria-expanded')==='false'&&button.title==='展开成员列表'&&button.getBoundingClientRect().right<=innerWidth&&document.activeElement===button&&localStorage.getItem('membersSidebarCollapsed')==='true'`),true,'collapsing frees member sidebar space and keeps an accessible restore button');
   await new Promise(resolve=>setTimeout(resolve,150));fs.writeFileSync(path.join(root,'.runtime-probe','members-collapsed.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.querySelector('#btnToggleMembers').click()`);
+  assert.equal(await run(`
+    const sidebar=document.querySelector('#serverMembersSidebar');
+    return !sidebar.inert&&sidebar.getAnimations().some(motion=>motion.transitionProperty.startsWith('margin')&&motion.effect.getTiming().duration===300);
+  `),true,'opening slides in from hidden');
+  await wait(`parseFloat(getComputedStyle(document.querySelector('#serverMembersSidebar')).marginInlineEnd)===0`);
   assert.equal(await run(`const list=document.querySelector('#userList');return !document.querySelector('#serverMembersSidebar').hidden&&document.querySelector('#btnToggleMembers').getAttribute('aria-expanded')==='true'&&Math.abs(document.querySelector('#mainContent').getBoundingClientRect().width-window.memberMainWidth)<1&&window.memberScrollTop>0&&list.scrollTop===window.memberScrollTop&&getComputedStyle(list,'::-webkit-scrollbar').width==='4px'&&getComputedStyle(list,'::-webkit-scrollbar-button').display==='none'&&localStorage.getItem('membersSidebarCollapsed')==='false'`),true,'expanding restores width and scroll position; scrollbar is 4px without end arrows');
+  await run(`
+    const button=document.querySelector('#btnToggleMembers'),sidebar=document.querySelector('#serverMembersSidebar');
+    button.click();getComputedStyle(sidebar).marginInlineEnd;button.click();
+  `);
+  await wait(`!document.querySelector('#serverMembersSidebar').hidden&&parseFloat(getComputedStyle(document.querySelector('#serverMembersSidebar')).marginInlineEnd)===0`);
+  assert.equal(await run(`return localStorage.getItem('membersSidebarCollapsed')`),'false','rapid closing and reopening preserves the final expanded state');
   await new Promise(resolve=>setTimeout(resolve,150));fs.writeFileSync(path.join(root,'.runtime-probe','members-expanded.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.querySelectorAll('[data-scroll-fixture]').forEach(node=>node.remove());document.querySelector('#userList').scrollTop=0`);
   assert.equal(await run(`const top=document.querySelector('.room-topbar').getBoundingClientRect(),main=document.querySelector('#mainContent').getBoundingClientRect(),members=document.querySelector('#room .sidebar').getBoundingClientRect();return top.left>=main.left&&top.right<=main.right+1&&Math.abs(members.top-main.top)<1&&getComputedStyle(document.querySelector('.room-topbar')).borderBottomWidth==='0px';`),true);
@@ -79,13 +96,37 @@ app.whenReady().then(async()=>{
   await run(`document.querySelector('#btnCloseSettings').click()`);await wait(`document.activeElement.id==='btnRoomMore'`);
   await run(`const {state}=await import('./shared.js');state.channelId=window.testChannelId;delete window.testChannelId`);
   await run(`document.querySelector('#autoPreviewCheckbox').checked=false;document.querySelector('#autoPreviewCheckbox').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#btnShare').click()`);
-  await wait(`!!document.querySelector('.screen-item')`);
+  await wait(`document.querySelectorAll('.screen-loading-item').length===2`);
+  const placeholder=await run(`return document.querySelector('.screen-loading-item .screen-preview').offsetHeight`);
+  await wait(`!!document.querySelector('.screen-preview-ready')`);
+  assert.equal(await run(`return document.querySelector('.screen-item .screen-preview').offsetHeight`),placeholder,'preview keeps its reserved height and fades in');
+  assert.deepEqual(await run(`
+    const dialog=document.querySelector('#screenPicker .modal-content');
+    const animation=dialog.getAnimations()[0];
+    const timing=animation?.effect.getTiming();
+    const [x,y]=getComputedStyle(dialog).transformOrigin.split(" ").map(parseFloat);
+    return { duration:timing?.duration, delay:timing?.delay, centered:Math.abs(x-dialog.offsetWidth/2)<1&&Math.abs(y-dialog.offsetHeight/2)<1, from:animation?.effect.getKeyframes()[0].transform };
+  `), {duration:600,delay:0,centered:true,from:"scale(0.5)"}, "share dialog expands from its center immediately over 600ms");
+  assert.equal(await run(`
+    const list = document.querySelector('#screenList');
+    const programMotion = getComputedStyle(list).animationName;
+    document.querySelector('[data-source-tab=screen]').click();
+    const screenMotion = getComputedStyle(list).animationName;
+    document.querySelector('[data-source-tab=window]').click();
+    return programMotion !== 'none' && screenMotion !== 'none' &&
+      programMotion !== screenMotion && getComputedStyle(list).animationName === programMotion;
+  `), true, 'switching program and screen restarts motion on their shared panel');
   await run(`document.querySelector('.screen-item').click();document.querySelector('[data-source-tab=settings]').click()`);
   assert.equal(await run(`return [...document.querySelectorAll('[data-source-tab]')].at(-1).textContent`),'屏幕共享设置');
   assert.equal(await run(`return !!document.querySelector('#screenShareSettings #resolutionSelect')&&!document.querySelector('#btnConfirmShare').classList.contains('hidden')`),true);
+  assert.equal(await run(`const name=document.querySelector("#shareSourceName");return name.textContent===document.querySelector(".screen-item.selected .screen-source-name").textContent&&name.clientWidth>=name.scrollWidth;`), true, "settings tab keeps the selected source visible");
+  await wait(`document.querySelector("#shareSourceImage").naturalWidth > 0 && !document.querySelector("#shareSourceImage").hidden`);
+  assert.equal(await run(`const panel=document.querySelector("#screenShareSettings"),footer=document.querySelector(".share-picker-footer");const before=footer.offsetTop;panel.scrollTop=10000;return panel.scrollTop>0&&footer.offsetTop===before;`),true,"preview and confirmation stay in place while settings scroll");
   assert.deepEqual(await run(`return [...document.querySelectorAll('#screenShareSettings .settings-panel')].map(panel=>panel.id)`),['settings-panel-picture','settings-panel-audio','settings-panel-capture','settings-panel-relay']);
+  assert.deepEqual(await run(`const change=(id,value)=>{const input=document.querySelector('#'+id);input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));};const bitrate=document.querySelector('#bitrateInput');const initial=bitrate.value;change('frameRateSelect','60');const fast=bitrate.value;change('resolutionSelect','1920x1080');const full=bitrate.value;change('frameRateSelect','30');const half=bitrate.value;change('resolutionSelect','auto');const raw=bitrate.value;return [initial,fast,full,half,raw,bitrate.disabled,localStorage.getItem('maxBitrate')];`),['1300','3500','5600','3500','',true,null],'automatic recommendations update without storing a manual bitrate');
   await run(`const input=document.querySelector('#frameRateSelect');input.value='30';input.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#resolutionSelect').value='854x480';document.querySelector('#resolutionSelect').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#autoBitrateCheckbox').checked=false;document.querySelector('#autoBitrateCheckbox').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#bitrateInput').value='2100';document.querySelector('#bitrateInput').dispatchEvent(new Event('input',{bubbles:true}));`);
   assert.equal(await run(`return localStorage.getItem('frameRate')`),'30');
+  assert.equal(await run(`const select=document.querySelector('#frameRateSelect');select.value='60';select.dispatchEvent(new Event('change'));const bitrate=document.querySelector('#bitrateInput').value;select.value='30';select.dispatchEvent(new Event('change'));return bitrate;`),'2100','changing the frame rate preserves the manual bitrate');
   await run(`document.querySelector('#btnCancelPicker').click()`);
   await wait(`!!document.querySelector('#settings-panel-picture #resolutionSelect')&&document.querySelector('#settings-panel-picture').parentElement.classList.contains('modal-body')`);
   await run(`document.querySelector('#btnShare').click();document.querySelector('[data-source-tab=window]').click()`);
@@ -103,6 +144,8 @@ app.whenReady().then(async()=>{
   await wait(`!document.querySelector('#btnConfirmShare').classList.contains('hidden')`);
   assert.equal(await run(`return document.querySelector('#btnConfirmShare').textContent`),'确认共享');
   await run(`document.querySelector('[data-source-tab=settings]').click();document.querySelector('#btnConfirmShare').click()`);
+  await run(`document.querySelector('[data-source-tab=settings]').click()`);
+  assert.equal(await run(`return document.querySelector("#shareSourceName").textContent`), "OBS测试", "settings tab names the active OBS scene");
   await wait(`document.querySelector('#screenPicker').classList.contains('hidden')`);assert.equal(starts[1].sourceType,'obs');
   await run(`document.querySelector('#btnStopShare').click()`);
   await new Promise(r=>setTimeout(r,150));fs.writeFileSync(path.join(root,'.runtime-probe','share-room-layout.png'),(await win.webContents.capturePage()).toPNG());

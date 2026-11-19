@@ -1,6 +1,7 @@
 let fs;try{fs=require('original-fs');}catch{fs=require('node:fs');}
 const path = require('node:path');
 function confirmPortableStartup(root, version) {
+  if (!require('./update-identity.cjs').parseUpdateKey(version)) throw Error('无效的启动确认版本');
   const directory = path.join(root, 'data/updates/transactions');
   const confirming=[];
   require('./update-blocks.cjs').noLinks(directory);

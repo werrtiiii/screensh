@@ -4,6 +4,7 @@ export class WhepSession {
   constructor(url, configuration, onTrack, onFailure, options = {}) {
     this.url = url; this.controller = new AbortController(); this.closed = false;
     this.audioOnly = options.audioOnly === true;
+    this.videoOnly = !this.audioOnly && options.videoOnly === true;
     this.directRelay = options.directRelay === true;
     this.videoStartupTimeoutMs=options.videoStartupTimeoutMs??10000;
     this.videoStallTimeoutMs=options.videoStallTimeoutMs??6000;
@@ -32,7 +33,7 @@ export class WhepSession {
       if (!this.closed) this.onFailure(new Error(this.directRelay?`无法连接转发服务器 ${new URL(this.url).host}：请检查 MediaMTX 地址、媒体端口映射及防火墙`:`无法连接共享端 ${new URL(this.url).host}：请检查双方 EasyTier 节点、虚拟网卡路由及共享端防火墙（TCP 8889、UDP/TCP 8189）`));
     }, 20000);
     if (!this.audioOnly) pc.addTransceiver('video', { direction: 'recvonly' });
-    pc.addTransceiver('audio', { direction: 'recvonly' });
+    if (!this.videoOnly) pc.addTransceiver('audio', { direction: 'recvonly' });
     const offer = await pc.createOffer();
     if (this.stereo) offer.sdp = allowOpusStereo(offer.sdp, 128000);
     await pc.setLocalDescription(offer);

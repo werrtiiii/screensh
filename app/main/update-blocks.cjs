@@ -30,8 +30,9 @@ function noLinks(file){
   for(;;){const stat=fs.lstatSync(current,{throwIfNoEntry:false});if(stat?.isSymbolicLink())throw Error('Linked update path');const parent=path.dirname(current);if(parent===current)break;current=parent;}
 }
 function readFile(file){noLinks(file);const stat=fs.statSync(file,{throwIfNoEntry:false});if(!stat)return null;if(!stat.isFile()||stat.size>MAX_FILE)throw Error('Invalid update file');return fs.readFileSync(file);}
+const {parseUpdateKey}=require('./update-identity.cjs');
 function validateManifest(value,version){
-  if(value?.schemaVersion!==2||value.version!==version||!/^\d+\.\d+\.\d+$/.test(version)||value.pack?.url!==`ScreenSh-${version}-Blocks.bin`||!/^[A-Za-z0-9+/]{86}==$/.test(value.pack.sha512||'')||!Number.isSafeInteger(value.pack.size)||value.pack.size<0||value.pack.size>8589934592||!Array.isArray(value.files)||!value.files.length||value.files.length>30000)throw Error('Invalid incremental manifest');
+  if(value?.schemaVersion!==2||value.version!==version||!parseUpdateKey(version)||value.pack?.url!==`ScreenSh-${version}-Blocks.bin`||!/^[A-Za-z0-9+/]{86}==$/.test(value.pack.sha512||'')||!Number.isSafeInteger(value.pack.size)||value.pack.size<0||value.pack.size>8589934592||!Array.isArray(value.files)||!value.files.length||value.files.length>30000)throw Error('Invalid incremental manifest');
   const seen=new Set();let total=0,end=0;
   for(const file of value.files){
     safePath(file.path);const key=file.path.toLowerCase();
@@ -49,7 +50,7 @@ function validateManifest(value,version){
 }
 function stageDirectory(pending,raw){
   const version=JSON.parse(raw.toString('utf8')).version;
-  if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('Invalid staging version');
+  if(!parseUpdateKey(version))throw Error('Invalid staging version');
   // electron-updater clears pending on a failed/cancelled request. Keep verified
   // checkpoints outside that transient directory so retries can reuse them.
   return path.join(path.dirname(pending),'incremental',version+'-'+digest(raw));

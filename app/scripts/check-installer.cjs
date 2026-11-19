@@ -3,12 +3,15 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const {keepLocaleFile}=require('./package-locales.cjs');
 
-const version = require('../package.json').version;
-require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{stdio:'inherit',windowsHide:true});
-const updateManifest=require('js-yaml').load(fs.readFileSync(path.resolve(__dirname,'../dist/latest.yml'),'utf8'));
-const legacyReleaseCheck=spawnSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{encoding:'utf8',windowsHide:true,timeout:60000});
-if(legacyReleaseCheck.error||legacyReleaseCheck.status!==0)throw legacyReleaseCheck.error||Error('Legacy update metadata check failed: '+legacyReleaseCheck.stderr+legacyReleaseCheck.stdout);
-console.log(legacyReleaseCheck.stdout.trim());
+const {version,screenshBuild:build=1}=require('../package.json');
+const hotfix=build>1;
+const updateManifest=hotfix
+  ? JSON.parse(fs.readFileSync(path.resolve(__dirname,`../dist/ScreenSh-${version}-hotfix.json`),'utf8'))
+  : require('js-yaml').load(fs.readFileSync(path.resolve(__dirname,'../dist/latest.yml'),'utf8'));
+if(hotfix){
+  if(updateManifest.schemaVersion!==1||updateManifest.version!==version||updateManifest.build!==build||!updateManifest.portable||!updateManifest.incremental)throw Error('Invalid hotfix index');
+}else require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-legacy-release.cjs')],{stdio:'inherit',windowsHide:true});
+const target=require('../main/update-identity.cjs').updateKey(updateManifest);
 if(updateManifest.portable){
   const {portableArtifact}=require('../main/portable-updater.cjs'),file=portableArtifact(updateManifest);
   const archive=path.resolve(__dirname,'../dist',file.url);
@@ -22,7 +25,7 @@ if(updateManifest.incremental){
   const descriptor=incrementalArtifact(updateManifest),directory=path.resolve(__dirname,'../dist');
   const raw=fs.readFileSync(path.join(directory,descriptor.url));
   if(raw.length!==descriptor.size||digest(raw,'sha512','base64')!==descriptor.sha512)throw Error('Incremental manifest checksum mismatch');
-  const manifest=parseManifest(raw,version),packed=fs.readFileSync(path.join(directory,manifest.pack.url));
+  const manifest=parseManifest(raw,target),packed=fs.readFileSync(path.join(directory,manifest.pack.url));
   if(packed.length!==manifest.pack.size||digest(packed,'sha512','base64')!==manifest.pack.sha512)throw Error('Incremental block pack checksum mismatch');
 }
 for (const name of ['latest.yml', `ScreenSh-${version}-Setup.exe`, `ScreenSh-${version}-Setup.exe.blockmap`]) {
@@ -107,10 +110,10 @@ const probe = `
   if(!fs.existsSync(path.join(root,'renderer/relay-settings.mjs')))throw Error('Packaged relay settings are missing');
   load('./main/update-source.cjs');
   load('./main/update-cleanup.cjs');
-  const incrementalPath=${JSON.stringify(path.resolve(__dirname,'../dist',`ScreenSh-${version}-Update.json`))};
+  const incrementalPath=${JSON.stringify(path.resolve(__dirname,'../dist',`ScreenSh-${target}-Update.json`))};
   if(fs.existsSync(incrementalPath))load('./main/update-blocks.cjs').verifyInWorker({
     root:path.resolve(root,'../..'),pending:path.join(path.resolve(root,'../..'),'data/updates/pending'),
-    raw:fs.readFileSync(incrementalPath),version:${JSON.stringify(version)}
+    raw:fs.readFileSync(incrementalPath),version:${JSON.stringify(target)}
   }).then(valid=>{if(!valid)throw Error('Packaged files do not match incremental manifest');console.log('PACKAGED_BLOCKS_WORKER_OK');}).catch(error=>{console.error(error);process.exitCode=1;});
   load('ws');
   console.log('PACKAGED_EXTERNAL_OBS_OK');
@@ -139,6 +142,12 @@ if (result.error || result.status !== 0 || !result.stdout.includes('PACKAGED_OBS
   throw result.error || new Error(`Packaged OBS failed: ${result.stderr || result.stdout}`);
 }
 console.log(result.stdout.trim());
+if(hotfix){
+  require('node:child_process').execFileSync(process.execPath,[path.resolve(__dirname,'../tests/integration/check-incremental-update.cjs'),'--hotfix'],{stdio:'inherit',windowsHide:true,timeout:120000});
+  const powershell=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
+  require('node:child_process').execFileSync(powershell,['-NoProfile','-File',path.resolve(__dirname,'../tests/integration/check-portable-update.ps1'),'-Hotfix'],{stdio:'inherit',windowsHide:true,timeout:120000});
+  process.exit(0);
+}
 const bootstrapCheck=spawnSync(process.execPath,[path.resolve(__dirname,'../tests/integration/check-installer-bootstrap.cjs')],{env:process.env,windowsHide:true,encoding:'utf8',timeout:60000});
 if(bootstrapCheck.error||bootstrapCheck.status!==0)throw bootstrapCheck.error||new Error('Installer shell-context bootstrap check failed: '+bootstrapCheck.stderr+bootstrapCheck.stdout);
 console.log(bootstrapCheck.stdout.trim());

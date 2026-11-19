@@ -45,3 +45,13 @@ test('NVENC recognizes legacy hardware encoders without accepting x264', () => {
   assert.equal(createVideoEncoder(factory, 'nvenc', {}, 'test').id, 'ffmpeg_nvenc');
   assert.throws(() => createVideoEncoder({ types: () => ['obs_x264'], create() { throw Error('Must not call'); } }, 'nvenc', {}, 'test'), /NVENC 需要 NVIDIA/);
 });
+
+test('AV1 selections require a matching hardware encoder and never substitute H.264 or software AV1', () => {
+  for (const [choice, id] of [['nvenc-av1', 'obs_nvenc_av1_tex'], ['qsv-av1', 'obs_qsv11_av1'], ['amf-av1', 'av1_texture_amf']]) {
+    let released = 0;
+    const factory = { types: () => [id], create: name => name === id ? { id } : { id: 'obs_x264', release() { released++; } } };
+    assert.equal(createVideoEncoder(factory, choice, {}, 'test').id, id);
+    assert.equal(released, 1);
+    assert.throws(() => createVideoEncoder({ types: () => ['ffmpeg_svt_av1'] }, choice, {}, 'test'), /未提供所选的 AV1/);
+  }
+});

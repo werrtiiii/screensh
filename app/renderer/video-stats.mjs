@@ -1,10 +1,21 @@
 const finite = value => Number.isFinite(value);
+function counterDelta(current, previous, key) {
+  return current && previous?.id === current.id && current.timestamp > previous.timestamp &&
+    finite(current[key]) && finite(previous[key]) && current[key] >= previous[key]
+    ? current[key] - previous[key] : null;
+}
+function meanBufferMs(current, previous, key) {
+  const duration = counterDelta(current, previous, key);
+  const count = counterDelta(current, previous, 'jitterBufferEmittedCount');
+  return duration !== null && count > 0 ? 1000 * duration / count : null;
+}
 export function sampleVideoStats(report, previous, diagnostics) {
   const entries = [...report.values()];
   const video = entries.find(s => s.type === 'inbound-rtp' && s.kind === 'video');
   if (!video) return { snapshot: null, rows: [['状态', '等待视频数据…']] };
+  const audio = entries.find(s => s.type === 'inbound-rtp' && s.kind === 'audio');
   const same = previous?.id === video.id && video.timestamp > previous.timestamp;
-  const delta = key => same && finite(video[key]) && finite(previous[key]) && video[key] >= previous[key] ? video[key] - previous[key] : null;
+  const delta = key => counterDelta(video, previous, key);
   const elapsed = same ? (video.timestamp - previous.timestamp) / 1000 : null;
   const perSecond = key => delta(key) === null ? null : delta(key) / elapsed;
   const meanMs = (total, count) => delta(total) !== null && delta(count) > 0 ? 1000 * delta(total) / delta(count) : null;
@@ -24,8 +35,12 @@ export function sampleVideoStats(report, previous, diagnostics) {
   // Capture, encoding and display scanout are not measured by inbound WebRTC
   // stats. Report the measured receiving stages instead of inventing a total.
   const receiving = !stalled && [buffer, decode].every(finite) ? buffer + decode : null;
-  const targetBuffer = meanMs('jitterBufferTargetDelay', 'jitterBufferEmittedCount');
-  return { snapshot: { ...video }, rows: [
+  const targetBuffer = meanBufferMs(video, previous, 'jitterBufferTargetDelay');
+  const minimumBuffer = meanBufferMs(video, previous, 'jitterBufferMinimumDelay');
+  const audioBuffer = meanBufferMs(audio, previous?.audio, 'jitterBufferDelay');
+  const avOffset = finite(audio?.estimatedPlayoutTimestamp) && finite(video.estimatedPlayoutTimestamp)
+    ? audio.estimatedPlayoutTimestamp - video.estimatedPlayoutTimestamp : null;
+  return { snapshot: { ...video, audio: audio && { ...audio } }, rows: [
     ['接收缓冲与解码', stalled ? '本秒无解码帧' : format(receiving, 'ms'), stalled || receiving >= 100],
     ['实际分辨率', video.frameWidth && video.frameHeight ? `${video.frameWidth} × ${video.frameHeight}` : '—'],
     ['解码帧率', format(fps, 'FPS'), finite(fps) && fps < 10],
@@ -33,6 +48,8 @@ export function sampleVideoStats(report, previous, diagnostics) {
     ['网络往返 RTT', format(rtt, 'ms'), rtt >= 150],
     ['接收缓冲耗时', delta('jitterBufferEmittedCount') === 0 ? '本秒无输出帧' : format(buffer, 'ms'), delta('jitterBufferEmittedCount') === 0 || buffer >= 100],
     ['接收目标缓冲', format(targetBuffer, 'ms')],
+    ['视频最低缓冲', format(minimumBuffer, 'ms')],
+    ...(audio ? [['音频接收缓冲', format(audioBuffer, 'ms')], ['音画播放时间差', format(avOffset, 'ms')]] : []),
     ['平均解码耗时', stalled ? '本秒无解码帧' : format(decode, 'ms'), stalled || decode >= 33],
     ['网络抖动', format(jitter, 'ms'), jitter >= 30],
     ['区间丢包率', format(loss, '%'), loss >= 2],

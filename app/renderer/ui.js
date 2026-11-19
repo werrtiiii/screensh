@@ -4,10 +4,13 @@ export function initMemberSidebar() {
   const button = document.querySelector('#btnToggleMembers');
   const sidebar = document.querySelector('#serverMembersSidebar');
   function apply(collapsed) {
+    if (collapsed && sidebar.contains(document.activeElement)) button.focus();
+    sidebar.inert = collapsed;
     sidebar.hidden = collapsed;
     button.setAttribute('aria-expanded', String(!collapsed));
     button.title = collapsed ? '展开成员列表' : '收起成员列表';
     button.setAttribute('aria-label', button.title);
+    window.electronAPI?.setMemberSidebarCollapsed?.(collapsed);
   }
   apply(localStorage.getItem('membersSidebarCollapsed') === 'true');
   button.addEventListener('click', () => {
@@ -64,7 +67,7 @@ export function initSettingsNavigation() {
   const body = modal.querySelector('.modal-body');
   const categories = {
     system: [
-      ['general', '常规', '.setting-theme,.setting-startup,.setting-hardware,.setting-update,.setting-sounds'],
+      ['general', '常规', '.setting-theme,.setting-startup,.setting-update,.setting-sounds'],
       ['lolping', 'lolPing', '.setting-lolping'],
       ['network', 'EasyTier', '.setting-easytier'],
       ['chat', '聊天记录', '.setting-chat'],
@@ -137,7 +140,7 @@ export function initSettingsNavigation() {
     navigation.style.setProperty('--selection-height', selected.offsetHeight + 'px');
   }
   new ResizeObserver(placeSelection).observe(navigation);
-  function open(mode = 'system') {
+  function open(mode = 'system', initialCategory) {
     navigation.style.removeProperty('--selection-offset');
     navigation.style.removeProperty('--selection-height');
     for (const panel of body.querySelectorAll('.settings-panel')) panel.hidden = true;
@@ -174,7 +177,7 @@ export function initSettingsNavigation() {
       return button;
     }));
     modal.querySelector('#updateAccelerationDetails').open = false;
-    select(0);
+    select(Math.max(0, sections.findIndex(([id]) => id === initialCategory)));
     // open() runs before the hidden modal is displayed; measure after layout too.
     requestAnimationFrame(placeSelection);
   }

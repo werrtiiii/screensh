@@ -24,7 +24,7 @@ function renderer(ipc = {},request=async()=>({})) {
         contains: name => classes.has(name),
         toggle: (name, value) => value ? classes.add(name) : classes.delete(name),
       },
-      querySelector: () => null, addEventListener() {}, dispatchEvent() {},
+      querySelector: () => null, addEventListener() {}, dispatchEvent() {}, removeAttribute() {},
     };
   }
   const $ = name => { if (!nodes.has(name)) nodes.set(name, element()); return nodes.get(name); };

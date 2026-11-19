@@ -32,3 +32,19 @@ test('video stats use interval deltas, selected transport RTT, and reset baselin
   assert.equal(diagnosticRows['实际解码器'],'D3D11VideoDecoder');assert.equal(diagnosticRows['本机媒体排队'],'12.0 ms');assert.equal(diagnosticRows['本机媒体过载丢包'],'2 包');
   assert.deepEqual(sampleVideoStats(new Map()).rows, [['状态', '等待视频数据…']]);
 });
+
+test('video diagnostics distinguish minimum buffering, audio buffering, and audio-video timing', async () => {
+  const { sampleVideoStats } = await import('../renderer/video-stats.mjs');
+  const report = (time) => new Map([
+    ['v', { id:'v', type:'inbound-rtp', kind:'video', timestamp:time, jitterBufferEmittedCount:60*time,
+      jitterBufferMinimumDelay:1.2*time, jitterBufferTargetDelay:12*time, estimatedPlayoutTimestamp:time+40 }],
+    ['a', { id:'a', type:'inbound-rtp', kind:'audio', timestamp:time, jitterBufferEmittedCount:48000*time,
+      jitterBufferDelay:2400*time, estimatedPlayoutTimestamp:time+65 }],
+  ]);
+  const first = sampleVideoStats(report(1));
+  const rows = Object.fromEntries(sampleVideoStats(report(2), first.snapshot).rows);
+  assert.equal(rows['视频最低缓冲'], '20.0 ms');
+  assert.equal(rows['接收目标缓冲'], '200.0 ms');
+  assert.equal(rows['音频接收缓冲'], '50.0 ms');
+  assert.equal(rows['音画播放时间差'], '25.0 ms');
+});

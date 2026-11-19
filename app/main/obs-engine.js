@@ -162,11 +162,13 @@ class ObsEngine {
         const audio = this.own(o.InputFactory.create(isWindow ? 'wasapi_process_output_capture' : 'wasapi_output_capture', `audio-${Date.now()}`, isWindow ? { window: config.sourceId, priority: 0 } : { device_id: 'default' }), s => s.release());
         o.Global.setOutputSource(1, audio);
       }
-      const bitrate = config.maxBitrate || Math.min(10000, Math.max(800, Math.round(width * height / (1280 * 720) * 1500 * config.frameRate / 30)));
+      const { recommendedVideoBitrate } = await import('../renderer/video-bitrate.mjs');
+      if (generation !== this.generation) throw new Error('共享已取消');
+      const bitrate = config.maxBitrate || recommendedVideoBitrate(width, height, config.frameRate);
       const encoder = config.videoEncoder || 'x264';
       const { createVideoEncoder } = require('./video-encoder');
       const ve = this.own(createVideoEncoder(o.VideoEncoderFactory, encoder,
-        require('./video-encoding.cjs').videoEncoderSettings(encoder, bitrate), `h264-${Date.now()}`), e => e.release());
+        require('./video-encoding.cjs').videoEncoderSettings(encoder, bitrate, config.frameRate), `screen-${Date.now()}`), e => e.release());
       this.videoEncoder = ve;
       // The streaming API requires an audio encoder even when the source is silent.
       const ae = this.own(o.AudioEncoderFactory.create('ffmpeg_opus', `opus-${Date.now()}`), e => e.release());

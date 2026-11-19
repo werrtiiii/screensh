@@ -1,6 +1,6 @@
 let fs;try{fs=require('original-fs');}catch{fs=require('node:fs');}
 const path = require('node:path');
-const {compareVersions} = require('./updater');
+const {compareUpdateKeys,parseUpdateKey,updateKey} = require('./update-identity.cjs');
 const {createHash}=require('node:crypto');
 async function sha512(file){const hash=createHash('sha512');for await(const bytes of fs.createReadStream(file))hash.update(bytes);return hash.digest('base64');}
 
@@ -11,8 +11,9 @@ function createPendingUpdate({file}) {
   function readAttempt(){try{return JSON.parse(fs.readFileSync(attemptFile,'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw Error('无法读取更新安装记录，请手动覆盖安装');}}
   function clear() { try { fs.unlinkSync(file); } catch(error) { if(error.code!=='ENOENT')throw error; } }
   function valid(record) {
-    return record && /^\d+\.\d+\.\d+$/.test(record.version)
-      && typeof record.fileName==='string' && (/^[^\\/:]+\.exe$/i.test(record.fileName)||record.fileName===`ScreenSh-${record.version}-Update.zip`||record.fileName===`ScreenSh-${record.version}-Update.json`)
+    const identity = parseUpdateKey(record?.version);
+    return identity
+      && typeof record.fileName==='string' && (identity.build===1&&/^[^\\/:]+\.exe$/i.test(record.fileName)||record.fileName===`ScreenSh-${record.version}-Update.zip`||record.fileName===`ScreenSh-${record.version}-Update.json`)
       && /^[A-Za-z0-9+/]{86}==$/.test(record.sha512);
   }
   return {
@@ -25,7 +26,7 @@ function createPendingUpdate({file}) {
     },
     remember(updater, info) {
       const helper=updater.downloadedUpdateHelper, metadata=helper?.downloadedFileInfo;
-      const record={version:info.version, ...metadata};
+      const record={...metadata,version:updateKey(info)};
       if (!valid(record) || helper.packageFile || path.resolve(helper.file)!==path.resolve(helper.cacheDirForPendingUpdate,record.fileName)) throw Error('无法保存已下载的更新信息');
       fs.mkdirSync(path.dirname(file),{recursive:true});
       fs.writeFileSync(file+'.tmp',JSON.stringify(record),{mode:0o600});fs.renameSync(file+'.tmp',file);
@@ -36,7 +37,7 @@ function createPendingUpdate({file}) {
       catch(error) { if(error.code==='ENOENT')return null; throw Error('无法读取已下载的更新信息'); }
       if (!valid(record)) { clear(); throw Error('本地更新信息无效，请重新下载更新'); }
       // Keep the receipt until the new renderer has actually initialized.
-      if (compareVersions(record.version,currentVersion)<=0) return null;
+      if (compareUpdateKeys(record.version,currentVersion)<=0) return null;
       const helper=await updater.getOrCreateDownloadHelper();
       let cached;
       try { cached=JSON.parse(await fs.promises.readFile(path.join(helper.cacheDirForPendingUpdate,'update-info.json'),'utf8')); }
@@ -64,7 +65,7 @@ function createPendingUpdate({file}) {
       let metadata;try{metadata=JSON.parse(await fs.promises.readFile(metadataPath,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
       const metadataVersion=packageVersion(metadata?.fileName);
       const candidate=record||(metadataVersion&&{...metadata,version:metadataVersion});
-      const future=candidate&&compareVersions(candidate.version,currentVersion)>0;
+      const future=candidate&&compareUpdateKeys(candidate.version,currentVersion)>0;
       // When present, verify the package of the running version before cleanup.
       // A missing package after healthy startup is safe to clean: a preceding
       // cleanup or a manual install may already have removed it.
@@ -84,7 +85,7 @@ function createPendingUpdate({file}) {
       if(fs.existsSync(pending))for(const entry of await fs.promises.readdir(pending,{withFileTypes:true})){
         if(!entry.isFile()||entry.isSymbolicLink())continue;
         const version=packageVersion(entry.name);
-        if(!version||compareVersions(version,currentVersion)>0)continue;
+        if(!version||compareUpdateKeys(version,currentVersion)>0)continue;
         // Migrate cleanup of checkpoints created by the earlier pending layout.
         if(entry.name.endsWith('-Update.json'))try{
           const raw=fs.readFileSync(path.join(pending,entry.name));parseManifest(raw,version);
@@ -96,10 +97,10 @@ function createPendingUpdate({file}) {
       for(const name of ['installer.exe','portable.zip','current.blockmap','installed-update.json'])changed=await unlinkOwned(path.join(cache,name))||changed;
       // The metadata and receipts are removed last. Every step is idempotent,
       // including a retry after the archive was deleted but metadata was locked.
-      if(metadataVersion&&compareVersions(metadataVersion,currentVersion)<=0){changed=await unlinkOwned(path.join(pending,'current.blockmap'))||changed;changed=await unlinkOwned(metadataPath)||changed;}
-      if(record&&compareVersions(record.version,currentVersion)<=0){clear();changed=true;}
+      if(metadataVersion&&compareUpdateKeys(metadataVersion,currentVersion)<=0){changed=await unlinkOwned(path.join(pending,'current.blockmap'))||changed;changed=await unlinkOwned(metadataPath)||changed;}
+      if(record&&compareUpdateKeys(record.version,currentVersion)<=0){clear();changed=true;}
       const attempt=readAttempt(),attemptVersion=packageVersion(attempt?.fileName);
-      if(attemptVersion&&compareVersions(attemptVersion,currentVersion)<=0)await unlinkOwned(attemptFile);
+      if(attemptVersion&&compareUpdateKeys(attemptVersion,currentVersion)<=0)await unlinkOwned(attemptFile);
       return !future&&(changed||candidate)?{version:currentVersion}:null;
 
     },

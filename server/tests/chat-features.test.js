@@ -7,7 +7,7 @@ test('recall enforces the two minute boundary, survives cleanup and restart, and
   const a=store.append(author,payload('a')).message,b=store.append(author,payload('b')).message;
   assert.throws(()=>store.recall(a.id,other),/权限/);now+=120000;store.recall(a.id,author.id);now++;
   assert.throws(()=>store.recall(b.id,author.id),/两分钟/);store.clear();
-  assert.throws(()=>store.recall(b.id,author.id),/两分钟/);store.recall(b.id,other,true);
+  assert.throws(()=>store.recall(b.id,author.id),/两分钟/);store.recall(b.id,other,{moderate:true});
   const restored=createChatStore({directory});assert.deepEqual(new Set(restored.history().recalled),new Set([a.id,b.id]));assert.equal(restored.history().messages.length,0);
 });
 test('arbitrary files stream in bounded chunks, enforce quotas/ownership, persist and are removed with their messages',t=>{
@@ -28,7 +28,10 @@ test('arbitrary files stream in bounded chunks, enforce quotas/ownership, persis
   store.uploadChunk(author.id,{...kept,offset:0,data:Buffer.from([7])});assert.ok(store.append(author,{...payload(''),...kept}).message.file);
 });
 test('file download requires a live member token; recall permissions and offline catch-up are enforced by the server',async t=>{
-  const {server,io}=createSignalingServer({initialPeers:'test.example:11010'}),sockets=[];await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realNow=Date.now;let clockOffset=0;t.mock.method(Date,'now',()=>realNow()+clockOffset);
+  const {server,io}=createSignalingServer({initialPeers:'test.example:11010'}),sockets=[];
+  Date.now.mock.restore(); // The chat store retains its clock without advancing socket timers.
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(async()=>{sockets.forEach(socket=>socket.disconnect());await new Promise(resolve=>io.close(resolve));});
   const request=(socket,event,payload={})=>new Promise((resolve,reject)=>socket.timeout(5000).emit(event,payload,(error,result)=>error?reject(error):resolve(result)));
   const base='http://127.0.0.1:'+server.address().port;
@@ -57,4 +60,12 @@ test('file download requires a live member token; recall permissions and offline
   assert.equal((await fetch(base+video.path,{headers:{Range:'bytes=999999-'}})).status,416);
   assert.equal((await request(host,'chat-video',{id:hostMessage.message.id})).ok,false);
   await request(host,'chat-recall',{id:videoMessage.message.id});assert.equal((await fetch(base+video.path)).status,404);
+  const oldAdminMessage=(await request(admin,'chat-send',payload('old admin message'))).message;
+  const oldMemberMessage=(await request(late,'chat-send',payload('old member message'))).message;
+  clockOffset=120001;
+  assert.match((await request(admin,'chat-recall',{id:oldAdminMessage.id})).message,/两分钟/);
+  assert.match((await request(late,'chat-recall',{id:oldMemberMessage.id})).message,/两分钟/);
+  for(const id of [hostMessage.message.id,oldAdminMessage.id,oldMemberMessage.id]){
+    assert.equal((await request(host,'chat-recall',{id})).ok,true,'the host can recall any old message');
+  }
 });

@@ -13,19 +13,33 @@ function fixture() {
   const $ = key => { if (!nodes.has(key)) nodes.set(key, element()); return nodes.get(key); };
   class Stream { constructor() { this.tracks = []; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } }
   class Session {
-    constructor(url, _config, track, fail) { this.url = url; this.track = track; this.fail = fail; this.pc = { connectionState: 'connected', addEventListener: (event, fn) => { this[event] = fn; } }; sessions.push(this); }
+    constructor(url, _config, track, fail, options) { this.url = url; this.track = track; this.fail = fail; this.options = options; this.pc = { connectionState: 'connected', addEventListener: (event, fn) => { this[event] = fn; } }; sessions.push(this); }
     async start() { this.started = (this.started || 0) + 1; this.mediaTrack = { stopped: false, stop() { this.stopped = true; } }; this.track({ track: this.mediaTrack }); }
     close() { this.closed = true; this.pc.connectionState = 'closed'; }
   }
   const context = { state, roomUsers, $, socket: { id: 'self', emit: (...args) => events.push(args) }, console,
     document: { pictureInPictureElement: null }, MediaStream: Stream, WhepSession: Session,
-    getIceServers() {}, toast() {}, attachVideoStats: () => () => {}, attachLivePlayback: () => () => {},
+    getIceServers() {}, toast() {}, attachVideoStats: () => () => {}, attachLivePlayback: () => () => {}, attachWatchPresentation: () => ({ setStatus() {}, reset() {}, dispose() {} }),
     watchNetwork: () => () => {},
     setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id) };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../renderer/media.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') + '\nglobalThis.api = { displayRemoteVideo, stopWatch, validateRetainedWatch };', context);
   return { ...context.api, state, roomUsers, sessions, events, timers, $ };
 }
+test('watching negotiates video only when the active publisher explicitly disabled audio', async () => {
+  const f = fixture();
+  for (const shareAudio of [false, true, undefined]) {
+    f.roomUsers.get('peer').shareAudio = shareAudio;
+    await f.displayRemoteVideo('peer');
+    assert.equal(f.sessions.at(-1).options.videoOnly, shareAudio === false);
+    f.stopWatch({ retain: true });
+  }
+  assert.equal(f.sessions.length, 2, 'an audio mode change rebuilds the retained session');
+  f.state.isSharing = true; f.state.activeShareAudio = false; f.state.shareAudio = true;
+  await f.displayRemoteVideo('self');
+  assert.equal(f.sessions.at(-1).options.videoOnly, true, 'self-watch uses the active share, not the settings draft');
+  f.stopWatch();
+});
 test('back detaches audio/video and reuses the same connection within 10 seconds', async () => {
   const f = fixture(); await f.displayRemoteVideo('peer'); const video = f.$('#videoContainer').video;
   f.stopWatch({ retain: true });

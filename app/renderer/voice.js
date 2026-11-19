@@ -443,7 +443,7 @@ function paintSpeakerButton(button, user) {
   button.setAttribute('aria-label', `${blocked ? '取消屏蔽' : '屏蔽'}${user.name}的语音`);
   button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 8H3v8h3l5 4V4Z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/>${blocked ? '<path d="M2 2l20 20"/>' : ''}</svg>`;
 }
-export function decorateVoiceCard(card, user, isMe) {
+function decorateVoiceCard(card, user, isMe, openVoiceSettings) {
   card.dataset.userId = user.socketId; card.classList.toggle('is-speaking', !!levels.get(user.socketId));
   const row = document.createElement('div'); row.className = 'card-voice-row'; card.append(row);
   if (isMe) {
@@ -459,7 +459,7 @@ export function decorateVoiceCard(card, user, isMe) {
     const load = async () => { if (loaded) return; loaded = true; try { await refreshVoiceDevices(); } catch (error) { loaded = false; announce(error); } };
     wrap.addEventListener('mouseenter', load); wrap.addEventListener('focusin', load);
     select.onchange = () => void changeMicrophone(select.value);
-    const settings = document.createElement('button'); settings.type = 'button'; settings.className = 'microphone-settings-link'; settings.textContent = '语音设置'; settings.onclick = () => { $('#btnSettings').click(); void refreshVoiceDevices(); }; panel.append(settings); wrap.append(panel);
+    const settings = document.createElement('button'); settings.type = 'button'; settings.className = 'microphone-settings-link'; settings.textContent = '语音设置'; settings.onclick = () => { openVoiceSettings(); void refreshVoiceDevices(); }; panel.append(settings); wrap.append(panel);
     const status = document.createElement('span'); status.className = 'voice-status'; row.append(status);
     const receiver = document.createElement('div'); receiver.className = 'speaker-control receive-volume-control'; row.append(receiver);
     const headphones = document.createElement('button'); headphones.type = 'button'; headphones.className = 'voice-control'; headphones.dataset.voice = 'deafen'; headphones.onclick = () => void changeVoicePreference('deafen'); receiver.append(headphones);
@@ -522,7 +522,7 @@ export async function refreshVoiceDevices() {
     paintControls();
   } catch (error) { announce(error); }
 }
-export function initVoice() {
+export function initVoice({ openVoiceSettings }) {
   for (const input of document.querySelectorAll('[data-voice-processing]')) {
     input.checked = processingSettings()[input.dataset.voiceProcessing];
     input.onchange = () => void changeMicrophone(microphone(), { key: input.dataset.voiceProcessing, value: input.checked });
@@ -535,7 +535,7 @@ export function initVoice() {
       await requestServer('set-voice-state', { enabled: true, muted: voice.muted, deafened: voice.deafened, accompaniment: active });
       announcedSpeaking = null;
     }
-  }, sync: syncVoice, stop: stopVoice, receive: receiveVoice, activity: receiveVoiceActivity, decorate: decorateVoiceCard, isEnabled: () => voice.enabled, mix: mixAccompaniment };
+  }, sync: syncVoice, stop: stopVoice, receive: receiveVoice, activity: receiveVoiceActivity, decorate: (card, user, isMe) => decorateVoiceCard(card, user, isMe, openVoiceSettings), isEnabled: () => voice.enabled, mix: mixAccompaniment };
   $('#btnVoiceDevices').onclick = refreshVoiceDevices;
   $('#voiceMicrophone').onchange = event => void changeMicrophone(event.target.value);
   $('#voiceSpeaker').onchange = event => localStorage.setItem('voiceSpeaker', event.target.value);

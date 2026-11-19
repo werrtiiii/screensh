@@ -1,6 +1,7 @@
 // Explicit manual publishing entry point. CI uses the release workflow instead.
 const fs=require('node:fs'),path=require('node:path'),{execFileSync}=require('node:child_process');
-const version=require('../package.json').version,repository=require('../update-config.json').repository;
+const {version,screenshBuild=1}=require('../package.json'),repository=require('../update-config.json').repository;
+if(screenshBuild!==1)throw Error('Publish hotfix builds through the hotfix release workflow.');
 const root=path.resolve(__dirname,'../..'),dist=path.join(root,'app/dist'),tag=process.env.RELEASE_TAG||version;
 if(!/^v?\d+\.\d+\.\d+$/.test(tag)||tag.replace(/^v/,'')!==version)throw Error('Release tag and application version differ');
 if(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim())throw Error('Commit changes before publishing');

@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 // Own only the process we started. A failed or cancelled start must never report ready.
 class ManagedProcess {
   constructor(name, onExit = () => {}) { this.name = name; this.onExit = onExit; this.child = null; }
-  start(exe, args, { cwd, ready, probe, timeout = 15000, env = process.env, sensitiveValues=[] } = {}) {
+  start(exe, args, { cwd, ready, probe, probeInterval = 200, timeout = 15000, env = process.env, sensitiveValues=[] } = {}) {
     if (this.child) return Promise.reject(new Error(`${this.name} 已在运行或启动中`));
     this.output = '';
     return new Promise((resolve, reject) => {
@@ -17,7 +17,14 @@ class ManagedProcess {
         if (error) { child.kill(); reject(error); } else { readySucceeded = true; resolve(); }
       };
       const timer = setTimeout(() => finish(new Error(`${this.name} 启动超时。${tail.slice(-400)}`)), timeout);
-      const poll = probe ? setInterval(() => { try { if (probe()) finish(); } catch (e) { finish(e); } }, 200) : null;
+      let probing = false;
+      const poll = probe ? setInterval(async () => {
+        if (settled || probing) return;
+        probing = true;
+        try { if (await probe()) finish(); }
+        catch (error) { finish(error); }
+        finally { probing = false; }
+      }, probeInterval) : null;
       this.cancel = () => finish(new Error(`${this.name} 启动已取消`));
       for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
         const text=data.toString();rawOutput=(rawOutput+text).slice(-16000);let safe=rawOutput;for(const value of sensitiveValues.filter(Boolean)){safe=safe.split(value).join('[已隐藏]');safe=safe.split(JSON.stringify(value).slice(1,-1)).join('[已隐藏]');}tail=safe.slice(-2000);this.output=safe;

@@ -1,8 +1,8 @@
 let fs;try{fs=require('original-fs');}catch{fs=require('node:fs');}
 const path=require('node:path');
-const {compareVersions}=require('./updater');
+const {compareUpdateKeys,parseUpdateKey}=require('./update-identity.cjs');
 const {noLinks,parseManifest,digest,MAX_MANIFEST}=require('./update-blocks.cjs');
-function packageVersion(name){return name?.match(/^(?:temp-)?ScreenSh-(\d+\.\d+\.\d+)-(?:Setup\.exe(?:\.blockmap)?|Update\.(?:zip|json))$/)?.[1]||null;}
+function packageVersion(name){const key=name?.match(/^(?:temp-)?ScreenSh-([\d.]+(?:-b\d+)?)-(?:Setup\.exe(?:\.blockmap)?|Update\.(?:zip|json))$/)?.[1];return parseUpdateKey(key)?key:null;}
 async function unlinkOwned(file){
   noLinks(path.dirname(file));
   const stat=await fs.promises.lstat(file).catch(error=>{if(error.code!=='ENOENT')throw error;});
@@ -23,8 +23,8 @@ async function cleanupIncrementalCache(cache,currentVersion){
   const directory=path.join(cache,'incremental');noLinks(directory);
   if(!fs.existsSync(directory))return;
   for(const entry of fs.readdirSync(directory,{withFileTypes:true})){
-    const match=entry.name.match(/^(\d+\.\d+\.\d+)-([a-f0-9]{64})$/);
-    if(!entry.isDirectory()||entry.isSymbolicLink()||!match||compareVersions(match[1],currentVersion)>0)continue;
+    const match=entry.name.match(/^([\d.]+(?:-b\d+)?)-([a-f0-9]{64})$/);
+    if(!entry.isDirectory()||entry.isSymbolicLink()||!parseUpdateKey(match?.[1])||compareUpdateKeys(match[1],currentVersion)>0)continue;
     const stage=path.join(directory,entry.name),manifest=path.join(stage,'manifest.json');noLinks(manifest);
     const stat=fs.statSync(manifest,{throwIfNoEntry:false});
     if(!stat?.isFile()||stat.size>MAX_MANIFEST)continue;
@@ -40,7 +40,7 @@ async function cleanupTransactions(root,currentVersion,skip=[]){
     try{
       const transaction=path.join(directory,entry.name),file=path.join(transaction,'journal.json');noLinks(file);
       const journal=JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));
-      if(!['confirmed','rolled-back'].includes(journal.phase)||!/^\d+\.\d+\.\d+$/.test(journal.version)||compareVersions(journal.version,currentVersion)>0||path.resolve(journal.root).toLowerCase()!==path.resolve(root).toLowerCase())continue;
+      if(!['confirmed','rolled-back'].includes(journal.phase)||!parseUpdateKey(journal.version)||compareUpdateKeys(journal.version,currentVersion)>0||path.resolve(journal.root).toLowerCase()!==path.resolve(root).toLowerCase())continue;
       // Never retry or discard an applying/applied transaction: it may still
       // belong to the live update worker or be needed for manual recovery.
       for(const name of ['backup','new'])await removeTree(path.join(transaction,name));
@@ -59,7 +59,7 @@ async function cleanupFallbackStages(root,currentVersion,{temp=path.join(process
       if(path.resolve(record.root).toLowerCase()!==path.resolve(root).toLowerCase()||path.dirname(stage).toLowerCase()!==path.resolve(temp).toLowerCase()||path.basename(stage)+'.json'!==entry.name||!/^\d+\.\d+\.\d+$/.test(record.version))continue;
       noLinks(stage);
       const cancelled=fs.existsSync(path.join(stage,'fallback.cancel'))&&Number.isFinite(record.created)&&now-record.created>180000;
-      if(!cancelled&&compareVersions(record.version,currentVersion)>0)continue;
+      if(!cancelled&&compareUpdateKeys(record.version,currentVersion)>0)continue;
       // Keep the cancellation marker while the executable is still mapped by
       // Windows; otherwise a delayed installer could miss cancellation.
       await unlinkOwned(path.join(stage,'setup.exe'));

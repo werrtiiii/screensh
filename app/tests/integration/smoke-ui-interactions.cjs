@@ -21,10 +21,26 @@ app.whenReady().then(async () => {
   const pause = () => new Promise(resolve => setTimeout(resolve, 70));
   try {
     await win.loadFile(path.join(root, 'renderer/index.html'));
+    await run(`await import("./renderer.js")`);
+    assert.equal(await run(`return !document.querySelector("#btnAddFirstBookmark")?.hidden && document.querySelector("#bookmarkSearchCount").hidden`), true, "empty lobby offers an add action");
+    await run(`document.querySelector("#btnAddFirstBookmark").click()`);
+    assert.equal(await run(`return document.activeElement.id === "bookmarkUrlInput"`), true, "empty-state action opens the existing bookmark form");
     await run(`localStorage.setItem('serverBookmarks',JSON.stringify([{name:'工作服务器',url:'http://127.0.0.1:34561'},{name:'游戏服务器',url:'http://127.0.0.1:34562'}]));`);
     await win.reload();
     await new Promise(resolve => win.webContents.once('did-finish-load', resolve));
     await run(`await import('./renderer.js');`);
+    assert.equal(await run(`
+      const add=document.querySelector('#btnAddBookmark'),collapse=document.querySelector('#btnCollapseBookmarks');
+      const a=add.getBoundingClientRect(),b=collapse.getBoundingClientRect();
+      return !!add.querySelector('svg')&&!!collapse.querySelector('svg')&&a.top===b.top&&a.height===b.height;
+    `),true,'bookmark header actions use equal-size line icons');
+    assert.equal(await run(`
+      const collapse=document.querySelector('#btnCollapseBookmarks'),list=document.querySelector('#bookmarkList');
+      collapse.click();
+      const hidden=list.classList.contains('collapsed')&&collapse.getAttribute('aria-expanded')==='false'&&localStorage.getItem('bookmarksCollapsed')==='true';
+      collapse.click();
+      return hidden&&!list.classList.contains('collapsed')&&collapse.getAttribute('aria-expanded')==='true';
+    `),true,'bookmark action toggles the list and its expanded state');
     assert.equal(await run(`const input=document.querySelector('#serverSearch');input.value='不存在';input.dispatchEvent(new Event('input'));return [...document.querySelectorAll('#bookmarkList .bookmark-item')].every(n=>n.getBoundingClientRect().height===0);`), true, 'nonmatching bookmarks must be visually hidden');
     assert.equal(await run(`return document.querySelector('#bookmarkSearchEmpty')?.textContent;`), '没有匹配的服务器');
     await run(`document.querySelector('#btnClearServerSearch').click();`);
@@ -33,6 +49,8 @@ app.whenReady().then(async () => {
     await run(`document.querySelector('#btnSettings').focus();document.querySelector('#btnSettings').click();`);
     assert.deepEqual(await run(`return [...document.querySelectorAll('.settings-navigation button')].map(button=>button.textContent);`), ['常规','lolPing','EasyTier','聊天记录','语音','屏幕共享','个人资料']);
     assert.equal(await run(`return !!document.querySelector('#settings-panel-general .setting-update') && !!document.querySelector('#settings-panel-general .setting-sounds');`),true,'updates and sounds belong to General');
+    assert.deepEqual(await run(`return [...document.querySelectorAll('#settings-panel-general .settings-group-title')].map(node=>node.textContent)`), ['外观','启动','更新','音效']);
+    assert.equal(await run(`return document.querySelector('.glass-transparency-actions').contains(document.querySelector('#btnResetGlassTransparency'))`), true, 'transparency reset sits beside the numeric value');
     await pause();
     assert.equal(await run(`return document.querySelector('#settingsModal').contains(document.activeElement);`), true, 'modal initial focus');
     assert.equal(await run(`return document.querySelector('#updateAcceleration').getBoundingClientRect().height>0;`), true, 'general includes update controls');
@@ -88,12 +106,13 @@ app.whenReady().then(async () => {
     await run(`document.querySelector('#btnRoomSettingsToolbar').click();`);
     assert.equal(await run(`return !!document.querySelector('[data-select-for="videoEncoderSelect"]');`),true,'settings use the shared styled select');
     await run(`window.encoderChanges=0;document.querySelector('#videoEncoderSelect').addEventListener('change',()=>window.encoderChanges++);document.querySelector('[data-select-for="videoEncoderSelect"]').click();`);
-    assert.equal(await run(`return document.querySelectorAll('.select-popup [role=option]').length;`),4,'popup exposes all encoder options');
+    assert.equal(await run(`return document.querySelectorAll('.select-popup:not([inert]) [role=option]').length;`),4,'popup exposes all encoder options');
     await key('End');await key('Enter');
-    assert.equal(await run(`return document.querySelector('#videoEncoderSelect').value==='amf'&&localStorage.getItem('videoEncoder')==='amf'&&window.encoderChanges===1&&!document.querySelector('.select-popup');`),true,'keyboard selection commits once through the existing setting');
+    assert.equal(await run(`return document.querySelector('#videoEncoderSelect').value==='amf'&&localStorage.getItem('videoEncoder')==='amf'&&window.encoderChanges===1&&!document.querySelector('.select-popup:not([inert])');`),true,'keyboard selection commits once through the existing setting');
     await run(`document.querySelector('[data-select-for="videoEncoderSelect"]').click();`);
     await key('Escape');
-    assert.equal(await run(`return !document.querySelector('.select-popup')&&!document.querySelector('#settingsModal').classList.contains('hidden')&&document.activeElement.dataset.selectFor==='videoEncoderSelect';`),true,'Escape closes the picker before the modal');
+    assert.equal(await run(`return !!document.querySelector('.select-popup[inert]')?.getAnimations().some(motion=>motion.effect.getTiming().duration===120)`),true,'closed dropdown is inert during its short exit');
+    assert.equal(await run(`return !document.querySelector('.select-popup:not([inert])')&&!document.querySelector('#settingsModal').classList.contains('hidden')&&document.activeElement.dataset.selectFor==='videoEncoderSelect';`),true,'Escape closes the picker before the modal');
     await run(`document.querySelector('#videoEncoderSelect').options[3].disabled=true;`);await pause();
     await run(`document.querySelector('[data-select-for="videoEncoderSelect"]').click();`);
     await key('End');await key('Enter');
@@ -104,9 +123,9 @@ app.whenReady().then(async () => {
     await run(`document.querySelector('#btnCloseSettings').click();document.querySelector('#btnSettings').click();document.querySelector('[role=tab][data-category=voice]').click();document.querySelector('#voiceMicrophone').add(new Option('USB 测试麦克风','usb-test'));`);
     await pause();
     await run(`document.querySelector('[data-select-for="voiceMicrophone"]').click();`);
-    assert.equal(await run(`return [...document.querySelectorAll('.select-popup [role=option]')].some(node=>node.textContent.includes('USB 测试麦克风'));`),true,'dynamic device options appear in the styled picker');
+    assert.equal(await run(`return [...document.querySelectorAll('.select-popup:not([inert]) [role=option]')].some(node=>node.textContent.includes('USB 测试麦克风'));`),true,'dynamic device options appear in the styled picker');
     await key('u');
-    assert.equal(await run(`return document.querySelector('.select-option[data-active]').textContent;`),'USB 测试麦克风','typeahead highlights matching options');
+    assert.equal(await run(`return document.querySelector('.select-popup:not([inert]) .select-option[data-active]').textContent;`),'USB 测试麦克风','typeahead highlights matching options');
     await key('Escape');
     await pause();
     await run(`const label=document.createElement('label');label.id='implicitSelectFixture';label.textContent='连接模式';const select=document.createElement('select');select.id='implicitSelectFixtureSource';select.append(new Option('自动连接','auto'),new Option('手动连接','manual'));label.append(select);document.querySelector('.setting-voice').append(label);`);

@@ -16,12 +16,13 @@ on:
     tags:
       - 'v*.*.*'
       - '[0-9]*.*.*'
+      - 'hotfix-*.*.*-b*'
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ startsWith(inputs.tag || github.ref_name, 'hotfix-') && 'hotfix-index' || (inputs.tag || github.ref_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -51,7 +52,9 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          node -e "const p=require('./app/package.json'),l=require('./app/package-lock.json'),tag=process.env.RELEASE_TAG,v=tag.replace(/^v/,'');if(!/^v?\d+\.\d+\.\d+$/.test(tag)||p.version!==v||l.version!==v||l.packages[''].version!==v)throw Error('Release tag does not match package versions. Update and commit versions before tagging.');"
+          node -e "const p=require('./app/package.json'),l=require('./app/package-lock.json'),tag=process.env.RELEASE_TAG,build=p.screenshBuild??1,key=require('./app/main/update-identity.cjs').updateKey({version:p.version,build}),expected=build>1?'hotfix-'+key:p.version;if((tag!==expected&&(build>1||tag!=='v'+expected))||l.version!==p.version||l.packages[''].version!==p.version)throw Error('Release tag does not match the packaged version and build.');"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "hotfix=$($env:RELEASE_TAG.StartsWith('hotfix-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           $skipTests = ('${{ inputs.skip_tests }}' -eq 'true') -or ((git log -1 --format=%B) -match '\[skip runtime tests\]')
           "skip_tests=$($skipTests.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
@@ -80,11 +83,18 @@ jobs:
       - name: Verify release files and packaged runtime
         run: node app/scripts/check-installer.cjs ${{ steps.version.outputs.skip_tests == 'true' && '--files-only' || '' }}
 
+      - name: Publish hotfix and promote index
+        if: steps.version.outputs.hotfix == 'true'
+        shell: pwsh
+        run: ./app/scripts/publish-hotfix.ps1
+
       - name: Package server deployment files
+        if: steps.version.outputs.hotfix == 'false'
         shell: pwsh
         run: ./app/scripts/package-server.ps1
 
       - name: Publish GitHub Release
+        if: steps.version.outputs.hotfix == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}

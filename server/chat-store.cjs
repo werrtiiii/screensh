@@ -134,9 +134,11 @@ function createChatStore({directory = null, now = Date.now} = {}) {
       for(const id of ids)cancelUpload(id);gc();return {message,duplicate:false};
     },
     find(id){return state.messages.find(item=>item.id===id)||state.authors.find(item=>item.id===id);},
-    recall(id,actorId,moderate=false){const message=api.find(id);if(!message){if(state.recalled.some(item=>item.id===id))return {id};throw Error('消息已不存在');}
-      if(message.authorId===actorId){if(now()-message.time>120000)throw Error('只能撤回两分钟内的消息');}
-      else if(!moderate)throw Error('只能撤回自己或权限更低成员的消息');
+    recall(id,actorId,{moderate=false,isHost=false}={}){const message=api.find(id);if(!message){if(state.recalled.some(item=>item.id===id))return {id};throw Error('消息已不存在');}
+      if(!isHost){
+        if(message.authorId===actorId){if(now()-message.time>120000)throw Error('只能撤回两分钟内的消息');}
+        else if(!moderate)throw Error('只能撤回自己或权限更低成员的消息');
+      }
       save({...state,messages:state.messages.filter(item=>item.id!==id),authors:state.authors.filter(item=>item.id!==id),recalled:[...state.recalled,{id,time:now()}]});gc();return {id};},
     attachment(id,index){prune();const message=api.find(id),item=index===undefined?attachments(message||{}).find(item=>item.kind==='file'):Number.isInteger(index)&&index>=0?attachments(message||{})[index]:null;if(item?.kind!=='file')throw Error('文件已过期或不存在');
       const result={name:item.name,...(directory?{path:mediaFile(item.ref)}:{bytes:media.get(item.ref)})};

@@ -24,7 +24,7 @@ import {
   openScreenPicker,
 } from './media.js';
 // --- 成员列表 + 卡片网格 ---
-const channelIconMarkup = icon => `<span class="channel-icon" aria-hidden="true"><span class="channel-default"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M16.5 7.5a6.36 6.36 0 1 0 0 9"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg></span>${icon ? `<img src="${escapeHtml(icon)}" alt="" onerror="this.remove()" />` : ''}</span>`;
+const channelIconMarkup = icon => `<span class="channel-icon" aria-hidden="true"><span class="channel-default"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"><path d="M3.5 10.5v3 M7 7.5v9 M10.5 4.5v15 M14 8v8 M17.5 6v12 M21 10v4"/></svg></span>${icon ? `<img src="${escapeHtml(icon)}" alt="" onerror="this.remove()" />` : ''}</span>`;
 export function renderCurrentChannel(channel) {
   $('#currentChannelIcon').innerHTML = channel ? channelIconMarkup(channel.icon) : '';
   $('#channelNameDisplay').textContent = channel?.name || '';

@@ -170,6 +170,21 @@ test('all channels can be renamed by managers, persist names, and main remains u
   assert.equal(restored.channels[0].name,'大厅');assert.equal(restored.channels.find(c=>c.id===channel.id).name,'娱乐');
 });
 
+test('active screen shares advertise the publisher audio choice and default to unknown for legacy clients', async t => {
+  const f=await fixture(t),host=await f.client(),viewer=await f.client();
+  await request(host,'join-server',{userName:'Publisher',virtualIp:'10.144.15.1',identity:identity()});
+  await request(viewer,'join-server',{userName:'Viewer',virtualIp:'10.144.15.2',identity:identity()});
+  for(const [payload,shareAudio] of [[{shareAudio:false},false],[{shareAudio:true},true],[{},null],[{shareAudio:'false'},null]]) {
+    assert.equal((await request(host,'start-sharing',payload)).ok,true);
+    const snapshot=await request(viewer,'switch-channel',{channelId:'main'});
+    assert.equal(snapshot.users.find(user=>user.socketId===host.id).shareAudio,shareAudio);
+  }
+  await request(host,'start-sharing',{shareAudio:false});
+  await request(host,'stop-sharing');
+  const snapshot=await request(viewer,'switch-channel',{channelId:'main'});
+  assert.equal(snapshot.users.find(user=>user.socketId===host.id).shareAudio,null);
+});
+
 test('screen network feedback only reaches the active same-channel sharer and is validated/throttled', async t => {
   const f=await fixture(t),host=await f.client(),viewer=await f.client(),outside=await f.client();
   for(const [i,client]of[host,viewer,outside].entries())await request(client,'join-server',{userName:'Feedback'+i,virtualIp:'10.144.15.'+(i+1),identity:identity()});

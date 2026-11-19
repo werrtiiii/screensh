@@ -2,7 +2,10 @@ const fs=require('node:fs'),path=require('node:path'),{randomUUID}=require('node
 function createInstallerLauncher({spawnProcess=spawn,timeoutMs=15000,pollMs=80,stopTimeoutMs=2000}={}){
 return async function launchInstaller({installer,sha512,version,exe,theme='light',directory,parentPid=process.pid}){
   const root=path.dirname(exe),pending=path.join(root,'data/updates/pending');
-  if(path.dirname(path.resolve(installer))!==path.resolve(pending)||![`ScreenSh-${version}-Setup.exe`,`ScreenSh-${version}-Update.zip`,`ScreenSh-${version}-Update.json`].includes(path.basename(installer))||!/^[A-Za-z0-9+/]{86}==$/.test(sha512)||!/^\d+\.\d+\.\d+$/.test(version))throw Error('更新安装信息无效');
+  const identity=require('./update-identity.cjs').parseUpdateKey(version);
+  const names=[`ScreenSh-${version}-Update.zip`,`ScreenSh-${version}-Update.json`];
+  if(identity?.build===1)names.push(`ScreenSh-${version}-Setup.exe`);
+  if(!identity||path.dirname(path.resolve(installer))!==path.resolve(pending)||!names.includes(path.basename(installer))||!/^[A-Za-z0-9+/]{86}==$/.test(sha512))throw Error('更新安装信息无效');
   let child,exited=false,spawnFailed=false,ready;
   try{
   const jobDir=path.join(directory,'install-'+randomUUID());fs.mkdirSync(jobDir,{recursive:true});

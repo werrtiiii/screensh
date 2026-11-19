@@ -29,3 +29,14 @@ test('only a matching version in an applied transaction can confirm successful s
  confirmPortableStartup(root,'8.0.0');assert.equal(fs.existsSync(path.join(dir,'confirmed')),false);
  confirmPortableStartup(root,'9.0.0');assert.equal(fs.readFileSync(path.join(dir,'confirmed'),'utf8'),'9.0.0');
 });
+test('only a higher build is offered within the same version and old builds cannot confirm it',async t=>{
+ const updater={currentVersion:{version:'9.0.0'},currentBuild:2,isUpdateSupported:async()=>true};
+ const available=build=>PortableUpdater.prototype.isUpdateAvailable.call(updater,{version:'9.0.0',build});
+ assert.equal(await available(3),true);assert.equal(await available(2),false);
+ updater.isUpdateSupported=async()=>false;assert.equal(await available(3),false);
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'build-confirm-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const dir=path.join(root,'data/updates/transactions/12345678-1234-1234-1234-123456789abc');fs.mkdirSync(dir,{recursive:true});
+ fs.writeFileSync(path.join(dir,'journal.json'),JSON.stringify({root,version:'9.0.0-b3',phase:'applied'}));
+ confirmPortableStartup(root,'9.0.0-b2');assert.equal(fs.existsSync(path.join(dir,'confirmed')),false);
+ confirmPortableStartup(root,'9.0.0-b3');assert.equal(fs.readFileSync(path.join(dir,'confirmed'),'utf8'),'9.0.0-b3');
+});

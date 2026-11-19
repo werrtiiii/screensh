@@ -19,3 +19,26 @@ test('cancel pending startup and start again', async () => {
   await p.start(process.execPath, ['-e', 'console.log("READY");setInterval(()=>{},1000)'], { ready: text => text.includes('READY') });
   assert.ok(p.child); await p.stop(); assert.equal(p.child, null);
 });
+test('async probes must finish successfully and never overlap', async () => {
+  const p = new ManagedProcess('async probe');
+  let calls = 0, finishFirstProbe, firstProbeStarted;
+  const first = new Promise(resolve => { firstProbeStarted = resolve; });
+  const started = p.start(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+    probe: () => {
+      if (++calls > 1) return true;
+      return new Promise(resolve => { finishFirstProbe = resolve; firstProbeStarted(); });
+    },
+  });
+  try {
+    await Promise.race([first, started.then(() => assert.fail('startup resolved before probing'))]);
+    const result = await Promise.race([started.then(() => 'started'), new Promise(resolve => setTimeout(resolve, 250, 'pending'))]);
+    assert.equal(result, 'pending');
+    assert.equal(calls, 1);
+    finishFirstProbe(false);
+    await started;
+    assert.equal(calls, 2);
+  } finally {
+    finishFirstProbe?.(false);
+    await p.stop();
+  }
+});

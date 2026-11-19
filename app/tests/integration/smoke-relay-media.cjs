@@ -55,7 +55,8 @@ app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,med
       const pixels=randomBytes(256*144*3),header=Buffer.alloc(54);header.write('BM');header.writeUInt32LE(54+pixels.length,2);header.writeUInt32LE(54,10);header.writeUInt32LE(40,14);header.writeInt32LE(256,18);header.writeInt32LE(144,22);header.writeUInt16LE(1,26);header.writeUInt16LE(24,28);fs.mkdirSync(path.join(directory,'obs'),{recursive:true});fs.writeFileSync(path.join(directory,'obs/synthetic.bmp'),Buffer.concat([header,pixels]));
     }
     assert.ok(Array.isArray(await obs.sources([])),'native source enumeration runs in the worker');
-    await obs.start({sourceType:'synthetic',resolution:process.env.SCREENSH_TEST_RESOLUTION||'320x180',frameRate:30,maxBitrate:5000,audioBitrate:64,videoEncoder:process.env.SCREENSH_TEST_ENCODER||'x264',shareAudio:false});
+    const frameRate=Number(process.env.SCREENSH_TEST_FPS)||30;
+    await obs.start({sourceType:'synthetic',resolution:process.env.SCREENSH_TEST_RESOLUTION||'320x180',frameRate,maxBitrate:Number(process.env.SCREENSH_TEST_BITRATE)||5000,audioBitrate:64,videoEncoder:process.env.SCREENSH_TEST_ENCODER||'x264',shareAudio:false});
     await request(owner,'start-sharing',{relayPath:lease.path});const view=await request(process.env.SCREENSH_TEST_SELF==='true'?owner:viewer,'get-relay-view',{target:owner.id});
     front=dgram.createSocket('udp4');flow=dgram.createSocket('udp4');let browser;
     front.on('message',(bytes,remote)=>{browser=remote;flow.send(bytes,udpPort,bindHost);});flow.on('message',bytes=>{if(browser)front.send(bytes,browser.port,browser.address);});
@@ -63,13 +64,30 @@ app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,med
     const preload=path.join(directory,'network-preload.cjs');fs.writeFileSync(preload,'const {contextBridge,ipcRenderer}=require("electron");contextBridge.exposeInMainWorld("electronAPI",Object.fromEntries(["openTunnelScope","forwardTunnelPort","exposeTunnelPort","closeTunnelScope"].map(key=>[key,(...args)=>ipcRenderer.invoke(key,...args)])));');
     win=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false,...(realNetwork?{preload}:{})}});await win.loadFile(path.join(root,'renderer/index.html'));
     const tunnel=publicRelay?'null':realNetwork?`(await import('./media-tunnel.mjs')).createMediaTunnel('${testHost}',true)`:`{http:async()=>({host:'${bindHost}',port:${httpPort}}),localDescription:async d=>d,localCandidate:async c=>c,remoteDescription:async d=>({...d,sdp:d.sdp.replaceAll('${testHost} ${udpPort}','${physical} ${browserPort}')}),close:()=>{}}`;
-    await win.webContents.executeJavaScript(`(async()=>{const {WhepSession}=await import('./whep.mjs');window.relayTestError='';window.relayTestVideo=document.createElement('video');relayTestVideo.muted=true;relayTestVideo.autoplay=true;document.body.append(relayTestVideo);window.relaySession=new WhepSession('http://${testHost}:${httpPort}/${view.path}/whep',{},event=>{relayTestVideo.srcObject??=new MediaStream();relayTestVideo.srcObject.addTrack(event.track);void relayTestVideo.play();},error=>{relayTestError=error.message;},{getToken:async()=>${JSON.stringify(view.token)},tunnel:${tunnel},virtualIp:'10.144.0.2'});await relaySession.start();})()`,true);
+    const connectViewer=videoOnly=>win.webContents.executeJavaScript(`(async()=>{const {WhepSession}=await import('./whep.mjs');window.relayTestError='';window.relayTestVideo=document.createElement('video');relayTestVideo.muted=true;relayTestVideo.autoplay=true;document.body.append(relayTestVideo);window.relaySession=new WhepSession('http://${testHost}:${httpPort}/${view.path}/whep',{},event=>{relayTestVideo.srcObject??=new MediaStream();relayTestVideo.srcObject.addTrack(event.track);void relayTestVideo.play();},error=>{relayTestError=error.message;},{videoOnly:${videoOnly},getToken:async()=>${JSON.stringify(view.token)},tunnel:${tunnel},virtualIp:'10.144.0.2'});await relaySession.start();})()`,true);
+    await connectViewer(false);
     const deadline=Date.now()+15000;let frames=0;while(Date.now()<deadline){const result=await win.webContents.executeJavaScript(`({error:relayTestError,frames:relayTestVideo.getVideoPlaybackQuality().totalVideoFrames})`);if(result.error)throw Error(result.error);frames=result.frames;if(frames>3)break;await new Promise(r=>setTimeout(r,100));}assert.ok(frames>3,'viewer decodes real relayed video');
     if(realNetwork||process.env.SCREENSH_TEST_SUSTAINED==='true'){
       const duration=Math.min(30000,Number(process.env.SCREENSH_TEST_DURATION)||8000);await new Promise(resolve=>setTimeout(resolve,duration));
       const stats=await win.webContents.executeJavaScript(`(async()=>{const rows=[...(await relaySession.pc.getStats()).values()];const v=rows.find(r=>r.type==='inbound-rtp'&&r.kind==='video');return {frames:v?.framesDecoded,received:v?.packetsReceived,lost:v?.packetsLost,freezes:v?.totalFreezesDuration,error:relayTestError};})()`);
-      console.log(realNetwork?'REAL_EASYTIER_VIDEO_STATS':'RELAY_VIDEO_STATS',JSON.stringify(stats));assert.equal(stats.error,'');assert.ok(stats.frames>=duration/1000*22.5,'sustained relayed video decoding');assert.ok(stats.lost<=3,'receiver RTP loss budget');
+      console.log(realNetwork?'REAL_EASYTIER_VIDEO_STATS':'RELAY_VIDEO_STATS',JSON.stringify(stats));assert.equal(stats.error,'');assert.ok(stats.frames>=duration/1000*frameRate*0.75,'sustained relayed video decoding');assert.ok(stats.lost<=3,'receiver RTP loss budget');
       assert.ok(!/\d+ RTP packets lost|invalid FU-A/.test(logs),'publisher RTP must arrive without the reproduced loss');
+    }
+    if(process.env.SCREENSH_TEST_COMPARE_BUFFERS==='true'){
+      const sample=()=>win.webContents.executeJavaScript(`(async()=>{
+        const {sampleVideoStats}=await import('./video-stats.mjs');
+        const first=sampleVideoStats(await relaySession.pc.getStats());
+        await new Promise(resolve=>setTimeout(resolve,2000));
+        const result=sampleVideoStats(await relaySession.pc.getStats(),first.snapshot);
+        return {tracks:relaySession.pc.getReceivers().map(receiver=>receiver.track.kind).sort(),frames:result.snapshot?.framesDecoded,rows:Object.fromEntries(result.rows)};
+      })()`);
+      await new Promise(resolve=>setTimeout(resolve,10000));const withAudio=await sample();
+      await win.webContents.executeJavaScript('relaySession.close().then(()=>relayTestVideo.remove())');
+      await connectViewer(true);await new Promise(resolve=>setTimeout(resolve,10000));const videoOnly=await sample();
+      const select=({rows,frames,tracks})=>({frames,tracks,...Object.fromEntries(['解码帧率','接收缓冲耗时','接收目标缓冲','视频最低缓冲','音频接收缓冲','音画播放时间差','区间丢包率'].filter(key=>key in rows).map(key=>[key,rows[key]]))});
+      console.log('RELAY_BUFFER_COMPARISON',JSON.stringify({withAudio:select(withAudio),videoOnly:select(videoOnly)}));
+      assert.deepEqual(withAudio.tracks,['audio','video']);assert.deepEqual(videoOnly.tracks,['video']);
+      assert.ok(withAudio.frames>frameRate*5&&videoOnly.frames>frameRate*5,'both viewer paths continuously decode frames');
     }
     if(process.env.SCREENSH_TEST_SELF!=='true'){
       const channel=(await request(owner,'create-channel',{name:'Other'})).channel.id;await request(viewer,'switch-channel',{channelId:channel});

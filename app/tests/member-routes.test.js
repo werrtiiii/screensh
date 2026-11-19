@@ -26,3 +26,14 @@ test('route queries target the owned portal and instance, coalesce reads and dis
   context={portal:'127.0.0.1:23457',instance:'screensh-next'};const failed=reader.read();done(Error('timeout'));assert.equal((await failed).available,false);
   now=6000;const malformed=reader.read();done(null,'not json');assert.equal((await malformed).available,false);
 });
+test('startup route checks retry immediately after an unavailable or empty route table', async () => {
+  const context = { portal: '127.0.0.1:23456', instance: 'screensh-starting' };
+  const replies = [[Error('not listening')], [null, '[]'], [null, output]];
+  const reader = createMemberRoutes({
+    exe: 'easytier-cli.exe', getContext: () => context, now: () => 0, cacheMs: 0,
+    execute: (_exe, _args, _options, callback) => queueMicrotask(() => callback(...replies.shift()))
+  });
+  assert.equal((await reader.read()).available, false);
+  assert.deepEqual((await reader.read()).rows, []);
+  assert.equal((await reader.read()).rows[0].ip, '10.144.1.1');
+});

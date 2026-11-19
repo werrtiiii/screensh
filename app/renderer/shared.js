@@ -36,6 +36,7 @@ export const state = {
   useServerRelay: false,
   videoRelay: null,
   activeShareRelay: null,
+  activeShareAudio: null,
   pendingShareRelay: false,
   frameRate: 60,
   maxBitrate: 0,

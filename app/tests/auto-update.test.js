@@ -29,6 +29,19 @@ test('failed fallback download resets full-installer mode and does not acknowled
  const f=fixture(t);await f.updates.check();f.client.installerPath='ScreenSh-9.0.0-Update.zip';f.client.downloadUpdate=async()=>{throw Error('offline');};
  await assert.rejects(f.updates.prepareInstallerFallback('9.0.0'),/下载更新失败/);assert.equal(f.client.forceFullInstaller,false);assert.equal(f.updates.get().status,'error');
 });
+test('same-version receipt and handoff match the selected build and cannot fall back to the old EXE',async t=>{
+  const f=fixture(t,{currentVersion:'9.0.0',currentBuild:2});let checkedBuild=3;
+  f.client.checkForUpdates=async()=>({isUpdateAvailable:true,updateInfo:{version:'9.0.0',build:checkedBuild}});
+  f.args.pendingUpdates.restore=async(_client,installed)=>{assert.equal(installed,'9.0.0-b2');return {version:'9.0.0-b3'};};
+  f.client.installerPath='ScreenSh-9.0.0-b3-Update.zip';f.client.downloadedUpdateHelper={downloadedFileInfo:{sha512:'A'.repeat(86)+'=='}};
+  f.args.pendingUpdates.markInstallAttempt=(_client,installed)=>assert.equal(installed,'9.0.0-b2');
+  assert.deepEqual(await f.updates.prepareUpdate(),{install:true});
+  assert.equal(f.updates.get().build,3);assert.equal(f.counts.download,0);
+  assert.equal(f.updates.beginInstall().version,'9.0.0-b3');
+  await assert.rejects(f.updates.prepareInstallerFallback('9.0.0-b3'),/仅提供免安装更新/);
+  checkedBuild=4;
+  await f.updates.check();assert.equal(f.updates.get().status,'available');assert.equal(f.updates.get().build,4);
+});
 test('closing during metadata check prevents download and leaves no installation failure',async t=>{
   const f=fixture(t);let finish;
   f.client.checkForUpdates=()=>new Promise(resolve=>{finish=resolve;});

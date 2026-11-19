@@ -17,17 +17,17 @@ function parsePeerRows(output){
     return [{ip:row.ipv4,route,protocol:local?'—':protocol,...(route==='p2p'&&latency>0&&Number.isFinite(latency)?{rttMs:latency}:{})}];
   });
 }
-function createMemberRoutes({exe,getContext,execute=execFile,now=Date.now}){
+function createMemberRoutes({exe,getContext,execute=execFile,now=Date.now,cacheMs=2000}){
   let cached=null,inflight=null;
   return {read(){
     const context=getContext();
     if(!context)return Promise.resolve({available:false,rows:[]});
-    if(cached?.context===context&&now()-cached.time<2000)return Promise.resolve(cached.value);
+    if(cached?.context===context&&now()-cached.time<cacheMs)return Promise.resolve(cached.value);
     if(inflight?.context===context)return inflight.promise;
     const promise=new Promise(resolve=>execute(exe,['-p',context.portal,'-n',context.instance,'-o','json','peer','list'],{windowsHide:true,encoding:'utf8',timeout:2500,maxBuffer:2*1024*1024},(error,stdout)=>{
       let value={available:false,rows:[]};
       if(!error&&getContext()===context){try{value={available:true,rows:parsePeerRows(stdout)};}catch{}}
-      if(getContext()===context)cached={context,time:now(),value};
+      if(cacheMs>0&&getContext()===context)cached={context,time:now(),value};
       resolve(value);
     }));
     inflight={context,promise};void promise.finally(()=>{if(inflight?.promise===promise)inflight=null;});return promise;

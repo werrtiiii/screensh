@@ -2,11 +2,12 @@ const { NsisUpdater } = require('electron-updater');
 const fs=require('node:fs'),path=require('node:path');
 const {CancellationError}=require('builder-util-runtime');
 const {prepareInWorker,verifyInWorker,MAX_MANIFEST,noLinks}=require('./update-blocks.cjs');
+const {updateKey,compareUpdateKeys}=require('./update-identity.cjs');
 
 function portableArtifact(info) {
   const file = info?.portable;
   if (!file) return null; // Transitional releases may still contain only setup.exe.
-  if (file.url !== `ScreenSh-${info.version}-Update.zip` || !/^\d+\.\d+\.\d+$/.test(info.version) ||
+  if (file.url !== `ScreenSh-${updateKey(info)}-Update.zip` ||
       !Number.isSafeInteger(file.size) || file.size <= 0 || !/^[A-Za-z0-9+/]{86}==$/.test(file.sha512 || '')) {
     throw Error('免安装更新包清单无效');
   }
@@ -15,7 +16,7 @@ function portableArtifact(info) {
 
 function incrementalArtifact(info){
   const file=info?.incremental;if(!file)return null;
-  if(file.url!==`ScreenSh-${info.version}-Update.json`||!/^\d+\.\d+\.\d+$/.test(info.version)||!Number.isSafeInteger(file.size)||file.size<=0||file.size>MAX_MANIFEST||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512||''))throw Error('差分更新清单无效');
+  if(file.url!==`ScreenSh-${updateKey(info)}-Update.json`||!Number.isSafeInteger(file.size)||file.size<=0||file.size>MAX_MANIFEST||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512||''))throw Error('差分更新清单无效');
   return file;
 }
 async function fetchUpdateRange(url,offset,length,packSize,token,fetchFile){
@@ -32,9 +33,18 @@ async function fetchUpdateRange(url,offset,length,packSize,token,fetchFile){
 }
 class PortableUpdater extends NsisUpdater {
   constructor(...args) { super(...args); this.usePortableUpdates = true;this.verifyUpdateCodeSignature=require('./windows-signature.cjs').createNativeSignatureVerifier(); }
+  async isUpdateAvailable(info) {
+    if (info?.build > 1 && info.version === this.currentVersion.version) {
+      const installed = updateKey({version:info.version,build:this.currentBuild});
+      return compareUpdateKeys(updateKey(info),installed)>0 && await this.isUpdateSupported(info);
+    }
+    return super.isUpdateAvailable(info);
+  }
   async doDownloadUpdate(options) {
     const { info, provider } = options.updateInfoAndProvider;
+    const target = updateKey(info);
     if(this.forceFullInstaller){
+      if(info.build>1)throw Error('此热修仅提供免安装更新，请重试');
       const setup=info.files?.find(file=>file.url===`ScreenSh-${info.version}-Setup.exe`);
       if(!setup||!Number.isSafeInteger(setup.size)||setup.size<=0||!/^[A-Za-z0-9+/]{86}==$/.test(setup.sha512||''))throw Error('完整安装包清单无效');
       return super.doDownloadUpdate({...options,disableDifferentialDownload:true,disableWebInstaller:true,updateInfoAndProvider:{...options.updateInfoAndProvider,info:{...info,files:[setup],packages:undefined}}});
@@ -46,14 +56,14 @@ class PortableUpdater extends NsisUpdater {
       const helper=await this.getOrCreateDownloadHelper(),pending=helper.cacheDirForPendingUpdate,root=path.dirname(process.execPath);
       const cached=path.join(pending,incremental.url);noLinks(pending);
       noLinks(cached);
-      if(fs.existsSync(cached)&&!await verifyInWorker({root,pending,raw:fs.readFileSync(cached),version:info.version}))await helper.clear();
+      if(fs.existsSync(cached)&&!await verifyInWorker({root,pending,raw:fs.readFileSync(cached),version:target}))await helper.clear();
       try{
         const fileInfo=provider.resolveFiles({...info,files:[incremental],packages:undefined})[0];
         return await this.executeDownload({fileExtension:'json',downloadUpdateOptions:options,fileInfo,task:async(destination,downloadOptions)=>{
           await this.httpExecutor.download(fileInfo.url,destination,{...downloadOptions,onProgress:undefined});
           if(fs.statSync(destination).size!==incremental.size)throw Error('Incremental manifest size mismatch');
           const raw=fs.readFileSync(destination),checkCancelled=()=>{if(options.cancellationToken?.cancelled)throw new CancellationError();};
-          await prepareInWorker({root,pending,raw,version:info.version,checkCancelled,
+          await prepareInWorker({root,pending,raw,version:target,checkCancelled,
             onProgress:progress=>this.emit('download-progress',progress),
             fetchRange:(pack,offset,length)=>{
               const packFile=provider.resolveFiles({...info,files:[pack],packages:undefined})[0];

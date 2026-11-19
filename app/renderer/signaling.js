@@ -184,7 +184,7 @@ async function reconnectJoin(deadline, previousChannel) {
   if (previousChannel === null || previousChannel !== 'main' && joined.channels.some(c => c.id === previousChannel)) joined = await request('switch-channel', { channelId: previousChannel });
   if (state.isSharing) {
     if (joined.users.find(u => u.socketId === connection.id)?.channelId !== previousChannel) await stopSharing();
-    else { await request('start-sharing'); joined = await request('switch-channel', { channelId: previousChannel }); }
+    else { await request('start-sharing', {shareAudio:state.activeShareAudio}); joined = await request('switch-channel', { channelId: previousChannel }); }
   }
   check();
   applyServerState(joined, true);

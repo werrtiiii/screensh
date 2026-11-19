@@ -1,4 +1,5 @@
 ﻿# Isolated fixture applications only. Never installs or closes the real client.
+param([switch]$Hotfix)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Add-Type -AssemblyName System.IO.Compression
@@ -7,6 +8,7 @@ $appRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $fixtureRoot=Join-Path $appRoot ('.runtime-probe\portable update '+[Guid]::NewGuid().ToString())
 [void][IO.Directory]::CreateDirectory($fixtureRoot)
 $powershell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$target=if($Hotfix){'9.0.0-b2'}else{'9.0.0'}
 function Assert($condition,$message){if(!$condition){throw $message}}
 function Digest($file,$algorithm,$hex=$false){$h=[Security.Cryptography.HashAlgorithm]::Create($algorithm);$stream=[IO.File]::OpenRead($file);try{$bytes=$h.ComputeHash($stream);if($hex){return ([BitConverter]::ToString($bytes)).Replace('-','').ToLowerInvariant()};return [Convert]::ToBase64String($bytes)}finally{$stream.Dispose();$h.Dispose()}}
 foreach($scenario in @('success','startup-failure','bad-checksum','bad-file-hash','zip-slip','data-overwrite')){
@@ -18,22 +20,22 @@ foreach($scenario in @('success','startup-failure','bad-checksum','bad-file-hash
  [IO.File]::WriteAllText((Join-Path $root 'custom.txt'),'keep-custom-file')
  [IO.File]::WriteAllText((Join-Path $root 'data\profile.json'),'keep-profile')
  $type='Fixture'+[Guid]::NewGuid().ToString('N')
- $confirm=if($scenario -eq 'startup-failure') {''} else {'foreach(var dir in Directory.GetDirectories(Path.Combine(root,"data","updates","transactions"))){if(File.ReadAllText(Path.Combine(dir,"journal.json")).Contains("\"phase\":\"applied\""))File.WriteAllText(Path.Combine(dir,"confirmed"),"9.0.0");}'}
+ $confirm=if($scenario -eq 'startup-failure') {''} else {'foreach(var dir in Directory.GetDirectories(Path.Combine(root,"data","updates","transactions"))){if(File.ReadAllText(Path.Combine(dir,"journal.json")).Contains("\"phase\":\"applied\""))File.WriteAllText(Path.Combine(dir,"confirmed"),"'+$target+'");}'}
  $code='using System;using System.IO;public class '+$type+' { public static void Main(){var root=AppDomain.CurrentDomain.BaseDirectory;'+$confirm+'} }'
  Add-Type -TypeDefinition $code -OutputAssembly (Join-Path $source 'ScreenSh.exe') -OutputType WindowsApplication
  [IO.File]::WriteAllText((Join-Path $source 'resources\app.asar'),'new-resource')
  $files=@(Get-ChildItem -LiteralPath $source -File -Recurse|ForEach-Object {[PSCustomObject]@{path=$_.FullName.Substring($source.Length+1).Replace('\','/');size=$_.Length;sha256=(Digest $_.FullName 'SHA256' $true)}})
  if($scenario -eq 'bad-file-hash'){$files[0].sha256='0'*64}
- $manifest=@{schemaVersion=1;version='9.0.0';files=$files}
+ $manifest=@{schemaVersion=1;version=$target;files=$files}
  if($scenario -eq 'data-overwrite'){$manifest.files+=@{path='data/profile.json';size=1;sha256='0'*64}}
- $archive=Join-Path $pending 'ScreenSh-9.0.0-Update.zip';$zip=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Create)
+ $archive=Join-Path $pending "ScreenSh-$target-Update.zip";$zip=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Create)
  try{
   foreach($file in $files){[void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,(Join-Path $source $file.path),$file.path)}
   $entry=$zip.CreateEntry('update-manifest.json');$w=New-Object IO.StreamWriter($entry.Open());try{$w.Write(($manifest|ConvertTo-Json -Depth 5 -Compress))}finally{$w.Dispose()}
   if($scenario -eq 'zip-slip'){[void]$zip.CreateEntry('../escaped.txt')}
  }finally{$zip.Dispose()}
  $job=Join-Path $fixtureRoot ($scenario+'-job.json');$sha=Digest $archive 'SHA512';if($scenario -eq 'bad-checksum'){$sha='A'*86+'=='}
- @{root=$root;exe=(Join-Path $root 'ScreenSh.exe');installer=$archive;sha512=$sha;version='9.0.0'}|ConvertTo-Json -Compress|Set-Content -LiteralPath $job -Encoding UTF8
+ @{root=$root;exe=(Join-Path $root 'ScreenSh.exe');installer=$archive;sha512=$sha;version=$target}|ConvertTo-Json -Compress|Set-Content -LiteralPath $job -Encoding UTF8
  $native=Start-Process -FilePath (Join-Path $appRoot 'res\screensh-updater.exe') -ArgumentList ('--worker "'+$job+'"') -WindowStyle Hidden -PassThru
  $native.WaitForExit()
  $exit=$native.ExitCode
