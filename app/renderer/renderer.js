@@ -384,27 +384,33 @@ const btnCheckUpdate = $('#btnCheckUpdate');
 const btnDownloadUpdate = $('#btnDownloadUpdate');
 const updateActions = $('#updateActions');
 const autoUpdateCheckbox = $('#autoUpdateCheckbox');
+const repositoryUrl = 'https://github.com/werrtiiii/screensh';
+for (const [selector, url] of [
+  ['#btnOpenGitHubRepo', repositoryUrl],
+  ['#btnOpenGitHubReleases', `${repositoryUrl}/releases`],
+]) {
+  $(selector)?.addEventListener('click', () => {
+    window.electronAPI.openWebLink(url).catch(() => toast('无法打开 GitHub 页面', 'error'));
+  });
+}
 function setUpdateStatus(message, kind = '') {
   updateStatus.textContent = message;
   updateStatus.dataset.kind = kind;
 }
 function showUpdateState(info) {
-  const target = info.build > 1 ? `${info.version} · 构建 ${info.build}` : info.version;
-  const installed = info.currentBuild ? `${info.currentVersion} · 构建 ${info.currentBuild}` : info.currentVersion;
   const busy = ['checking','downloading'].includes(info.status);
   btnCheckUpdate.disabled = busy;
   btnDownloadUpdate.disabled = busy;
   updateActions.classList.toggle('hidden', !(['available','ready'].includes(info.status)||info.installFailed));
   btnDownloadUpdate.textContent = info.status === 'ready' ? '立即安装' : '下载更新';
   if (info.status === 'checking') setUpdateStatus('正在检查…');
-  else if (info.status === 'downloading') {
-    const amount=info.total>0?` · ${(info.transferred/1048576).toFixed(1)} / ${(info.total/1048576).toFixed(1)} MB`:'';
-    setUpdateStatus(`正在${info.downloadMode==='differential'?'差分下载':'下载更新'}… ${Math.round(info.percent || 0)}%${amount}`);
-  }
-  else if (info.status === 'ready') setUpdateStatus(`更新 ${target} 已下载，可点击立即安装`, 'update');
-  else if (info.status === 'available') setUpdateStatus(`发现更新 ${target}`, 'update');
-  else if (info.status === 'current') setUpdateStatus(`已是最新版本（${installed}）`, 'ok');
-  else if (info.status === 'error') setUpdateStatus(info.message, 'error');
+  else if (info.status === 'downloading') setUpdateStatus(`正在下载… ${Math.round(info.percent || 0)}%`);
+  else if (info.status === 'ready') setUpdateStatus('下载完成', 'update');
+  else if (info.status === 'available') setUpdateStatus(info.version ? `发现更新 ${info.version}` : '发现更新', 'update');
+  else if (info.status === 'installing') setUpdateStatus('正在安装…');
+  else if (info.status === 'current') setUpdateStatus(`已是最新版本（${info.currentVersion}）`, 'ok');
+  else if (info.status === 'error') setUpdateStatus(info.message || '更新失败', 'error');
+  else if (info.currentVersion) setUpdateStatus(`当前版本 ${info.currentVersion}`);
 }
 window.electronAPI.onUpdateState?.(showUpdateState);
 window.electronAPI.getUpdateSettings?.().then(info => {
@@ -425,8 +431,8 @@ btnCheckUpdate?.addEventListener('click', async () => {
   try {
     const result = await window.electronAPI.checkForUpdate();
     if (result.development) setUpdateStatus('开发模式不检查更新', 'ok');
-  } catch (error) {
-    setUpdateStatus(error?.message || '检查更新失败', 'error');
+  } catch {
+    if (updateStatus.dataset.kind !== 'error') setUpdateStatus('检查更新失败', 'error');
   } finally {
     btnCheckUpdate.disabled = false;
   }
@@ -434,17 +440,17 @@ btnCheckUpdate?.addEventListener('click', async () => {
 btnDownloadUpdate?.addEventListener('click', async () => {
   btnDownloadUpdate.disabled = true;
   btnCheckUpdate.disabled = true;
-  setUpdateStatus('正在下载更新…');
+  setUpdateStatus('正在下载…');
   try {
     await window.electronAPI.downloadAndInstallUpdate();
-  } catch (error) {
-    setUpdateStatus(error?.message || '无法打开下载页面', 'error');
+  } catch {
+    if (updateStatus.dataset.kind !== 'error') setUpdateStatus('无法开始更新', 'error');
     btnCheckUpdate.disabled = false;
   } finally {
     btnDownloadUpdate.disabled = false;
   }
 });
-window.electronAPI.onUpdateProgress?.(percent => setUpdateStatus(`正在下载更新… ${Math.round(percent)}%`));
+window.electronAPI.onUpdateProgress?.(percent => setUpdateStatus(`正在下载… ${Math.round(percent)}%`));
 
 // ============================================================
 // 窗口控制逻辑 (自定义标题栏)

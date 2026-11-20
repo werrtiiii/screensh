@@ -1,5 +1,13 @@
 import { allowOpusStereo } from './voice-encoding.mjs';
 import { preferVideoReceiveLatency } from './video-latency.mjs';
+
+// Keep a moderate packet budget so NetEq can recover from jitter without
+// letting old share audio build up. Voice/standalone audio keep their policy.
+const liveAudioBuffer = {
+  rtcAudioJitterBufferMaxPackets: 12,
+  rtcAudioJitterBufferFastAccelerate: true,
+  rtcAudioJitterBufferMinDelayMs: 0,
+};
 export class WhepSession {
   constructor(url, configuration, onTrack, onFailure, options = {}) {
     this.url = url; this.controller = new AbortController(); this.closed = false;
@@ -12,7 +20,8 @@ export class WhepSession {
     this.getToken=options.getToken;this.headers={};
     this.tunnel=options.tunnel;this.virtualIp=options.virtualIp;
     this.candidates = []; this.patchChain = Promise.resolve();
-    this.pc = new RTCPeerConnection({ ...configuration, bundlePolicy: 'max-bundle' });
+    const withShareAudio = !this.audioOnly && !this.videoOnly;
+    this.pc = new RTCPeerConnection({ ...(withShareAudio ? liveAudioBuffer : {}), ...configuration, bundlePolicy: 'max-bundle' });
     this.pc.ontrack = event => {if(this.closed)return;if(!this.audioOnly)preferVideoReceiveLatency(event.receiver);onTrack(event);};
     this.pc.onicecandidate = event => {
       if (this.closed || !event.candidate) return;

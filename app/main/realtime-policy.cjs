@@ -5,5 +5,8 @@ function configureRealtimeScheduling(commandLine) {
   const features=new Set((commandLine.getSwitchValue?.('disable-features')||'').split(',').filter(Boolean));
   for(const feature of ['WebRtcHideLocalIpsWithMdns','CalculateNativeWinOcclusion','UseEcoQoSForBackgroundProcess'])features.add(feature);
   commandLine.appendSwitch('disable-features',[...features].join(','));
+  const blinkFeatures=new Set((commandLine.getSwitchValue?.('enable-blink-features')||'').split(',').filter(Boolean));
+  blinkFeatures.add('RtcAudioJitterBufferMaxPackets');
+  commandLine.appendSwitch('enable-blink-features',[...blinkFeatures].join(','));
 }
 module.exports={configureRealtimeScheduling};

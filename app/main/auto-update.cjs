@@ -58,7 +58,7 @@ function createAutoUpdate({file, packaged, currentVersion, currentBuild, getUpda
       } catch (error) {
         if(token.cancelled||error instanceof CancellationError)throw new CancellationError();
         const message = /404|No published versions|latest\.yml|ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(error?.message || '')
-          ? 'GitHub 尚未发布可用安装包，请稍后重试' : '检查更新失败，请确认网络连接后重试';
+          ? '暂无可用更新，请稍后重试' : '检查更新失败，请检查网络';
         publish({status:'error', message}); throw Error(message);
       }
     })().finally(() => { checking = null; });
@@ -71,7 +71,7 @@ function createAutoUpdate({file, packaged, currentVersion, currentBuild, getUpda
     if (downloading) return downloading;
     downloading = (async () => {
       try { publish({status:'downloading', percent:0,total:0,transferred:0,downloadMode:null}); const client=updater();client.updateCancellationToken=downloadToken=token;cancelled(token);await (downloadSource?downloadSource.download(client,token):client.downloadUpdate(token));cancelled(token); return true; }
-      catch(error) { if(token.cancelled||error instanceof CancellationError)throw new CancellationError();const message = '下载更新失败，请确认网络连接后重试'; publish({status:'error', message}); throw Error(message); }
+      catch(error) { if(token.cancelled||error instanceof CancellationError)throw new CancellationError();const message = '下载失败，请检查网络'; publish({status:'error', message}); throw Error(message); }
     })().finally(() => { downloading = null;downloadToken=null; });
     return downloading;
   }
@@ -88,7 +88,7 @@ function createAutoUpdate({file, packaged, currentVersion, currentBuild, getUpda
       const info=await check(token);cancelled(token);if(!info.available)return {enter:true};
       const restored=await pendingUpdates.restore(updater(),installed);cancelled(token);
       ready=restored?.version===target;
-      if(ready&&!retry&&pendingUpdates.wasInstallAttempted?.(updater())){publish({status:'error',installFailed:true});throw Error('上次安装未完成。请点击重试，或进入当前版本。');}
+      if(ready&&!retry&&pendingUpdates.wasInstallAttempted?.(updater())){publish({status:'error',installFailed:true});throw Error('上次安装未完成');}
       if(!ready)await download(token);cancelled(token);
       publish({status:'ready',...showTarget(target),installFailed:false});return {install:true};
     })().finally(()=>{preparing=null;preparationToken=null;});
@@ -120,7 +120,7 @@ function createAutoUpdate({file, packaged, currentVersion, currentBuild, getUpda
         client.quitAndInstall(isSilent,isForceRunAfter);
         if(!client.quitAndInstallCalled)throw Error('无法启动更新安装器，请手动覆盖安装');
         return true;
-      }catch(error){installLog({stage:'launch-rejected',code:String(error.code||'unknown')});publish({status:'error',installFailed:true,message:'无法启动更新安装器，请在系统设置中重试更新，或下载安装包覆盖安装。'});return false;}
+      }catch(error){installLog({stage:'launch-rejected',code:String(error.code||'unknown')});publish({status:'error',installFailed:true,message:'无法启动安装，请重试或手动安装。'});return false;}
     },
     set(value) {
       if (typeof value !== 'boolean') throw Error('无效的自动更新设置');

@@ -807,7 +807,7 @@ input.sound-volume-slider {
 .update-status[data-kind="ok"] { color: var(--green); }
 .update-status[data-kind="update"] { color: var(--primary); font-weight: 600; }
 .update-status[data-kind="error"] { color: var(--danger); }
-.update-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.update-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .video-header { flex-wrap: wrap; }
 .viewer-names { font-size: 13px; color: var(--text2); overflow-wrap: anywhere; max-width: 100%; }
 .image-setting-actions { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -34,7 +34,7 @@ export async function initUpdateAcceleration({root=document,api=window.electronA
   input.addEventListener('input',()=>{rows.get('custom').result.textContent='';status.textContent='修改地址后点击保存';});
   test.addEventListener('click',async()=>{
     const details=find('updateAccelerationDetails');if(details)details.open=true;
-    if(testing)return;testing=true;refresh();test.textContent='测试中…';status.textContent='正在测试安装包下载连通性…';
+    if(testing)return;testing=true;refresh();test.textContent='测试中…';status.textContent='';
     for(const row of rows.values()){row.result.textContent='';delete row.result.dataset.available;}
     const testedCustom=input.value.trim();
     try{
@@ -42,7 +42,6 @@ export async function initUpdateAcceleration({root=document,api=window.electronA
       for(const result of results){
         const row=rows.get(result.source)||((input.value.trim()===testedCustom)?rows.get('custom'):null);if(!row)continue;
         row.result.textContent=result.available?`可用 · ${result.latency} ms`:'不可用';row.result.dataset.available=String(result.available);
-        row.result.title=result.available&&!result.range?'连通正常，但未确认分段下载支持，可能使用完整下载':'';
       }
       status.textContent='';
     }catch(error){status.textContent=error.message||'连通性测试失败';notify(status.textContent,'error');}

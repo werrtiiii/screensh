@@ -38,6 +38,9 @@ export function sampleVideoStats(report, previous, diagnostics) {
   const targetBuffer = meanBufferMs(video, previous, 'jitterBufferTargetDelay');
   const minimumBuffer = meanBufferMs(video, previous, 'jitterBufferMinimumDelay');
   const audioBuffer = meanBufferMs(audio, previous?.audio, 'jitterBufferDelay');
+  const audioTarget = meanBufferMs(audio, previous?.audio, 'jitterBufferTargetDelay');
+  const audioMinimum = meanBufferMs(audio, previous?.audio, 'jitterBufferMinimumDelay');
+  const audioDiscarded = counterDelta(audio, previous?.audio, 'packetsDiscarded');
   const avOffset = finite(audio?.estimatedPlayoutTimestamp) && finite(video.estimatedPlayoutTimestamp)
     ? audio.estimatedPlayoutTimestamp - video.estimatedPlayoutTimestamp : null;
   return { snapshot: { ...video, audio: audio && { ...audio } }, rows: [
@@ -49,7 +52,13 @@ export function sampleVideoStats(report, previous, diagnostics) {
     ['接收缓冲耗时', delta('jitterBufferEmittedCount') === 0 ? '本秒无输出帧' : format(buffer, 'ms'), delta('jitterBufferEmittedCount') === 0 || buffer >= 100],
     ['接收目标缓冲', format(targetBuffer, 'ms')],
     ['视频最低缓冲', format(minimumBuffer, 'ms')],
-    ...(audio ? [['音频接收缓冲', format(audioBuffer, 'ms')], ['音画播放时间差', format(avOffset, 'ms')]] : []),
+    ...(audio ? [
+      ['音频接收缓冲', format(audioBuffer, 'ms')],
+      ['音频目标缓冲', format(audioTarget, 'ms')],
+      ['音频最低缓冲', format(audioMinimum, 'ms')],
+      ['音频缓冲丢弃（区间）', format(audioDiscarded, '包', 0)],
+      ['音画播放时间差', format(avOffset, 'ms')],
+    ] : []),
     ['平均解码耗时', stalled ? '本秒无解码帧' : format(decode, 'ms'), stalled || decode >= 33],
     ['网络抖动', format(jitter, 'ms'), jitter >= 30],
     ['区间丢包率', format(loss, '%'), loss >= 2],

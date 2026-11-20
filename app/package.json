@@ -1,7 +1,7 @@
 {
   "name": "screensh",
   "version": "1.5.9",
-  "screenshBuild": 1,
+  "screenshBuild": 2,
   "description": "P2P Screen Sharing Application",
   "main": "main.js",
   "scripts": {

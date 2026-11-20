@@ -8,9 +8,9 @@ const root=path.resolve(__dirname,'../..'),data=path.join(root,'.runtime-probe',
 app.disableHardwareAcceleration();app.setPath('userData',data);app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
   let win,releaseDownload;const client=new EventEmitter();let checks=0,downloads=0;
-  client.checkForUpdates=async()=>{checks++;return {isUpdateAvailable:true,updateInfo:{version:'9.0.0',files:[{url:'ScreenSh-9.0.0-Setup.exe',size:200*1048576}]}};};
-  client.downloadUpdate=async()=>{downloads++;client.emit('download-progress',{percent:50,total:4*1048576,transferred:2*1048576});await new Promise(resolve=>{releaseDownload=resolve;});client.emit('update-downloaded',{version:'9.0.0'});};
-  const updates=createAutoUpdate({file:path.join(data,'updates.json'),packaged:true,currentVersion:'1.5.2',getUpdater:()=>client,pendingUpdates:{remember(){},restore:async()=>null},send:state=>win.webContents.send('update-state',state)});
+  client.checkForUpdates=async()=>{checks++;return {isUpdateAvailable:true,updateInfo:{version:'1.5.9',build:2,files:[{url:'ScreenSh-1.5.9-Setup.exe',size:200*1048576}]}};};
+  client.downloadUpdate=async()=>{downloads++;client.emit('download-progress',{percent:50,total:4*1048576,transferred:2*1048576});await new Promise(resolve=>{releaseDownload=resolve;});client.emit('update-downloaded',{version:'1.5.9',build:2});};
+  const updates=createAutoUpdate({file:path.join(data,'updates.json'),packaged:true,currentVersion:'1.5.9',currentBuild:1,getUpdater:()=>client,pendingUpdates:{remember(){},restore:async()=>null},send:state=>win.webContents.send('update-state',state)});
   ipcMain.handle('get-update-settings',()=>updates.get());ipcMain.handle('set-auto-update',(_e,value)=>updates.set(value));
   ipcMain.handle('confirm-startup',()=>null);
   ipcMain.handle('check-for-update',()=>updates.check());
@@ -31,18 +31,18 @@ app.whenReady().then(async()=>{
     assert.equal(await run(`document.querySelector('#autoUpdateCheckbox').checked`),true);
     await run(`document.querySelector('#autoUpdateCheckbox').click()`);
     await wait(`!document.querySelector('#autoUpdateCheckbox').disabled`);assert.equal(updates.get().enabled,false);assert.equal(checks,0);
-    await run(`document.querySelector('#btnCheckUpdate').click()`);await wait(`document.querySelector('#updateStatus').textContent.includes('9.0.0')`);
+    await wait(`document.querySelector('#updateStatus').textContent === '当前版本 1.5.9'`);
+    await run(`document.querySelector('#btnCheckUpdate').click()`);await wait(`document.querySelector('#updateStatus').textContent === '发现更新 1.5.9'`);
     assert.equal(checks,1);assert.equal(downloads,0);
     await win.reload();await wait(`!document.querySelector('#autoUpdateCheckbox').checked`);
     await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`!document.querySelector('#autoUpdateCheckbox').disabled`);assert.equal(downloads,0);
-    void updates.download();await wait(`document.querySelector('#updateStatus').textContent.includes('差分下载')`);
-    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('2.0 / 4.0 MB'));
-    releaseDownload();await wait(`document.querySelector('#updateStatus').textContent.includes('已下载')`);
+    void updates.download();await wait(`document.querySelector('#updateStatus').textContent === '正在下载… 50%'`);
+    releaseDownload();await wait(`document.querySelector('#updateStatus').textContent === '下载完成'`);
     assert.equal(downloads,1);assert.equal(client.autoInstallOnAppQuit,false);
-    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('可点击立即安装'));
+    assert.equal(await run(`document.querySelector('#updateStatus').textContent`),'下载完成');
     assert.equal(await run(`document.querySelector('#btnDownloadUpdate').textContent`),'立即安装');
     await run(`document.querySelector('#autoUpdateCheckbox').click()`);await wait(`!document.querySelector('#autoUpdateCheckbox').disabled`);
-    assert.ok((await run(`document.querySelector('#updateStatus').textContent`)).includes('可点击立即安装'));
+    assert.equal(await run(`document.querySelector('#updateStatus').textContent`),'下载完成');
     await run(`document.querySelector('#btnSettings').click()`);await new Promise(resolve=>setTimeout(resolve,250));
     await wait(`!document.querySelector('#updateAccelerationEnabled').disabled`);
     assert.equal(await run(`document.querySelector('#updateAccelerationEnabled').checked`),true);
@@ -59,6 +59,8 @@ app.whenReady().then(async()=>{
     assert.equal(await run(`document.querySelector('#updateAccelerationStatus').textContent`),'');
     assert.equal(await run(`document.querySelector('#updateAccelerationEnabled').parentElement.querySelector('.help-tip')`),null);
     assert.equal(await run(`document.querySelectorAll('.update-acceleration-result[data-available="true"]').length`),5);
+    win.webContents.send('update-state',{status:'current',currentVersion:'1.5.9',currentBuild:2});
+    await wait(`document.querySelector('#updateStatus').textContent === '已是最新版本（1.5.9）'`);
     await run(`document.querySelector('#btnSettings').click();document.querySelector('.setting-update').scrollIntoView({block:'start'});`);await new Promise(resolve=>setTimeout(resolve,200));
     fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'settings.png'),(await win.webContents.capturePage()).toPNG());
     console.log('UPDATE_ACCELERATION_UI_OK',JSON.stringify({defaultOn:true,persistentCustom:true,disableBypasses:true,probeResults:true,screenshot:path.join(data,'settings.png')}));

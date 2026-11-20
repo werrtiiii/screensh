@@ -343,14 +343,14 @@
           </div>
           <div class="form-group setting-update">
             <h4 class="settings-group-title">更新</h4>
-            <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="启动时检查并安装更新，再进入软件。关闭后可手动更新；运行期间不下载。">?</span></label>
+            <label class="auto-update-setting"><input id="autoUpdateCheckbox" type="checkbox" role="switch" checked /> 自动更新 <span class="help-tip" data-tooltip="启动时自动更新，关闭后可手动更新。">?</span></label>
             <div id="updateAcceleration" class="update-acceleration">
               <div class="update-acceleration-heading">
                 <label class="auto-update-setting"><input id="updateAccelerationEnabled" type="checkbox" role="switch" checked disabled /> 下载加速</label>
                 <button id="btnTestUpdateAcceleration" type="button" class="btn btn-outline btn-sm" disabled>测试连通性</button>
               </div>
               <details id="updateAccelerationDetails" class="update-acceleration-details">
-                <summary>加速源与高级选项</summary>
+                <summary>加速源</summary>
               <div id="updateAccelerationSources" class="update-acceleration-sources" role="radiogroup" aria-label="GitHub 备用加速源"></div>
               <div id="updateAccelerationCustom" class="update-acceleration-custom hidden">
                 <input id="updateAccelerationCustomUrl" class="form-control" type="url" placeholder="https://你的加速地址" aria-label="自定义 GitHub 加速地址" maxlength="2048" />
@@ -365,6 +365,10 @@
             </div>
             <div id="updateActions" class="update-actions hidden">
               <button id="btnDownloadUpdate" type="button" class="btn btn-primary btn-sm">下载更新</button>
+            </div>
+            <div class="update-actions">
+              <button id="btnOpenGitHubRepo" type="button" class="btn btn-outline btn-sm">GitHub 仓库</button>
+              <button id="btnOpenGitHubReleases" type="button" class="btn btn-outline btn-sm">手动下载</button>
             </div>
           </div>
           <div class="form-group setting-sounds">

@@ -18,7 +18,15 @@ function createUpdateWindow({BrowserWindow,ipcMain,updates,enter,install,quit,ca
       if(!alive(context))return;
       if(result.enter){if(context.manual)send({...updates.get(),status:'current'});else enterMain(context);}
       else {context.installing=true;send({...updates.get(),status:'installing'});await install(context.window);}
-    }catch(error){if(alive(context)&&error?.name!=='CancellationError'){updates.reportFailure(error);send(updates.get());}}
+    }catch(error){
+      if(alive(context)&&error?.name!=='CancellationError'){
+        if(context.installing){
+          console.error('[Update installation]',error);
+          error=Error('安装失败，请重试。');
+        }
+        updates.reportFailure(error);send(updates.get());
+      }
+    }
     finally{context.busy=false;context.installing=false;}
   }
   function enterMain(context){context.closed=true;if(current===context)current=null;enter();context.window.destroy();}

@@ -7,8 +7,12 @@ $index = Get-Content -Raw -LiteralPath $indexFile.FullName | ConvertFrom-Json
 $key = "$($index.version)-b$($index.build)"
 if ($env:RELEASE_TAG -cne "hotfix-$key") { throw 'Hotfix tag differs from the built index.' }
 $dir = $indexFile.DirectoryName
-$files = @("$dir/ScreenSh-$key-Update.zip", "$dir/ScreenSh-$key-Update.json", "$dir/ScreenSh-$key-Blocks.bin")
+$installer = "$dir/ScreenSh-$key-Setup.exe"
+Copy-Item -LiteralPath "$dir/ScreenSh-$($index.version)-Setup.exe" -Destination $installer
+$files = @($installer, "$dir/ScreenSh-$key-Update.zip", "$dir/ScreenSh-$key-Update.json", "$dir/ScreenSh-$key-Blocks.bin")
 $repo = "$env:GH_OWNER/$env:GH_REPO"
+$notesFile = "$PSScriptRoot/../../release-notes/$($env:RELEASE_TAG).md"
+$notes = if (Test-Path -LiteralPath $notesFile -PathType Leaf) { @('--notes-file', $notesFile) } else { @('--notes', 'Same-version ScreenSh update packages.') }
 
 # The index release must stay out of the legacy latest-version feed.
 try {
@@ -24,7 +28,7 @@ if ($channel.assets.name -ccontains $indexFile.Name) {
 }
 
 # Creating an existing release fails. This prevents reusing a build identity.
-gh release create $env:RELEASE_TAG @files --repo $repo --verify-tag --prerelease --latest=false --title "ScreenSh $($index.version) build $($index.build)" --notes 'Same-version ScreenSh update packages.'
+gh release create $env:RELEASE_TAG @files --repo $repo --verify-tag --prerelease --latest=false --title "ScreenSh $($index.version) · 构建 $($index.build)" @notes
 $published = gh api "repos/$repo/releases/tags/$($env:RELEASE_TAG)" | ConvertFrom-Json
 if ($published.draft -or -not $published.prerelease) { throw 'Hotfix release is not a published prerelease.' }
 foreach ($file in $files) {

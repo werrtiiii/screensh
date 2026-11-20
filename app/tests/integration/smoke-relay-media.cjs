@@ -10,8 +10,10 @@ const {allocateRpcPortal}=require('../../main/member-routes.cjs'),{createRelayPu
 const root=path.resolve(__dirname,'../..'),directory=path.join(root,'.runtime-probe','relay-media-'+process.pid);
 
 app.disableHardwareAcceleration();app.setPath('userData',path.join(directory,'profile'));app.on('window-all-closed',()=>{});
+const audioBufferBaseline=process.env.SCREENSH_TEST_AUDIO_BUFFER_STRESS==='baseline';
+if(!audioBufferBaseline)require('../../main/realtime-policy.cjs').configureRealtimeScheduling(app.commandLine);
 const request=(socket,event,payload={})=>new Promise((resolve,reject)=>socket.timeout(4000).emit(event,payload,(error,result)=>error?reject(error):result.ok?resolve(result):reject(Error(result.message))));
-app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,mediaChild,realForwarder;const clients=[],cores=[];let logs='';
+app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,mediaChild,realForwarder,audioImpairment;const clients=[],cores=[];let logs='';
   const guard=setTimeout(()=>{console.error('RELAY_MEDIA_TIMEOUT');mediaChild?.kill();app.exit(1);},60000);
   try{
     const direct=process.env.SCREENSH_TEST_TUN==='true',publicRelay=process.env.SCREENSH_TEST_DIRECT==='true';
@@ -59,12 +61,22 @@ app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,med
     await obs.start({sourceType:'synthetic',resolution:process.env.SCREENSH_TEST_RESOLUTION||'320x180',frameRate,maxBitrate:Number(process.env.SCREENSH_TEST_BITRATE)||5000,audioBitrate:64,videoEncoder:process.env.SCREENSH_TEST_ENCODER||'x264',shareAudio:false});
     await request(owner,'start-sharing',{relayPath:lease.path});const view=await request(process.env.SCREENSH_TEST_SELF==='true'?owner:viewer,'get-relay-view',{target:owner.id});
     front=dgram.createSocket('udp4');flow=dgram.createSocket('udp4');let browser;
-    front.on('message',(bytes,remote)=>{browser=remote;flow.send(bytes,udpPort,bindHost);});flow.on('message',bytes=>{if(browser)front.send(bytes,browser.port,browser.address);});
+    front.on('message',(bytes,remote)=>{browser=remote;flow.send(bytes,udpPort,bindHost);});
+    flow.on('message',bytes=>{
+      if(!browser)return;
+      const impairment=audioImpairment;
+      const phase=impairment?(Date.now()-impairment.start)%1300:0;
+      if(impairment&&phase<impairment.holdMs&&(bytes[0]&0xc0)===0x80&&(bytes[1]&0x7f)===impairment.payloadType){
+        setTimeout(()=>{if(audioImpairment===impairment)front.send(bytes,browser.port,browser.address);},impairment.holdMs-phase).unref();
+      }else front.send(bytes,browser.port,browser.address);
+    });
     await new Promise(resolve=>front.bind(0,physical,resolve));const browserPort=front.address().port;
     const preload=path.join(directory,'network-preload.cjs');fs.writeFileSync(preload,'const {contextBridge,ipcRenderer}=require("electron");contextBridge.exposeInMainWorld("electronAPI",Object.fromEntries(["openTunnelScope","forwardTunnelPort","exposeTunnelPort","closeTunnelScope"].map(key=>[key,(...args)=>ipcRenderer.invoke(key,...args)])));');
     win=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false,...(realNetwork?{preload}:{})}});await win.loadFile(path.join(root,'renderer/index.html'));
     const tunnel=publicRelay?'null':realNetwork?`(await import('./media-tunnel.mjs')).createMediaTunnel('${testHost}',true)`:`{http:async()=>({host:'${bindHost}',port:${httpPort}}),localDescription:async d=>d,localCandidate:async c=>c,remoteDescription:async d=>({...d,sdp:d.sdp.replaceAll('${testHost} ${udpPort}','${physical} ${browserPort}')}),close:()=>{}}`;
-    const connectViewer=videoOnly=>win.webContents.executeJavaScript(`(async()=>{const {WhepSession}=await import('./whep.mjs');window.relayTestError='';window.relayTestVideo=document.createElement('video');relayTestVideo.muted=true;relayTestVideo.autoplay=true;document.body.append(relayTestVideo);window.relaySession=new WhepSession('http://${testHost}:${httpPort}/${view.path}/whep',{},event=>{relayTestVideo.srcObject??=new MediaStream();relayTestVideo.srcObject.addTrack(event.track);void relayTestVideo.play();},error=>{relayTestError=error.message;},{videoOnly:${videoOnly},getToken:async()=>${JSON.stringify(view.token)},tunnel:${tunnel},virtualIp:'10.144.0.2'});await relaySession.start();})()`,true);
+    const audioPacketLimit=Number(process.env.SCREENSH_TEST_AUDIO_PACKET_LIMIT)||0;
+    const config=audioPacketLimit?{rtcAudioJitterBufferMaxPackets:audioPacketLimit}:{};
+    const connectViewer=videoOnly=>win.webContents.executeJavaScript(`(async()=>{const {WhepSession}=await import('./whep.mjs');window.relayTestError='';window.relayTestVideo=document.createElement('video');relayTestVideo.muted=true;relayTestVideo.autoplay=true;document.body.append(relayTestVideo);window.relaySession=new WhepSession('http://${testHost}:${httpPort}/${view.path}/whep',${JSON.stringify(config)},event=>{relayTestVideo.srcObject??=new MediaStream();relayTestVideo.srcObject.addTrack(event.track);void relayTestVideo.play();},error=>{relayTestError=error.message;},{videoOnly:${videoOnly},getToken:async()=>${JSON.stringify(view.token)},tunnel:${tunnel},virtualIp:'10.144.0.2'});await relaySession.start();})()`,true);
     await connectViewer(false);
     const deadline=Date.now()+15000;let frames=0;while(Date.now()<deadline){const result=await win.webContents.executeJavaScript(`({error:relayTestError,frames:relayTestVideo.getVideoPlaybackQuality().totalVideoFrames})`);if(result.error)throw Error(result.error);frames=result.frames;if(frames>3)break;await new Promise(r=>setTimeout(r,100));}assert.ok(frames>3,'viewer decodes real relayed video');
     if(realNetwork||process.env.SCREENSH_TEST_SUSTAINED==='true'){
@@ -89,6 +101,33 @@ app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,med
       assert.deepEqual(withAudio.tracks,['audio','video']);assert.deepEqual(videoOnly.tracks,['video']);
       assert.ok(withAudio.frames>frameRate*5&&videoOnly.frames>frameRate*5,'both viewer paths continuously decode frames');
     }
+    if(process.env.SCREENSH_TEST_AUDIO_BUFFER_STRESS==='true'||audioBufferBaseline){
+      assert.ok(!realNetwork&&!publicRelay,'audio impairment requires the local test proxy');
+      const holdMs=Math.max(0,Math.min(600,Number(process.env.SCREENSH_TEST_AUDIO_HOLD_MS??300)));
+      const snapshot=()=>win.webContents.executeJavaScript(`(async()=>{
+        const report=await relaySession.pc.getStats();
+        return Object.fromEntries([...report.values()].filter(s=>s.type==='inbound-rtp').map(s=>[s.kind,{...s,payloadType:report.get(s.codecId)?.payloadType}]));
+      })()`);
+      const sample=async()=>{
+        const config=await win.webContents.executeJavaScript('relaySession.pc.getConfiguration()');
+        assert.equal(config.rtcAudioJitterBufferMaxPackets,audioBufferBaseline?undefined:(audioPacketLimit||12));
+        assert.equal(config.rtcAudioJitterBufferFastAccelerate,audioBufferBaseline?undefined:true);
+        let first;
+        for(let i=0;i<40&&!first?.audio?.packetsReceived;i++){first=await snapshot();await new Promise(resolve=>setTimeout(resolve,100));}
+        assert.ok(first?.audio?.packetsReceived&&Number.isInteger(first.audio.payloadType),'Opus must be received before simulating jitter');
+        audioImpairment={payloadType:first.audio.payloadType,start:Date.now(),holdMs};
+        await new Promise(resolve=>setTimeout(resolve,12000));
+        const last=await snapshot();audioImpairment=null;
+        const emitted=last.audio.jitterBufferEmittedCount-first.audio.jitterBufferEmittedCount;
+        assert.ok(emitted>0,'audio must continue playing');
+        const mean=(kind,key)=>{
+          const n=last[kind].jitterBufferEmittedCount-first[kind].jitterBufferEmittedCount;
+          return n>0?1000*(last[kind][key]-first[kind][key])/n:null;
+        };
+        return {holdMs,packetLimit:config.rtcAudioJitterBufferMaxPackets,bufferMs:mean('audio','jitterBufferDelay'),targetMs:mean('audio','jitterBufferTargetDelay'),videoBufferMs:mean('video','jitterBufferDelay'),discarded:last.audio.packetsDiscarded-first.audio.packetsDiscarded,concealed:last.audio.concealedSamples-first.audio.concealedSamples,emitted};
+      };
+      console.log('AUDIO_BUFFER_STRESS',JSON.stringify({baseline:audioBufferBaseline,...await sample()}));
+    }
     if(process.env.SCREENSH_TEST_SELF!=='true'){
       const channel=(await request(owner,'create-channel',{name:'Other'})).channel.id;await request(viewer,'switch-channel',{channelId:channel});
       const check=await fetch('http://127.0.0.1:'+runtime.server.address().port+'/media-relay/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocol:'webrtc',action:'read',path:view.path,token:view.token})});assert.equal(check.status,403,'channel departure revokes new reading requests');
@@ -98,5 +137,5 @@ app.whenReady().then(async()=>{let runtime,manager,bridge,obs,win,front,flow,med
     const disabled=await request(owner,'set-video-relay',{enabled:false});assert.equal(disabled.videoRelay.ready,false);assert.equal(mediaChild.exitCode,null,'external MediaMTX is never stopped by the signaling server');
     console.log('REAL_VIDEO_RELAY_OK',JSON.stringify({frames,publisher:'native OBS',viewer:'WebRTC',auth:true,channelRevocation:process.env.SCREENSH_TEST_SELF!=='true',externalProcessUnaffected:true,noTunPublisherBridge:!direct,selfView:process.env.SCREENSH_TEST_SELF==='true'}));
   }catch(error){console.error(error.stack);console.error(logs);process.exitCode=1;}
-  finally{clearTimeout(guard);win?.destroy();try{await obs?.shutdown();}catch{}await bridge?.close();await realForwarder?.clear();for(const core of cores){if(core.exitCode===null){const exited=new Promise(resolve=>core.once('close',resolve));core.kill();await exited;}}try{front?.close();flow?.close();}catch{}for(const client of clients)client.disconnect();if(mediaChild&&mediaChild.exitCode===null&&!mediaChild.signalCode){const exited=new Promise(resolve=>mediaChild.once('close',resolve));mediaChild.kill();await exited;}if(runtime)await new Promise(resolve=>runtime.io.close(resolve));app.exit(process.exitCode||0);}
+  finally{clearTimeout(guard);audioImpairment=null;win?.destroy();try{await obs?.shutdown();}catch{}await bridge?.close();await realForwarder?.clear();for(const core of cores){if(core.exitCode===null){const exited=new Promise(resolve=>core.once('close',resolve));core.kill();await exited;}}try{front?.close();flow?.close();}catch{}for(const client of clients)client.disconnect();if(mediaChild&&mediaChild.exitCode===null&&!mediaChild.signalCode){const exited=new Promise(resolve=>mediaChild.once('close',resolve));mediaChild.kill();await exited;}if(runtime)await new Promise(resolve=>runtime.io.close(resolve));app.exit(process.exitCode||0);}
 });

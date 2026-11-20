@@ -27,7 +27,7 @@ test('full installer fallback reuses an EXE without downloading and only downloa
 });
 test('failed fallback download resets full-installer mode and does not acknowledge installation',async t=>{
  const f=fixture(t);await f.updates.check();f.client.installerPath='ScreenSh-9.0.0-Update.zip';f.client.downloadUpdate=async()=>{throw Error('offline');};
- await assert.rejects(f.updates.prepareInstallerFallback('9.0.0'),/下载更新失败/);assert.equal(f.client.forceFullInstaller,false);assert.equal(f.updates.get().status,'error');
+ await assert.rejects(f.updates.prepareInstallerFallback('9.0.0'),/下载失败/);assert.equal(f.client.forceFullInstaller,false);assert.equal(f.updates.get().status,'error');
 });
 test('same-version receipt and handoff match the selected build and cannot fall back to the old EXE',async t=>{
   const f=fixture(t,{currentVersion:'9.0.0',currentBuild:2});let checkedBuild=3;
@@ -87,7 +87,7 @@ test('disabled startup updates enter immediately while a manual update remains a
 test('concurrent checks and downloads are shared and failures can be retried',async t=>{
   const {updates,client,counts}=fixture(t);await Promise.all([updates.check(),updates.check()]);assert.equal(counts.check,1);
   client.downloadUpdate=async()=>{counts.download++;throw Error('offline');};
-  await assert.rejects(Promise.all([updates.download(),updates.download()]),/下载更新失败/);assert.equal(counts.download,1);assert.equal(await updates.restoreAtStartup(),false);
+  await assert.rejects(Promise.all([updates.download(),updates.download()]),/下载失败/);assert.equal(counts.download,1);assert.equal(await updates.restoreAtStartup(),false);
   client.downloadUpdate=async()=>{counts.download++;client.emit('update-downloaded',{version:'9.0.0'});};
   await updates.download();assert.equal(counts.download,2);assert.equal(await updates.restoreAtStartup(),true);
 });
