@@ -11,30 +11,28 @@ $installer = "$dir/ScreenSh-$key-Setup.exe"
 Copy-Item -LiteralPath "$dir/ScreenSh-$($index.version)-Setup.exe" -Destination $installer
 $files = @($installer, "$dir/ScreenSh-$key-Update.zip", "$dir/ScreenSh-$key-Update.json", "$dir/ScreenSh-$key-Blocks.bin")
 $repo = "$env:GH_OWNER/$env:GH_REPO"
-$notesFile = "$PSScriptRoot/../../release-notes/$($env:RELEASE_TAG).md"
-$notes = if (Test-Path -LiteralPath $notesFile -PathType Leaf) { @('--notes-file', $notesFile) } else { @('--notes', 'Same-version ScreenSh update packages.') }
+$tag = [string]$index.version
 
-# The index release must stay out of the legacy latest-version feed.
+# Versioned payloads and the build index all live on the formal release page.
 try {
-  $channel = gh release view hotfix-index --repo $repo --json isDraft,isPrerelease,assets | ConvertFrom-Json
+  $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
 } catch {
-  gh release create hotfix-index --repo $repo --prerelease --latest=false --title 'ScreenSh hotfix indexes' --notes 'Same-version build update metadata.'
-  $channel = gh release view hotfix-index --repo $repo --json isDraft,isPrerelease,assets | ConvertFrom-Json
+  $tag = "v$tag"
+  $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
 }
-if ($channel.isDraft -or -not $channel.isPrerelease) { throw 'Hotfix index release must be a published prerelease.' }
-if ($channel.assets.name -ccontains $indexFile.Name) {
-  $previous = gh release download hotfix-index --repo $repo --pattern $indexFile.Name --output - | ConvertFrom-Json
-  if ($previous.version -cne $index.version -or [int]$previous.build -ge [int]$index.build) { throw 'Hotfix index must advance to a higher build.' }
+if ($release.draft -or $release.prerelease -or $release.immutable) { throw 'Build updates require a published, editable formal release.' }
+if ($release.assets.name -ccontains $indexFile.Name) {
+  $previous = gh release download $tag --repo $repo --pattern $indexFile.Name --output - | ConvertFrom-Json
+  if ($previous.version -cne $index.version -or [int]$previous.build -ge [int]$index.build) { throw 'Build index must advance to a higher build.' }
 }
 
-# Creating an existing release fails. This prevents reusing a build identity.
-gh release create $env:RELEASE_TAG @files --repo $repo --verify-tag --prerelease --latest=false --title "ScreenSh $($index.version) · 构建 $($index.build)" @notes
-$published = gh api "repos/$repo/releases/tags/$($env:RELEASE_TAG)" | ConvertFrom-Json
-if ($published.draft -or -not $published.prerelease) { throw 'Hotfix release is not a published prerelease.' }
+# Unique build filenames keep an interrupted upload from changing the active build.
+gh release upload $tag @files --repo $repo
+$published = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
 foreach ($file in $files) {
   $item = Get-Item -LiteralPath $file
   $asset = $published.assets | Where-Object name -CEQ $item.Name
   $digest = 'sha256:' + (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
   if (-not $asset -or $asset.size -ne $item.Length -or $asset.digest -cne $digest) { throw "Published asset does not match: $($item.Name)" }
 }
-gh release upload hotfix-index $indexFile.FullName --repo $repo --clobber
+gh release upload $tag $indexFile.FullName --repo $repo --clobber

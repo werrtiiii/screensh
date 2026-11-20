@@ -70,7 +70,7 @@ test('metadata cancellation reaches the direct provider executor and stops proxy
   assert.equal(await f.provider.httpRequest(new URL('https://github.com/werrtiiii/screensh/releases.atom')),'direct');
 });
 
-test('hotfix metadata is read directly and can only advance the current formal version',async t=>{
+test('same-version updates resolve all artifacts on the existing formal release',async t=>{
   let stable=info;
   const {GitHubProvider}=require('electron-updater/out/providers/GitHubProvider');
   t.mock.method(GitHubProvider.prototype,'getLatestVersion',async()=>stable);
@@ -82,9 +82,17 @@ test('hotfix metadata is read directly and can only advance the current formal v
   f.client.currentVersion={version:'1.5.4'};f.client.currentBuild=1;
   const found=await f.provider.getLatestVersion();
   assert.equal(found.version,'1.5.4');assert.equal(found.build,2);
-  assert.deepEqual(urls,['https://github.com/werrtiiii/screensh/releases/download/hotfix-index/ScreenSh-1.5.4-hotfix.json']);
-  assert.equal(f.provider.resolveFiles(found)[0].url.href,'https://github.com/werrtiiii/screensh/releases/download/hotfix-1.5.4-b2/ScreenSh-1.5.4-b2-Update.zip');
+  assert.deepEqual(urls,['https://github.com/werrtiiii/screensh/releases/download/1.5.4/ScreenSh-1.5.4-hotfix.json']);
+  assert.equal(f.provider.resolveFiles(found)[0].url.href,'https://github.com/werrtiiii/screensh/releases/download/1.5.4/ScreenSh-1.5.4-b2-Update.zip');
+  assert.equal(f.provider.resolveFiles({...found,files:[found.incremental]})[0].url.href,'https://github.com/werrtiiii/screensh/releases/download/1.5.4/ScreenSh-1.5.4-b2-Update.json');
+  stable={...info,tag:'v1.5.4'};urls.length=0;
+  assert.equal((await f.provider.getLatestVersion()).tag,'v1.5.4');
+  assert.deepEqual(urls,['https://github.com/werrtiiii/screensh/releases/download/v1.5.4/ScreenSh-1.5.4-hotfix.json']);
+  stable=info;
   f.client.currentBuild=2;assert.deepEqual(await f.provider.getLatestVersion(),info);
+  const unavailable=fixture({enabled:false},async()=>new Response('',{status:404}));
+  unavailable.client.currentVersion={version:'1.5.4'};unavailable.client.currentBuild=1;
+  assert.deepEqual(await unavailable.provider.getLatestVersion(),info);
   index={...index,build:3};assert.deepEqual(await f.provider.getLatestVersion(),info,'reject mismatching asset names');
   stable={...info,version:'1.5.5'};urls.length=0;assert.deepEqual(await f.provider.getLatestVersion(),stable);assert.equal(urls.length,0);
 });

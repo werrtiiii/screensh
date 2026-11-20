@@ -39,7 +39,7 @@ function createUpdateSource({repository}={},fetchFile=globalThis.fetch,{getAccel
           let stableError;
           try {
             if(!info)info=await super.getLatestVersion();
-            // Only the direct hotfix index may advertise a same-version build.
+            // The base manifest remains compatible with legacy clients.
             if(info.build!==undefined||parseUpdateKey(info.version)?.build!==1)throw Error('正式版更新身份无效');
             if(info.portable)require('./portable-updater.cjs').portableArtifact(info);
             if(info.incremental)require('./portable-updater.cjs').incrementalArtifact(info);
@@ -52,14 +52,15 @@ function createUpdateSource({repository}={},fetchFile=globalThis.fetch,{getAccel
           if(currentBuild!==undefined && parseUpdateKey(currentVersion) && (!info || compareUpdateKeys(info.version,currentVersion)<=0)) {
             const token=this.updater.updateCancellationToken;
             try {
-              const url=new URL(`https://github.com/${repo}/releases/download/hotfix-index/ScreenSh-${currentVersion}-hotfix.json`);
+              const tag=info?.version===currentVersion&&info.tag===`v${currentVersion}` ? info.tag : currentVersion;
+              const url=new URL(`https://github.com/${repo}/releases/download/${tag}/ScreenSh-${currentVersion}-hotfix.json`);
               const hotfix=JSON.parse(await fetchMetadataText(url,fetchFile,{Accept:'application/json','Cache-Control':'no-cache'},token));
               const target=updateKey(hotfix);
               if(hotfix.schemaVersion!==1||hotfix.version!==currentVersion||hotfix.build<=1||compareUpdateKeys(target,updateKey({version:currentVersion,build:currentBuild}))<=0)throw Error('热修索引与当前版本不匹配');
               const {portableArtifact,incrementalArtifact}=require('./portable-updater.cjs');
               const portable=portableArtifact(hotfix),incremental=incrementalArtifact(hotfix);
               if(!portable||!incremental)throw Error('热修索引缺少更新包');
-              info={version:currentVersion,build:hotfix.build,tag:`hotfix-${target}`,portable,incremental,files:[portable],releaseNotes:typeof hotfix.releaseNotes==='string'?hotfix.releaseNotes:undefined};
+              info={version:currentVersion,build:hotfix.build,tag,portable,incremental,files:[portable],releaseNotes:typeof hotfix.releaseNotes==='string'?hotfix.releaseNotes:undefined};
             }catch(error){
               if(token?.cancelled||error instanceof CancellationError)throw error;
             }
